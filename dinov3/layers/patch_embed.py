@@ -87,3 +87,88 @@ class PatchEmbed(nn.Module):
         nn.init.uniform_(self.proj.weight, -math.sqrt(k), math.sqrt(k))
         if self.proj.bias is not None:
             nn.init.uniform_(self.proj.bias, -math.sqrt(k), math.sqrt(k))
+
+
+class PatchEmbedPerChannel(nn.Module):
+    """
+    ChannelViT-style patch embedding: treats multi-channel images as volumetric data.
+    
+    This module processes each channel independently using Conv3d, allowing for
+    channel-specific embeddings while maintaining spatial relationships.
+    
+    Args:
+        img_size: Image size (assumed square).
+        patch_size: Patch token size (assumed square).
+        in_chans: Number of input image channels.
+        embed_dim: Number of linear projection output channels.
+        flatten_embedding: Whether to flatten the output embedding.
+    """
+
+    def __init__(
+        self,
+        img_size: Union[int, Tuple[int, int]] = 224,
+        patch_size: Union[int, Tuple[int, int]] = 16,
+        in_chans: int = 3,
+        embed_dim: int = 768,
+        flatten_embedding: bool = False,
+    ) -> None:
+        super().__init__()
+
+        image_HW = make_2tuple(img_size)
+        patch_HW = make_2tuple(patch_size)
+        patch_grid_size = (
+            image_HW[0] // patch_HW[0],
+            image_HW[1] // patch_HW[1],
+        )
+
+        self.img_size = image_HW
+        self.patch_size = patch_HW
+        self.patches_resolution = patch_grid_size
+        self.num_patches = patch_grid_size[0] * patch_grid_size[1] * in_chans
+        self.in_chans = in_chans
+        self.embed_dim = embed_dim
+        self.flatten_embedding = flatten_embedding
+
+        # ChannelViT uses Conv3d: (1, embed_dim, kernel=(1, P, P))
+        # Input: (B, 1, C, H, W) -> Output: (B, embed_dim, C, H', W')
+        self.proj = nn.Conv3d(
+            1,
+            embed_dim,
+            kernel_size=(1, patch_HW[0], patch_HW[1]),
+            stride=(1, patch_HW[0], patch_HW[1]),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Forward pass for ChannelViT patch embedding.
+        
+        Args:
+            x: Input tensor of shape (B, C, H, W)
+        
+        Returns:
+            If flatten_embedding=False: (B, embed_dim, C, H', W')
+            If flatten_embedding=True: (B, C*H'*W', embed_dim)
+        """
+        B, C, H, W = x.shape
+        
+        # Add channel dimension for Conv3d: (B, C, H, W) -> (B, 1, C, H, W)
+        x = x.unsqueeze(1)
+        
+        # Apply Conv3d: (B, 1, C, H, W) -> (B, embed_dim, C, H', W')
+        x = self.proj(x)
+        
+        if self.flatten_embedding:
+            # Flatten order: Channel -> H -> W (ChannelViT key ordering)
+            # (B, embed_dim, C, H', W') -> (B, embed_dim, C*H'*W')
+            x = x.flatten(2)
+            # Transpose to (B, C*H'*W', embed_dim)
+            x = x.transpose(1, 2)
+        
+        return x
+
+    def reset_parameters(self):
+        """Initialize Conv3d weights using Kaiming uniform initialization."""
+        k = 1 / (self.in_chans * (self.patch_size[0] ** 2))
+        nn.init.uniform_(self.proj.weight, -math.sqrt(k), math.sqrt(k))
+        if self.proj.bias is not None:
+            nn.init.uniform_(self.proj.bias, -math.sqrt(k), math.sqrt(k))

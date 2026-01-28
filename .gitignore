@@ -1,5 +1,7 @@
 build/
 dist/
+dinov3/ChannelViT/
+outputs/
 *.egg-info/
 **/__pycache__/
 
