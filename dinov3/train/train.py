@@ -39,6 +39,7 @@ from dinov3.logging import MetricLogger, setup_logging
 from dinov3.train.cosine_lr_scheduler import CosineScheduler, linear_warmup_cosine_decay
 from dinov3.train.multidist_meta_arch import MultiDistillationMetaArch
 from dinov3.train.ssl_meta_arch import SSLMetaArch
+from dinov3.train.ssl_meta_arch_lora import SSLMetaArchLoRA
 
 assert torch.__version__ >= (2, 1)
 torch.backends.cuda.matmul.allow_tf32 = True  # pytorch 1.12 sets this to false by default
@@ -602,6 +603,7 @@ def main(argv=None):
         )
     meta_arch = {
         "SSLMetaArch": SSLMetaArch,
+        "SSLMetaArchLoRA": SSLMetaArchLoRA,
         "MultiDistillationMetaArch": MultiDistillationMetaArch,
     }.get(cfg.MODEL.META_ARCHITECTURE, None)
     if meta_arch is None:

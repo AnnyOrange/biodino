@@ -14,3 +14,14 @@ from .utils import (
     named_replace,
     uncat_with_shapes,
 )
+from .lora_utils import (
+    apply_lora_to_model,
+    apply_lora_to_vit_backbone,
+    freeze_non_lora_params,
+    get_lora_params,
+    get_trainable_params_info,
+    load_lora_checkpoint,
+    merge_lora_weights,
+    save_lora_checkpoint,
+    unmerge_lora_weights,
+)

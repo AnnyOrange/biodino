@@ -11,7 +11,7 @@ import torch
 import torch.nn.init
 from torch import Tensor, nn
 
-from dinov3.layers import LayerScale, Mlp, PatchEmbed, RMSNorm, RopePositionEmbedding, SelfAttentionBlock, SwiGLUFFN
+from dinov3.layers import LayerScale, Mlp, PatchEmbed, PatchEmbedPerChannel, RMSNorm, RopePositionEmbedding, SelfAttentionBlock, SwiGLUFFN
 from dinov3.utils import named_apply
 
 logger = logging.getLogger("dinov3")
@@ -50,7 +50,7 @@ def init_weights_vit(module: nn.Module, name: str = ""):
         module.reset_parameters()
     if isinstance(module, LayerScale):
         module.reset_parameters()
-    if isinstance(module, PatchEmbed):
+    if isinstance(module, (PatchEmbed, PatchEmbedPerChannel)):
         module.reset_parameters()
     if isinstance(module, RMSNorm):
         module.reset_parameters()
@@ -86,6 +86,7 @@ class DinoVisionTransformer(nn.Module):
         mask_k_bias: bool = False,
         untie_cls_and_patch_norms: bool = False,
         untie_global_and_local_cls_norm: bool = False,
+        enable_channelvit: bool = False,
         device: Any | None = None,
         **ignored_kwargs,
     ):
@@ -100,14 +101,34 @@ class DinoVisionTransformer(nn.Module):
         self.n_blocks = depth
         self.num_heads = num_heads
         self.patch_size = patch_size
+        self.enable_channelvit = enable_channelvit
+        self.in_chans = in_chans
 
-        self.patch_embed = PatchEmbed(
-            img_size=img_size,
-            patch_size=patch_size,
-            in_chans=in_chans,
-            embed_dim=embed_dim,
-            flatten_embedding=False,
-        )
+        # Branch logic: ChannelViT vs standard DINOv3
+        if self.enable_channelvit:
+            # ChannelViT mode: use PatchEmbedPerChannel
+            self.patch_embed = PatchEmbedPerChannel(
+                img_size=img_size,
+                patch_size=patch_size,
+                in_chans=in_chans,
+                embed_dim=embed_dim,
+                flatten_embedding=False,  # We handle flattening in prepare_tokens_with_masks
+            )
+            # Initialize Channel Embedding (ChannelViT specific)
+            # Shape: (1, in_chans, embed_dim) for broadcasting
+            self.channel_embed = nn.Parameter(torch.empty(1, in_chans, embed_dim, device=device))
+            torch.nn.init.trunc_normal_(self.channel_embed, std=0.02)
+            logger.info(f"ChannelViT enabled with {in_chans} channels")
+        else:
+            # Standard DINOv3 mode (default)
+            self.patch_embed = PatchEmbed(
+                img_size=img_size,
+                patch_size=patch_size,
+                in_chans=in_chans,
+                embed_dim=embed_dim,
+                flatten_embedding=False,
+            )
+            self.channel_embed = None
 
         self.cls_token = nn.Parameter(torch.empty(1, 1, embed_dim, device=device))
         self.n_storage_tokens = n_storage_tokens
@@ -188,10 +209,44 @@ class DinoVisionTransformer(nn.Module):
         named_apply(init_weights_vit, self)
 
     def prepare_tokens_with_masks(self, x: Tensor, masks=None) -> Tuple[Tensor, Tuple[int]]:
+        B, C, H, W = x.shape
+        
+        # Patch embedding
         x = self.patch_embed(x)
-        B, H, W, _ = x.shape
-        x = x.flatten(1, 2)
+        
+        if self.enable_channelvit:
+            # === ChannelViT logic ===
+            # x from PatchEmbedPerChannel: (B, embed_dim, C, H', W')
+            # Permute to (B, C, H', W', embed_dim) for adding channel embedding
+            x = x.permute(0, 2, 3, 4, 1)  # (B, C, H', W', embed_dim)
+            
+            # Add Channel Embedding
+            # self.channel_embed: (1, C, embed_dim) -> (1, C, 1, 1, embed_dim)
+            chan_embed = self.channel_embed.unsqueeze(2).unsqueeze(3)
+            x = x + chan_embed  # Broadcast addition
+            
+            # Flatten: (B, C, H', W', embed_dim) -> (B, C*H'*W', embed_dim)
+            x = x.flatten(1, 3)
+            
+            # Record spatial dimensions for RoPE (single channel size)
+            H_patch, W_patch = H // self.patch_size, W // self.patch_size
+        else:
+            # === Standard DINOv3 logic ===
+            # x: (B, H', W', embed_dim)
+            H_patch, W_patch = x.shape[1], x.shape[2]
+            x = x.flatten(1, 2)  # (B, H'*W', embed_dim)
+        ##if masks is not None:
+            # === 新增：自动适配 ChannelViT 的 Mask 维度 ===
+            # if self.enable_channelvit and masks.shape[1] == (H_patch * W_patch):
+            #     # 如果传入的 mask 是单通道的 (B, HW)，但 x 是多通道的 (B, C*HW, D)
+            #     # 我们需要把 mask 重复 C 次
+            #     # masks: (B, HW) -> (B, C, HW) -> (B, C*HW)
+            #     masks = masks.unsqueeze(1).repeat(1, C, 1).flatten(1, 2)
+            # # ==========================================
 
+            # x = torch.where(masks.unsqueeze(-1), self.mask_token.to(x.dtype).unsqueeze(0), x)
+            # cls_token = self.cls_token
+        ##
         if masks is not None:
             x = torch.where(masks.unsqueeze(-1), self.mask_token.to(x.dtype).unsqueeze(0), x)
             cls_token = self.cls_token
@@ -217,7 +272,7 @@ class DinoVisionTransformer(nn.Module):
             dim=1,
         )
 
-        return x, (H, W)
+        return x, (H_patch, W_patch)
 
     def forward_features_list(self, x_list: List[Tensor], masks_list: List[Tensor]) -> List[Dict[str, Tensor]]:
         x = []
@@ -228,7 +283,30 @@ class DinoVisionTransformer(nn.Module):
             rope.append(hw_tuple)
         for _, blk in enumerate(self.blocks):
             if self.rope_embed is not None:
-                rope_sincos = [self.rope_embed(H=H, W=W) for H, W in rope]
+                # Generate base RoPE for single channel spatial dimensions
+                rope_sincos_list = [self.rope_embed(H=H, W=W) for H, W in rope]
+                
+                if self.enable_channelvit:
+                    # === ChannelViT RoPE adaptation ===
+                    # We need to repeat RoPE C times to match (C*H*W) token sequence
+                    new_rope_sincos_list = []
+                    for (cos, sin), t_x_tensor in zip(rope_sincos_list, x):
+                        # Calculate number of channels
+                        # Total tokens (excluding CLS and storage tokens) / spatial tokens
+                        n_extra = 1 + self.n_storage_tokens  # CLS + Registers
+                        total_tokens = t_x_tensor.shape[1] - n_extra
+                        spatial_tokens = cos.shape[0]  # H*W
+                        num_channels = total_tokens // spatial_tokens
+                        
+                        # Repeat RoPE: [Pos1, Pos2... PosN] -> [Pos1...PosN, Pos1...PosN, ...]
+                        # Corresponding to flatten order: [Chan1_Spatial, Chan2_Spatial, ...]
+                        cos_rep = torch.cat([cos] * num_channels, dim=0)
+                        sin_rep = torch.cat([sin] * num_channels, dim=0)
+                        new_rope_sincos_list.append((cos_rep, sin_rep))
+                    rope_sincos = new_rope_sincos_list
+                else:
+                    # === Standard DINOv3 RoPE ===
+                    rope_sincos = rope_sincos_list
             else:
                 rope_sincos = [None for r in rope]
             x = blk(x, rope_sincos)
@@ -267,13 +345,29 @@ class DinoVisionTransformer(nn.Module):
             return self.forward_features_list(x, masks)
 
     def _get_intermediate_layers_not_chunked(self, x: Tensor, n: int = 1) -> List[Tensor]:
-        x, (H, W) = self.prepare_tokens_with_masks(x)
+        x, (H_patch, W_patch) = self.prepare_tokens_with_masks(x)
         # If n is an int, take the n last blocks. If it's a list, take them
         output, total_block_len = [], len(self.blocks)
         blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
+        
+        # H_patch and W_patch are already patch dimensions from prepare_tokens_with_masks
+        
         for i, blk in enumerate(self.blocks):
             if self.rope_embed is not None:
-                rope_sincos = self.rope_embed(H=H, W=W)
+                rope_sincos_base = self.rope_embed(H=H_patch, W=W_patch)
+                
+                if self.enable_channelvit:
+                    # Repeat RoPE for ChannelViT
+                    n_extra = 1 + self.n_storage_tokens
+                    total_tokens = x.shape[1] - n_extra
+                    spatial_tokens = rope_sincos_base[0].shape[0]
+                    num_channels = total_tokens // spatial_tokens
+                    
+                    cos_rep = torch.cat([rope_sincos_base[0]] * num_channels, dim=0)
+                    sin_rep = torch.cat([rope_sincos_base[1]] * num_channels, dim=0)
+                    rope_sincos = (cos_rep, sin_rep)
+                else:
+                    rope_sincos = rope_sincos_base
             else:
                 rope_sincos = None
             x = blk(x, rope_sincos)
