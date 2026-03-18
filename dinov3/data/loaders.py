@@ -12,6 +12,7 @@ from torch.utils.data import Sampler
 
 from .datasets import ADE20K, CocoCaptions, ImageNet, ImageNet22k, NYU
 from .samplers import EpochSampler, InfiniteSampler, ShardedInfiniteSampler
+from .wds_pipeline import is_webdataset
 
 logger = logging.getLogger("dinov3")
 
@@ -90,6 +91,7 @@ def make_dataset(
 
     Args:
         dataset_str: A dataset string description (e.g. ImageNet:split=TRAIN).
+            支持 WebDataset 格式：以 "wds:" 为前缀，如 "wds:/path/to/shards-{0000..0099}.tar"
         transform: A transform to apply to images.
         target_transform: A transform to apply to targets.
         transforms: A transform to apply to both images and targets.
@@ -98,6 +100,10 @@ def make_dataset(
         The created dataset.
     """
     logger.info(f'using dataset: "{dataset_str}"')
+
+    # 检测 WebDataset 格式
+    if dataset_str.startswith("wds:"):
+        return _make_webdataset(dataset_str[4:], transform)
 
     class_, kwargs = _parse_dataset_str(dataset_str)
     dataset = class_(transform=transform, target_transform=target_transform, transforms=transforms, **kwargs)
@@ -113,6 +119,34 @@ def make_dataset(
         dataset.transforms = transforms
 
     return dataset
+
+
+def _make_webdataset(
+    shard_pattern: str,
+    transform: Optional[Callable] = None,
+):
+    """
+    创建 WebDataset 数据管道。
+
+    Args:
+        shard_pattern: tar 分片路径模式，如 "/path/to/shards-{0000..0099}.tar"。
+        transform: 图像变换函数。
+
+    Returns:
+        WebDataset IterableDataset 管道。
+    """
+    from .wds_pipeline import WdsConfig, build_wds_pipeline
+
+    logger.info(f"creating WebDataset from: {shard_pattern}")
+
+    config = WdsConfig(
+        shard_urls=shard_pattern,
+        shuffle_buffer=1000,
+    )
+    pipeline = build_wds_pipeline(config, transform=transform)
+
+    logger.info("WebDataset pipeline created (infinite streaming)")
+    return pipeline
 
 
 def _make_sampler(
@@ -212,6 +246,17 @@ def make_data_loader(
         collate_fn: Function that performs batch collation
         worker_init_fn: Optional init function for each dataloader worker.
     """
+    # WebDataset (IterableDataset) 兼容处理：绕过 Sampler
+    if is_webdataset(dataset):
+        return _make_webdataset_loader(
+            dataset=dataset,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            drop_last=drop_last,
+            persistent_workers=persistent_workers,
+            collate_fn=collate_fn,
+            worker_init_fn=worker_init_fn,
+        )
 
     sampler = _make_sampler(
         dataset=dataset,
@@ -239,4 +284,51 @@ def make_data_loader(
         logger.info(f"# of batches: {len(data_loader):,d}")
     except TypeError:  # data loader has no length
         logger.info("infinite data loader")
+    return data_loader
+
+
+def _make_webdataset_loader(
+    *,
+    dataset,
+    batch_size: int,
+    num_workers: int,
+    drop_last: bool = True,
+    persistent_workers: bool = False,
+    collate_fn: Optional[Callable] = None,
+    worker_init_fn: Optional[Callable] = None,
+) -> torch.utils.data.DataLoader:
+    """
+    为 WebDataset (IterableDataset) 创建 DataLoader。
+
+    WebDataset 自带 shuffle 和分布式支持，必须绕过 Sampler。
+
+    Args:
+        dataset: WebDataset IterableDataset 管道。
+        batch_size: 批次大小。
+        num_workers: 工作进程数。
+        drop_last: 是否丢弃最后不完整的批次。
+        persistent_workers: 是否保持工作进程存活。
+        collate_fn: 批次整理函数。
+        worker_init_fn: 工作进程初始化函数。
+
+    Returns:
+        配置好的 DataLoader。
+    """
+    logger.info("using WebDataset (IterableDataset) data loader")
+    logger.info("sampler: none (WebDataset handles shuffling internally)")
+
+    data_loader = torch.utils.data.DataLoader(
+        dataset,
+        sampler=None,  # WebDataset 不使用 Sampler
+        shuffle=False,  # 强制关闭，shuffle 由 WebDataset 内部处理
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=drop_last,
+        persistent_workers=persistent_workers and num_workers > 0,
+        collate_fn=collate_fn,
+        worker_init_fn=worker_init_fn,
+    )
+
+    logger.info("infinite WebDataset data loader")
     return data_loader
