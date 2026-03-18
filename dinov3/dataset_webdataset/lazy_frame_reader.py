@@ -1,21 +1,5 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-#
-# DINOv3 多源医学影像 WebDataset 归档 — 动态单帧读取模块。
-
-"""
-动态单帧读取 (Frame Reader)。
-
-优化策略：
-1. 对 dynamic + frame_idx 样本，优先按 TIFF pages 精准读取目标 frame；
-2. 但对超大文件 / 超长序列，避免在 NFS 上走随机页访问；
-3. 超大文件直接回退到顺序整读 + flatten_and_slice；
-4. 支持“复用已打开的 tifffile.TiffFile 对象”，供 ray_worker 按文件分组批处理。
-
-统一返回 (C, H, W)。
-"""
-
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -23,73 +7,57 @@ from .config import ImageMeta
 
 logger = logging.getLogger("dinov3")
 
-# -----------------------------
-# 读取策略阈值（可按机器情况微调）
-# -----------------------------
-# 文件超过 2GB：优先整读，避免 NFS 上随机页 seek 太慢
-PAGE_READ_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
-
-# 帧数超过 1000：优先整读
-PAGE_READ_MAX_FRAME_COUNT = 1000
-
-# 若目标帧接近末尾，随机 seek 往往更吃亏；这里给个可选阈值
-# ratio > 0.8 时更倾向整读（可关闭）
-TAIL_FRAME_RATIO_FOR_FULL_READ = 0.80
-
 
 def read_dynamic_target_frame(meta: ImageMeta) -> Optional[np.ndarray]:
-    """
-    单条读取接口：
-    - 小文件 / 中等序列：优先按页精准读取；
-    - 超大文件 / 超长序列：优先顺序整读；
-    - 失败时自动尝试另一种策略兜底。
+    frame, _ = read_dynamic_target_frame_with_strategy(meta)
+    return frame
 
-    Returns:
-        (C, H, W) 或 None
+
+def read_dynamic_target_frame_with_strategy(
+    meta: ImageMeta,
+) -> Tuple[Optional[np.ndarray], str]:
+    """
+    返回 (frame, strategy)
+
+    strategy:
+        - memmap
+        - key_range
+        - page_loop
+        - full_fallback
+        - failed
     """
     if meta.frame_idx is None:
-        return None
+        return None, "failed"
 
     try:
         import tifffile
     except ImportError:
         logger.error("tifffile 未安装: pip install tifffile")
-        return None
+        return None, "failed"
 
-    prefer_full = _should_prefer_full_read(meta)
+    frame = _read_via_memmap(meta, tifffile)
+    if frame is not None:
+        return frame, "memmap"
 
-    # 先走首选策略
-    if prefer_full:
-        frame = _read_via_full_imread(meta, tifffile)
-        if frame is not None:
-            return frame
+    frame = _read_via_key_range(meta, tifffile)
+    if frame is not None:
+        return frame, "key_range"
 
-        frame = _read_via_pages_openclose(meta, tifffile)
-        if frame is not None:
-            return frame
-    else:
-        frame = _read_via_pages_openclose(meta, tifffile)
-        if frame is not None:
-            return frame
+    frame = _read_via_pages_openclose(meta, tifffile)
+    if frame is not None:
+        return frame, "page_loop"
 
-        frame = _read_via_full_imread(meta, tifffile)
-        if frame is not None:
-            return frame
+    frame = _read_via_full_imread(meta, tifffile)
+    if frame is not None:
+        return frame, "full_fallback"
 
-    return None
+    return None, "failed"
 
 
 def read_dynamic_target_frame_from_tif(tif, meta: ImageMeta) -> Optional[np.ndarray]:
     """
-    基于已打开的 tifffile.TiffFile 对象读取目标 frame。
-    这是给 ray_worker 分组处理时复用的核心函数。
-
-    注意：
-    - 这里只做“按页读取”；
-    - 不做整读，因为外层已经决定复用打开的 tif 了。
-
-    Returns:
-        (C, H, W) 或 None
+    给 ray_worker 按文件分组时复用。
+    这里仍然只做 page-based 读取，因为外层已经持有打开的 tif。
     """
     c = meta.channel_count
     h = meta.height
@@ -116,7 +84,7 @@ def read_dynamic_target_frame_from_tif(tif, meta: ImageMeta) -> Optional[np.ndar
 
             if arr.ndim != 2:
                 logger.warning(
-                    f"page 不是 2D，无法直接组成 frame: page_idx={i}, shape={arr.shape}, id={meta.row_id}"
+                    f"page 不是 2D: page_idx={i}, shape={arr.shape}, id={meta.row_id}"
                 )
                 return None
 
@@ -130,72 +98,79 @@ def read_dynamic_target_frame_from_tif(tif, meta: ImageMeta) -> Optional[np.ndar
                 )
                 return None
 
-        return np.stack(pages, axis=0)  # (C, H, W)
+        return np.stack(pages, axis=0)
 
     except (OSError, RuntimeError, ValueError) as exc:
         logger.warning(f"按页读取失败 [{meta.file_path}]: {exc}")
         return None
 
 
-# ============================================================
-# 内部辅助函数
-# ============================================================
-
-def _should_prefer_full_read(meta: ImageMeta) -> bool:
+def _read_via_memmap(meta: ImageMeta, tifffile) -> Optional[np.ndarray]:
     """
-    判断该 dynamic 文件是否更适合顺序整读而不是按页随机读。
+    最优先：如果 TIFF 可 memmap，则直接按页切。
     """
-    file_size = meta.file_size_bytes or 0
-    frame_count = meta.frame_count or 0
-    frame_idx = meta.frame_idx if meta.frame_idx is not None else 0
+    try:
+        arr = tifffile.memmap(meta.file_path)
+    except Exception:
+        return None
 
-    if file_size >= PAGE_READ_MAX_FILE_BYTES:
-        return True
+    return _flatten_and_slice(arr, meta)
 
-    if frame_count >= PAGE_READ_MAX_FRAME_COUNT:
-        return True
 
-    if frame_count > 0 and frame_idx / max(frame_count, 1) >= TAIL_FRAME_RATIO_FOR_FULL_READ:
-        return True
+def _read_via_key_range(meta: ImageMeta, tifffile) -> Optional[np.ndarray]:
+    """
+    次优先：让 tifffile 一次性读取连续 key 范围。
+    通常比手工 for pages[i].asarray() 更快。
+    """
+    c = meta.channel_count
+    fidx = meta.frame_idx
+    start = fidx * c
+    end = start + c
 
-    return False
+    try:
+        arr = tifffile.imread(meta.file_path, key=range(start, end))
+    except Exception:
+        return None
+
+    if arr is None:
+        return None
+
+    # 目标统一输出 (C, H, W)
+    if arr.ndim == 2:
+        arr = arr[None, ...]
+    elif arr.ndim >= 3:
+        # 如果 tifffile 直接给出 (C,H,W) 则保持
+        # 如果有更复杂形状，则退回统一 flatten 逻辑
+        if not (arr.shape[-2] == meta.height and arr.shape[-1] == meta.width):
+            return _flatten_and_slice(arr, meta)
+
+    if arr.shape[-2:] == (meta.width, meta.height):
+        arr = np.swapaxes(arr, -1, -2)
+
+    if arr.shape[0] != meta.channel_count or arr.shape[-2:] != (meta.height, meta.width):
+        return _flatten_and_slice(arr, meta)
+
+    return arr
 
 
 def _read_via_pages_openclose(meta: ImageMeta, tifffile) -> Optional[np.ndarray]:
-    """
-    打开文件后按页读取目标 frame。
-    适合小/中等 dynamic TIFF。
-    """
     try:
         with tifffile.TiffFile(meta.file_path) as tif:
             return read_dynamic_target_frame_from_tif(tif, meta)
-    except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
-        logger.warning(f"按页读取失败，回退其他策略 [{meta.file_path}]: {exc}")
+    except (FileNotFoundError, OSError, RuntimeError, ValueError):
         return None
 
 
 def _read_via_full_imread(meta: ImageMeta, tifffile) -> Optional[np.ndarray]:
-    """
-    整文件顺序 imread 后，再 flatten + slice。
-    对超大文件 / NFS 场景往往更稳。
-    """
     try:
-        full_array = tifffile.imread(meta.file_path)
-    except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
-        logger.warning(f"整读 TIFF 失败 [{meta.file_path}]: {exc}")
+        arr = tifffile.imread(meta.file_path)
+    except Exception:
         return None
 
-    return _flatten_and_slice(full_array, meta)
+    return _flatten_and_slice(arr, meta)
 
 
-def _flatten_and_slice(
-    arr: np.ndarray,
-    meta: ImageMeta,
-) -> Optional[np.ndarray]:
-    """
-    找 H,W → 展平为 (N, H, W) → 按 frame_idx*C 切片 → (C, H, W)。
-    作为整读后的切帧逻辑。
-    """
+def _flatten_and_slice(arr: np.ndarray, meta: ImageMeta) -> Optional[np.ndarray]:
     h, w, c = meta.height, meta.width, meta.channel_count
     fidx = meta.frame_idx
 
@@ -206,12 +181,11 @@ def _flatten_and_slice(
         )
         return None
 
-    total_pages = pages.shape[0]
     start = fidx * c
     end = start + c
-    if end > total_pages:
+    if end > pages.shape[0]:
         logger.warning(
-            f"frame_idx 越界: start={start}, end={end}, total_pages={total_pages}, id={meta.row_id}"
+            f"frame_idx 越界: start={start}, end={end}, total_pages={pages.shape[0]}, id={meta.row_id}"
         )
         return None
 
@@ -219,9 +193,6 @@ def _flatten_and_slice(
 
 
 def _reshape_to_pages(arr: np.ndarray, target_h: int, target_w: int) -> Optional[np.ndarray]:
-    """
-    把任意包含 H/W 维度的数组展平成 (N, H, W)。
-    """
     if arr.ndim < 2:
         return None
 
@@ -238,9 +209,6 @@ def _reshape_to_pages(arr: np.ndarray, target_h: int, target_w: int) -> Optional
 
 
 def _find_hw_axes(shape: tuple, target_h: int, target_w: int) -> Optional[tuple]:
-    """
-    在 shape 中寻找对应 H/W 的两个轴。
-    """
     ndim = len(shape)
 
     if ndim >= 2:
