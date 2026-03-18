@@ -10,7 +10,10 @@ import numpy as np
 
 from dinov3.dataset_webdataset.config import ImageMeta
 from dinov3.dataset_webdataset.frame_extractor import extract_all_frames
-from dinov3.dataset_webdataset.lazy_frame_reader import read_dynamic_target_frame
+# from dinov3.dataset_webdataset.lazy_frame_reader import read_dynamic_target_frame
+from dinov3.dataset_webdataset.lazy_frame_reader import (
+    read_dynamic_target_frame_with_strategy,
+)
 from dinov3.dataset_webdataset.npy_namer import build_npy_name
 from dinov3.dataset_webdataset.quality_filter import passes_quality_check
 from dinov3.dataset_webdataset.spatial_slicer import needs_slicing, slice_wsi_patches
@@ -28,16 +31,30 @@ def process_single_meta(
     """Process one ImageMeta and save tiffs for visual verification."""
     _log_meta_header(meta)
 
+    # if meta.is_dynamic and meta.frame_idx is not None:
+    #     t0 = time.perf_counter()
+    #     frame = read_dynamic_target_frame(meta)
+    #     t_read = time.perf_counter()
+
+    #     logger.info(f"    ⏱ [dynamic读帧] {t_read - t0:.2f}s")
+
+    #     if frame is None:
+    #         logger.warning("  ❌ 单帧读取失败，跳过")
+    #         return 0
+
+    #     return _save_frames_timed([frame], meta, max_target_size, output_dir, skip_quality)
     if meta.is_dynamic and meta.frame_idx is not None:
         t0 = time.perf_counter()
-        frame = read_dynamic_target_frame(meta)
+        frame, strategy = read_dynamic_target_frame_with_strategy(meta)
         t_read = time.perf_counter()
-        logger.info(f"    ⏱ [按页读/回退切帧] {t_read - t0:.2f}s")
+
+        logger.info(f"    ⏱ [dynamic读帧: {strategy}] {t_read - t0:.2f}s")
+
         if frame is None:
             logger.warning("  ❌ 单帧读取失败，跳过")
             return 0
-        return _save_frames_timed([frame], meta, max_target_size, output_dir, skip_quality)
 
+        return _save_frames_timed([frame], meta, max_target_size, output_dir, skip_quality)
     t0 = time.perf_counter()
     raw = read_tiff_safe(meta.file_path, meta.file_size_bytes)
     t_read = time.perf_counter()
@@ -45,6 +62,7 @@ def process_single_meta(
     if raw is None:
         logger.warning("  ❌ TIFF 读取失败，跳过")
         return 0
+
     logger.info(f"  📖 原始数据: shape={raw.shape}, dtype={raw.dtype}")
 
     tensor = reconstruct(raw, meta)
@@ -54,6 +72,7 @@ def process_single_meta(
     if tensor is None:
         logger.warning("  ❌ 张量重构失败，跳过")
         return 0
+
     logger.info(f"  🔧 重构后: shape={tensor.shape}")
 
     frames = extract_all_frames(tensor, meta)
@@ -63,6 +82,7 @@ def process_single_meta(
     if not frames:
         logger.warning("  ❌ 帧提取结果为空，跳过")
         return 0
+
     logger.info(f"  🎞️  提取到 {len(frames)} 帧, 每帧 shape={frames[0].shape}")
     return _save_frames_timed(frames, meta, max_target_size, output_dir, skip_quality)
 
@@ -77,7 +97,7 @@ def _save_frames_timed(
     """Save with per-stage timing."""
     t0 = time.perf_counter()
     saved, rejected = 0, 0
-    t_slice_total, t_quality_total, t_write_total = 0.0, 0.0, 0.0
+    t_quality_total, t_write_total = 0.0, 0.0
 
     for f_idx, frame in enumerate(frames):
         is_sliced = needs_slicing(frame)
@@ -87,32 +107,28 @@ def _save_frames_timed(
             else meta
         )
 
-        t_s = time.perf_counter()
         for patch in slice_wsi_patches(frame, max_target_size):
-            t_slice_total += time.perf_counter() - t_s
-
             if is_sliced and not skip_quality:
                 t_q = time.perf_counter()
                 ok = passes_quality_check(patch.array)
                 t_quality_total += time.perf_counter() - t_q
                 if not ok:
-                    t_s = time.perf_counter()
                     rejected += 1
                     continue
 
             npy_name = build_npy_name(naming_meta, patch if is_sliced else None)
+
             t_w = time.perf_counter()
             _save_tiff(patch.array, output_dir / npy_name.replace(".npy", ".tiff"))
             t_write_total += time.perf_counter() - t_w
 
             saved += 1
-            t_s = time.perf_counter()
 
     del frames
     t_done = time.perf_counter()
 
     logger.info(
-        f"    ⏱ [切片+遍历] {t_slice_total:.2f}s  "
+        f"    ⏱ [切片+遍历] 0.00s  "
         f"[质量过滤] {t_quality_total:.2f}s  "
         f"[写TIFF] {t_write_total:.2f}s  "
         f"[总后处理] {t_done - t0:.2f}s"
@@ -136,6 +152,7 @@ def reconstruct(raw: np.ndarray, meta: ImageMeta) -> Optional[np.ndarray]:
 def _save_tiff(array: np.ndarray, output_path: Path) -> None:
     """Write (C, H, W) array as ImageJ-compatible TIFF."""
     import tifffile
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tifffile.imwrite(str(output_path), array, imagej=True)
 
