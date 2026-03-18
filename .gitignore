@@ -18,3 +18,13 @@ outputs/
 
 # Ignore vscode directory
 .vscode/
+benchmark_data/features
+dinov3/webdataset_2.md
+dinov3/webdataset_1.md
+dinov3/test_print.py
+dinov3/webdataset_frame.md
+dinov3/webdataset_pipe.md
+dinov3/webdataset_test.md
+dinov3/webdataset.md
+dinov3/.cursorrulues
+dinov3/ray_webdataset.md
