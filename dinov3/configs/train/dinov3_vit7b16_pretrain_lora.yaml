@@ -108,7 +108,7 @@ student:
   pos_embed_rope_jitter_coords: null
   pos_embed_rope_rescale_coords: 2
   pos_embed_rope_dtype: fp32
-  fp8_enabled: true
+  fp8_enabled: false
   fp8_filter: blocks
 
 teacher:
@@ -164,6 +164,12 @@ crops:
   localcrops_subset_of_globalcrops: false
   share_color_jitter: false
   horizontal_flips: false
+  # float_input=true: TIFF decoder outputs float32 [0,1] — keeps full 16-bit
+  # precision.  RandomSolarize threshold is set to 0.5 (=128/255) automatically.
+  float_input: true
+  # TODO: replace with statistics computed from your actual ch3 dataset.
+  # Use the compute_dataset_stats.py script or similar to get per-channel
+  # mean and std over the training set (images already in [0,1] range).
   rgb_mean:
   - 0.485
   - 0.456
