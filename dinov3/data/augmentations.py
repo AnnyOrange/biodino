@@ -32,6 +32,7 @@ class DataAugmentationDINO(object):
         horizontal_flips=True,
         mean=IMAGENET_DEFAULT_MEAN,
         std=IMAGENET_DEFAULT_STD,
+        float_input=False,
     ):
         self.global_crops_scale = global_crops_scale
         self.local_crops_scale = local_crops_scale
@@ -46,6 +47,7 @@ class DataAugmentationDINO(object):
         self.share_color_jitter = share_color_jitter
         self.mean = mean
         self.std = std
+        self.float_input = float_input
 
         logger.info("###################################")
         logger.info("Using data augmentation parameters:")
@@ -61,6 +63,7 @@ class DataAugmentationDINO(object):
         logger.info(f"patch_size if local_crops_subset_of_global_crops: {patch_size}")
         logger.info(f"share_color_jitter: {share_color_jitter}")
         logger.info(f"horizontal flips: {horizontal_flips}")
+        logger.info(f"float_input: {float_input} (solarize threshold: {'0.5' if float_input else '128'})")
         logger.info("###################################")
 
         # Global crops and gram teacher crops can have different sizes. We first take a crop of the maximum size
@@ -131,16 +134,24 @@ class DataAugmentationDINO(object):
 
         global_transfo1_extra = GaussianBlur(p=1.0)
 
+        # For float32 input (e.g. biological 16-bit images scaled to [0,1]),
+        # RandomSolarize threshold must be in [0, 1].  For uint8 input the
+        # original threshold of 128 (out of 255) is equivalent to ~0.502.
+        solarize_threshold = 0.5 if float_input else 128
+
         global_transfo2_extra = v2.Compose(
             [
                 GaussianBlur(p=0.1),
-                v2.RandomSolarize(threshold=128, p=0.2),
+                v2.RandomSolarize(threshold=solarize_threshold, p=0.2),
             ]
         )
 
         local_transfo_extra = GaussianBlur(p=0.5)
 
         # normalization
+        # When float_input=True the tensor is already float32 [0,1], so
+        # ToDtype(..., scale=True) is a no-op (same dtype → no rescaling).
+        # We keep it for code-path uniformity; it does not double-scale.
         self.normalize = v2.Compose(
             [
                 v2.ToImage(),

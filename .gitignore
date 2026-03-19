@@ -30,3 +30,5 @@ dinov3/.cursorrulues
 dinov3/ray_webdataset.md
 dinov3/dataset_webdataset/test
 dinov3/test_print.py
+dinov3/dataset_webdataset/
+dinov3/smart_sharding

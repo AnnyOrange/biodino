@@ -59,7 +59,7 @@ class SinkhornKnoppTeacher(nn.Module):
 
 
 class iBOTPatchLoss(nn.Module):
-    def __init__(self, patch_out_dim, student_temp=0.1, center_momentum=0.9):
+    def __init__(self, patch_out_dim, student_temp=0.1, center_momentum=0.9, compile_sinkhorn=False):
         super().__init__()
         self.student_temp = student_temp
         self.center_momentum = center_momentum
@@ -69,7 +69,8 @@ class iBOTPatchLoss(nn.Module):
         self.len_teacher_patch_tokens = None
         self.async_batch_center = None
         self.sinkhorn_knopp_teacher = SinkhornKnoppTeacher()
-        self.sinkhorn_knopp_teacher.compile()
+        if compile_sinkhorn:
+            self.sinkhorn_knopp_teacher.compile()
 
     def init_weights(self) -> None:
         self.center.zero_()

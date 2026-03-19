@@ -52,11 +52,19 @@ class SSLMetaArch(nn.Module):
         student_backbone, teacher_backbone, embed_dim = build_model_from_cfg(cfg)
         torch.cuda.empty_cache()
         gc.collect()
-        gram_backbone, _ = build_model_from_cfg(cfg, only_teacher=True)
         logger.info(f"Number of parameters: {count_parameters(student_backbone)}")
         student_model_dict["backbone"] = student_backbone
         teacher_model_dict["backbone"] = teacher_backbone
-        gram_model_dict["backbone"] = gram_backbone
+        # Only build the gram backbone when gram loss is actually enabled,
+        # otherwise it wastes ~14 GB of GPU memory for nothing.
+        if cfg.gram.use_loss or cfg.gram.compute_stats:
+            gram_backbone, _ = build_model_from_cfg(cfg, only_teacher=True)
+            torch.cuda.empty_cache()
+            gc.collect()
+            gram_model_dict["backbone"] = gram_backbone
+            logger.info("Gram backbone built (gram.use_loss or compute_stats is enabled)")
+        else:
+            logger.info("Gram backbone skipped (gram.use_loss=False, compute_stats=False)")
         logger.info(f"OPTIONS -- architecture : embed_dim: {embed_dim}")
 
         self.embed_dim = embed_dim  # D
@@ -123,7 +131,7 @@ class SSLMetaArch(nn.Module):
         )
         student_model_dict["ibot_head"] = ibot_head_class()
         teacher_model_dict["ibot_head"] = ibot_head_class()
-        self.ibot_patch_loss = iBOTPatchLoss(cfg.ibot.head_n_prototypes)
+        self.ibot_patch_loss = iBOTPatchLoss(cfg.ibot.head_n_prototypes, compile_sinkhorn=cfg.train.compile)
 
         # Build student and teacher models
         self.student = nn.ModuleDict(student_model_dict)
@@ -754,6 +762,7 @@ class SSLMetaArch(nn.Module):
             horizontal_flips=cfg.crops.horizontal_flips,
             mean=cfg.crops.rgb_mean,
             std=cfg.crops.rgb_std,
+            float_input=getattr(cfg.crops, "float_input", False),
         )
 
     def get_maybe_fused_params_for_submodel(self, m: nn.Module):
