@@ -12,6 +12,14 @@ compute_precision:
   param_dtype: bf16
   reduce_dtype: fp32
   sharding_strategy: SHARD_GRAD_OP
+  # HSDP: model sharded across hsdp_shards GPUs per group.
+  # Best practice for multi-node: set hsdp_shards = nproc_per_node so that
+  # the FSDP shard group stays entirely within one node (uses fast NVLink /
+  # intra-node PCIe), while cross-node communication is only a single
+  # gradient all-reduce (DDP-style).
+  # Override at runtime: compute_precision.hsdp_shards=6
+  # Set to 1 to disable HSDP and use pure 1-D FSDP across all GPUs.
+  hsdp_shards: 6
 
 # LoRA Configuration
 lora:
@@ -60,7 +68,7 @@ gram:
   compute_stats: false
 
 train:
-  batch_size_per_gpu: 8   # Reduced for LoRA training (less memory needed)
+  batch_size_per_gpu: 12   # Reduced for LoRA training (less memory needed)
   dataset_path: null       # Set this to your dataset path
   saveckp_freq: 20
   seed: 0
