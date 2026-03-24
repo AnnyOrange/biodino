@@ -21,6 +21,60 @@ from dinov3.utils import utils
 logger = logging.getLogger("dinov3")
 
 
+def _build_world_mesh(cfg) -> DeviceMesh:
+    """Build a 1-D (pure FSDP) or 2-D (HSDP) DeviceMesh.
+
+    Configure via ``compute_precision.hsdp_shards`` in the YAML:
+
+    * ``hsdp_shards: 1``  (default) — classic FSDP, model sharded across ALL
+      world_size GPUs.  One all-gather/reduce-scatter per layer per step
+      involving every GPU → high communication overhead with many cards.
+
+    * ``hsdp_shards: N``  (N > 1) — Hybrid Sharded Data Parallel.
+      GPUs are grouped into ``world_size // N`` replica groups of N cards each.
+      Within each group, parameters are sharded (FSDP).
+      Across groups, gradients are all-reduced (DDP).
+
+    Example with 8 GPUs and hsdp_shards=2:
+        Mesh (4, 2):
+          dp_replicate dim (size 4): groups [0,1], [2,3], [4,5], [6,7]
+          dp_shard     dim (size 2): within each group, model cut in 2
+
+        Communication pattern:
+          - param all-gather/reduce-scatter:  2-card bandwidth  (fast)
+          - gradient all-reduce:              4-card bandwidth  (moderate)
+        vs. pure FSDP: every op touches all 8 cards.
+    """
+    world_size = dist.get_world_size()
+    hsdp_shards = getattr(cfg.compute_precision, "hsdp_shards", 1)
+
+    if hsdp_shards > 1:
+        if world_size % hsdp_shards != 0:
+            raise ValueError(
+                f"hsdp_shards={hsdp_shards} does not evenly divide "
+                f"world_size={world_size}. Choose a divisor of {world_size}."
+            )
+        dp_replicas = world_size // hsdp_shards
+        mesh = init_device_mesh(
+            "cuda",
+            mesh_shape=(dp_replicas, hsdp_shards),
+            mesh_dim_names=("dp_replicate", "dp_shard"),
+        )
+        logger.info(
+            f"HSDP mesh: {dp_replicas} replica-groups × {hsdp_shards} shards/group  "
+            f"(world_size={world_size})"
+        )
+    else:
+        mesh = init_device_mesh(
+            "cuda",
+            mesh_shape=(world_size,),
+            mesh_dim_names=("dp",),
+        )
+        logger.info(f"FSDP mesh: 1-D, {world_size} shards")
+
+    return mesh
+
+
 def map_modules_and_blocks(models: list[nn.ModuleDict], callable) -> None:
     for m in models:
         assert isinstance(m, nn.ModuleDict)
@@ -101,12 +155,7 @@ def ac_compile_parallelize(
 
     map_modules_and_blocks(all_models, wrap_compile_block)
 
-    # 3/ Wrap submodules with FSDP
-    world_mesh = init_device_mesh(
-        "cuda",
-        mesh_shape=(dist.get_world_size(),),
-        mesh_dim_names=("dp",),
-    )
+    # 3/ Wrap submodules with FSDP (or HSDP when hsdp_shards > 1)
     DTYPE_MAP = {
         "fp16": torch.float16,
         "bf16": torch.bfloat16,
@@ -117,16 +166,20 @@ def ac_compile_parallelize(
         reduce_dtype=DTYPE_MAP[cfg.compute_precision.reduce_dtype],
     )
 
+    world_mesh = _build_world_mesh(cfg)
+
     for m, pg in zip(all_models, all_pgs):
-        if pg is None:
-            world_mesh = init_device_mesh(
-                "cuda",
-                mesh_shape=(dist.get_world_size(),),
-                mesh_dim_names=("dp",),
-            )
+        # When a custom process-subgroup is provided (and it is NOT the global
+        # WORLD group), fall back to a 1-D mesh derived from that group.
+        # In practice get_process_subgroup() currently always returns WORLD,
+        # so we only hit this branch if the caller explicitly passes a real
+        # sub-group (e.g. for a future koleo-replica topology).
+        if pg is not None and pg is not dist.group.WORLD:
+            mesh = DeviceMesh.from_group(pg, "cuda")
+            logger.info(f"FSDP: using explicit process-group mesh ({dist.get_world_size(pg)} ranks)")
         else:
-            world_mesh = DeviceMesh.from_group(pg, "cuda")
-        fsdp_config = {"mesh": world_mesh, "mp_policy": mp_policy}
+            mesh = world_mesh
+        fsdp_config = {"mesh": mesh, "mp_policy": mp_policy}
         for k in m.keys():
             if k != "backbone":
                 m[k] = fully_shard(m[k], **fsdp_config, reshard_after_forward=True)

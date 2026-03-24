@@ -149,11 +149,21 @@ class DataAugmentationDINO(object):
         local_transfo_extra = GaussianBlur(p=0.5)
 
         # normalization
-        # When float_input=True the tensor is already float32 [0,1], so
-        # ToDtype(..., scale=True) is a no-op (same dtype → no rescaling).
-        # We keep it for code-path uniformity; it does not double-scale.
+        # When float_input=True the tensor is already float32 [0,1].
+        # Bicubic interpolation and ColorJitter can push values slightly
+        # outside [0,1] (ringing artefacts, brightness > 1.0, etc.).
+        # Those small excursions are harmless for uint8 (clamped by dtype),
+        # but for float inputs they survive into the DINO softmax where
+        # dividing by teacher_temp=0.07 amplifies them ~14x → NaN.
+        # We clamp back to [0,1] just before the channel-wise normalize.
+        if float_input:
+            pre_norm_clamp = v2.Lambda(lambda x: x.clamp(0.0, 1.0))
+        else:
+            pre_norm_clamp = nn.Identity()
+
         self.normalize = v2.Compose(
             [
+                pre_norm_clamp,
                 v2.ToImage(),
                 v2.ToDtype(torch.float32, scale=True),
                 make_normalize_transform(mean=mean, std=std),
