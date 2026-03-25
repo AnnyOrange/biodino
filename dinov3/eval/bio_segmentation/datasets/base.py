@@ -3,6 +3,14 @@ Abstract base class for biological segmentation datasets.
 
 Subclasses only need to implement `load_image` and `load_mask`.
 All common logic (resize, preprocess, augment, tensor conversion) lives here.
+
+Size semantics
+--------------
+size = (H, W)  → resize every sample to this fixed size.
+                 Use for feature-extractor caching (linear probe).
+size = None    → return each sample at its native resolution.
+                 Use for Mask2Former training (random crop via collate_fn)
+                 and sliding-window evaluation.
 """
 
 import logging
@@ -27,46 +35,47 @@ class BioSegDataset(Dataset, ABC):
     Base dataset for binary foreground / background cell segmentation.
 
     Each sample returns:
-        img_tensor:  [3, H, W] float32 in [0, 1].
-        mask_tensor: [H, W] int64 with values 0 (background) or 1 (cell).
+        img_tensor  : [3, H, W] float32 in [0, 1]
+        mask_tensor : [H, W] int64  0=background, 1=cell
+
+    When size=None the spatial dimensions (H, W) are the image's native
+    resolution (rounded to the nearest multiple of patch_size only for
+    informational logging — no actual resize is performed).
     """
 
     def __init__(
         self,
-        img_paths: List[str],
+        img_paths:  List[str],
         mask_paths: List[str],
-        mode: str = 'hybrid',
-        size: Optional[Tuple[int, int]] = None,
+        mode:       str = 'hybrid',
+        size:       Optional[Tuple[int, int]] = None,
         patch_size: int = 16,
-        augment: bool = False,
+        augment:    bool = False,
     ):
         """
         Args:
             img_paths:  list of image file paths.
             mask_paths: list of corresponding mask file paths.
-            mode:       preprocessing mode ('minmax', 'percentile', 'hybrid').
-            size:       fixed (H, W) output size.  If None, inferred from the
-                        first image rounded to patch_size multiples.
-            patch_size: ViT patch size used when auto-inferring size.
+            mode:       channel-wise normalisation ('minmax', 'percentile', 'hybrid').
+            size:       (H, W) to resize every sample to, or None to keep
+                        native resolution.
+            patch_size: ViT patch size (used only for logging).
             augment:    enable random horizontal/vertical flips.
         """
         assert len(img_paths) == len(mask_paths), (
             f"Image count ({len(img_paths)}) != mask count ({len(mask_paths)})"
         )
-        self.img_paths = img_paths
+        self.img_paths  = img_paths
         self.mask_paths = mask_paths
-        self.mode = mode
+        self.mode       = mode
         self.patch_size = patch_size
-        self.augment = augment
+        self.augment    = augment
+        self.size       = size   # None → no resize (native resolution)
 
-        if size is not None:
-            self.size = size
-        else:
-            sample = self.load_image(img_paths[0])
-            h, w = sample.shape[:2]
-            self.size = get_size_multiple_of_patch((h, w), patch_size)
+        if size is None:
             logger.info(
-                f"Auto image size: original ({h}, {w}) -> adjusted to {self.size}"
+                "size=None → images returned at native resolution "
+                "(for Mask2Former; use size=(H,W) for feature-extractor caching)"
             )
 
     # ------------------------------------------------------------------
@@ -97,25 +106,27 @@ class BioSegDataset(Dataset, ABC):
         elif img.shape[2] == 4:
             img = img[:, :, :3]
 
-        # Normalize per channel
+        # Normalise per channel
         img = apply_preprocessing(img, mode=self.mode)
 
-        # Resize
-        h, w = self.size
-        img = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
-
         mask = self.load_mask(self.mask_paths[idx])
-        mask = cv2.resize(mask.astype(np.float32), (w, h), interpolation=cv2.INTER_NEAREST).astype(np.int64)
+
+        # Resize only when a fixed output size is requested
+        if self.size is not None:
+            h, w = self.size
+            img  = cv2.resize(img,  (w, h), interpolation=cv2.INTER_LINEAR)
+            mask = cv2.resize(mask.astype(np.float32), (w, h),
+                              interpolation=cv2.INTER_NEAREST).astype(np.int64)
 
         # Data augmentation
         if self.augment:
             if np.random.rand() > 0.5:
-                img = np.flip(img, axis=1).copy()
+                img  = np.flip(img,  axis=1).copy()
                 mask = np.flip(mask, axis=1).copy()
             if np.random.rand() > 0.5:
-                img = np.flip(img, axis=0).copy()
+                img  = np.flip(img,  axis=0).copy()
                 mask = np.flip(mask, axis=0).copy()
 
-        img_tensor = torch.from_numpy(img).permute(2, 0, 1).float()
+        img_tensor  = torch.from_numpy(img).permute(2, 0, 1).float()
         mask_tensor = torch.from_numpy(mask).long()
         return img_tensor, mask_tensor

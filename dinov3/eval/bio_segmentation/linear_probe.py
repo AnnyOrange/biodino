@@ -1,25 +1,36 @@
 """
 Unified Linear Probe for biological cell segmentation.
 
-Trains a frozen DINOv3 backbone + a single linear segmentation head on any
-dataset registered in DATASET_REGISTRY.  Compares three preprocessing modes
-(minmax / percentile / hybrid) and reports mIoU / Dice per mode.
+Two operation modes:
+    ONLINE mode (default):
+        Frozen DINOv3 backbone computes features every iteration.
+        Slower but requires no pre-computation step.
 
-Usage:
-    python -m dinov3.eval.bio_segmentation.linear_probe \\
-        --dataset    cellpose \\
-        --data-path  /data/Cellpose \\
-        --checkpoint /ckpts/dinov3_vitl16.pth \\
-        --output-dir ./outputs/linear_probe \\
-        --model-size l \\
-        --epochs 10
+    CACHED mode (--use-cached-features):
+        Reads pre-extracted .npz feature files (from feature_extractor.py).
+        Backbone is NOT loaded; training is extremely fast.
 
+Metrics reported (both modes):
+    Semantic  : mIoU, mDice, mPrecision, mRecall   per class
+    Instance  : AJI, AP@0.5, AP (COCO), bPQ (+ mPQ when multi-class)
+
+Usage – ONLINE:
     python -m dinov3.eval.bio_segmentation.linear_probe \\
-        --dataset    csc \\
-        --data-path  /data/CSC \\
-        --checkpoint /ckpts/dinov3_vitl16.pth \\
-        --output-dir ./outputs/linear_probe \\
-        --train-split train --eval-split tune
+        --dataset    monuseg \\
+        --data-root  /data1/xuzijing/dataset/monuseg/extracted \\
+        --checkpoint /data1/xuzijing/checkpoints/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth \\
+        --output-dir ./outputs/linear_probe/monuseg \\
+        --model-size l --epochs 20 --batch-size 4
+
+Usage – CACHED:
+    python -m dinov3.eval.bio_segmentation.linear_probe \\
+        --dataset    monuseg \\
+        --use-cached-features \\
+        --train-cache ./cache/monuseg/monuseg_train_l_last1_s512.npz \\
+        --val-cache   ./cache/monuseg/monuseg_val_l_last1_s512.npz \\
+        --test-cache  ./cache/monuseg/monuseg_test_l_last1_s512.npz \\
+        --output-dir  ./outputs/linear_probe/monuseg \\
+        --epochs 50 --batch-size 64
 """
 
 import argparse
@@ -33,48 +44,42 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from scipy.ndimage import label as scipy_label
+from skimage.measure import label as sk_label
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 from tqdm import tqdm
 
-from .datasets import DATASET_REGISTRY
-from .model_utils import load_dinov3_backbone
-from .visualization import save_prediction_visualization
+from .metrics import (
+    accumulate_instance_metrics,
+    accumulate_semantic_metrics,
+    compute_aji,
+    compute_ap,
+    compute_pq,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('bio_segmentation.linear_probe')
+logger = logging.getLogger('bio_seg.linear_probe')
 
 
 # ============================================================================
-# Model
+# Model: Conv head on top of pre-extracted or live-extracted features
 # ============================================================================
 
-class DINOv3LinearSegmenter(nn.Module):
+class LinearSegHead(nn.Module):
     """
-    Frozen DINOv3 backbone + lightweight linear segmentation head (1×1 conv).
+    Lightweight 1×1 convolutional segmentation head.
 
-    Only the head is trained; the backbone stays in eval() throughout.
-    When use_multi_scale=True the last 4 layers are concatenated, otherwise
-    only the final layer is used.
+    Input  : [B, in_channels, H_p, W_p]  (patch-level features)
+    Output : [B, num_classes, H, W]       (upsampled to original image size)
     """
 
     def __init__(
         self,
-        backbone: nn.Module,
-        num_classes: int = 2,
-        use_multi_scale: bool = False,
-        dropout: float = 0.1,
+        in_channels:  int,
+        num_classes:  int,
+        dropout:      float = 0.1,
     ):
         super().__init__()
-        self.backbone = backbone
-        self.patch_size = backbone.patch_size
-        self.use_multi_scale = use_multi_scale
-        self.n_layers = 4 if use_multi_scale else 1
-        in_channels = backbone.embed_dim * self.n_layers
-
-        for param in self.backbone.parameters():
-            param.requires_grad = False
-        self.backbone.eval()
-
         self.head = nn.Sequential(
             nn.Dropout2d(dropout),
             nn.BatchNorm2d(in_channels),
@@ -83,314 +88,566 @@ class DINOv3LinearSegmenter(nn.Module):
         nn.init.normal_(self.head[2].weight, mean=0, std=0.01)
         nn.init.constant_(self.head[2].bias, 0)
 
+    def forward(self, x: torch.Tensor, out_size: Optional[Tuple[int, int]] = None) -> torch.Tensor:
+        logits = self.head(x.float())
+        if out_size is not None and logits.shape[2:] != out_size:
+            logits = F.interpolate(logits, size=out_size, mode='bilinear', align_corners=False)
+        return logits
+
+
+class OnlineLinearSegmenter(nn.Module):
+    """
+    Frozen DINOv3 backbone + LinearSegHead (online mode).
+    Only the head parameters are trainable.
+    """
+
+    def __init__(
+        self,
+        backbone:     nn.Module,
+        num_classes:  int = 2,
+        n_layers:     int = 4,
+        dropout:      float = 0.1,
+    ):
+        super().__init__()
+        self.backbone = backbone
+        self.n_layers = n_layers
+        self.patch_size = backbone.patch_size
+        in_channels = backbone.embed_dim * n_layers
+
+        for p in self.backbone.parameters():
+            p.requires_grad = False
+        self.backbone.eval()
+
+        self.head = LinearSegHead(in_channels, num_classes, dropout)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         b, c, h, w = x.shape
-        feat_h, feat_w = h // self.patch_size, w // self.patch_size
-
         with torch.no_grad():
-            if self.use_multi_scale:
-                feats = self.backbone.get_intermediate_layers(x, n=self.n_layers, reshape=True)
-                feats = [
-                    F.interpolate(f, (feat_h, feat_w), mode='bilinear', align_corners=False)
-                    if f.shape[2:] != (feat_h, feat_w) else f
-                    for f in feats
-                ]
-                features = torch.cat(feats, dim=1)
-            else:
-                features = self.backbone.get_intermediate_layers(x, n=1, reshape=True)[0]
-
-        logits = self.head(features.float())
-        return F.interpolate(logits, size=(h, w), mode='bilinear', align_corners=False)
+            feats_list = self.backbone.get_intermediate_layers(
+                x, n=self.n_layers, reshape=True, return_class_token=False
+            )
+        feats  = torch.cat(feats_list, dim=1)   # [B, D, H_p, W_p]
+        return self.head(feats, out_size=(h, w))
 
 
 # ============================================================================
-# Metrics
+# Instance post-processing (semantic → instance via CC)
 # ============================================================================
 
-def calculate_miou(
-    pred: torch.Tensor,
-    target: torch.Tensor,
-    num_classes: int = 2,
-    ignore_index: int = 255,
-) -> Tuple[float, Dict[str, float]]:
-    pred_cls = torch.argmax(pred, dim=1)
-    class_names = ['background', 'cell']
-    ious = {}
-    for cls in range(num_classes):
-        valid = target != ignore_index
-        p = (pred_cls == cls) & valid
-        t = (target == cls) & valid
-        intersection = (p & t).sum().float().item()
-        union = (p | t).sum().float().item()
-        ious[class_names[cls] if cls < len(class_names) else f'class_{cls}'] = (
-            float('nan') if union == 0 else intersection / union
-        )
-    return float(np.nanmean(list(ious.values()))), ious
+def semantic_to_instance(
+    sem_pred: np.ndarray,
+    fg_classes: Optional[List[int]] = None,
+) -> np.ndarray:
+    """
+    Convert a semantic class map to an instance map using connected components.
 
+    Args:
+        sem_pred  : (H, W) predicted class map.
+        fg_classes: which class IDs to treat as foreground (default: all >0).
 
-def calculate_dice(pred: torch.Tensor, target: torch.Tensor) -> float:
-    pred_fg = (torch.argmax(pred, dim=1) == 1).float()
-    target_fg = (target == 1).float()
-    intersection = (pred_fg * target_fg).sum()
-    union = pred_fg.sum() + target_fg.sum()
-    return 1.0 if union == 0 else (2 * intersection / union).item()
+    Returns:
+        (H, W) instance map (0 = background, 1..N = instance IDs).
+    """
+    if fg_classes is None:
+        fg_mask = sem_pred > 0
+    else:
+        fg_mask = np.zeros_like(sem_pred, dtype=bool)
+        for c in fg_classes:
+            fg_mask |= (sem_pred == c)
+
+    inst_map, _ = scipy_label(fg_mask)
+    return inst_map.astype(np.int32)
 
 
 # ============================================================================
-# Training / evaluation loops
+# CachedFeatureDataset
 # ============================================================================
 
-def train_one_epoch(
-    model: nn.Module,
-    loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    criterion: nn.Module,
-    device: torch.device,
-    epoch: int,
-) -> Dict[str, float]:
-    model.train()
-    model.backbone.eval()
+class CachedFeatureDataset(Dataset):
+    """Wraps pre-extracted feature arrays for efficient DataLoader usage."""
 
-    total_loss = total_miou = total_dice = 0.0
+    def __init__(
+        self,
+        features:   np.ndarray,   # [N, D, H_p, W_p]
+        sem_masks:  np.ndarray,   # [N, H, W]
+        inst_maps:  Optional[np.ndarray] = None,  # [N, H, W]
+    ):
+        assert len(features) == len(sem_masks)
+        self.features  = features
+        self.sem_masks = sem_masks
+        self.inst_maps = inst_maps
+
+    def __len__(self) -> int:
+        return len(self.features)
+
+    def __getitem__(self, idx: int):
+        feat = torch.from_numpy(self.features[idx].astype(np.float32))
+        sem  = torch.from_numpy(self.sem_masks[idx].astype(np.int64))
+        if self.inst_maps is not None:
+            inst = torch.from_numpy(self.inst_maps[idx].astype(np.int64))
+            return feat, sem, inst
+        return feat, sem
+
+
+# ============================================================================
+# Training helpers
+# ============================================================================
+
+def train_one_epoch_cached(
+    head:       LinearSegHead,
+    loader:     DataLoader,
+    optimizer:  torch.optim.Optimizer,
+    criterion:  nn.Module,
+    device:     torch.device,
+    epoch:      int,
+    orig_size:  Tuple[int, int],
+) -> float:
+    """One epoch of linear head training on cached features."""
+    head.train()
+    total_loss = 0.0
     n = 0
-    pbar = tqdm(loader, desc=f'Epoch {epoch}')
-    for imgs, masks in pbar:
-        imgs, masks = imgs.to(device), masks.to(device)
-        logits = model(imgs)
-        loss = criterion(logits, masks)
+    pbar = tqdm(loader, desc=f'Epoch {epoch}', leave=False)
+    for batch in pbar:
+        feat = batch[0].to(device)
+        sem  = batch[1].to(device)
+
+        logits = head(feat, out_size=orig_size)  # [B, C, H, W]
+        loss   = criterion(logits, sem)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        with torch.no_grad():
-            miou, _ = calculate_miou(logits, masks)
-            dice = calculate_dice(logits, masks)
         total_loss += loss.item()
-        total_miou += miou
-        total_dice += dice
         n += 1
-        pbar.set_postfix(loss=f'{loss.item():.4f}', mIoU=f'{miou:.4f}', Dice=f'{dice:.4f}')
+        pbar.set_postfix(loss=f'{loss.item():.4f}')
+    return total_loss / max(n, 1)
 
-    return {'loss': total_loss / n, 'mIoU': total_miou / n, 'Dice': total_dice / n}
 
-
-@torch.no_grad()
-def evaluate(
-    model: nn.Module,
-    loader: DataLoader,
-    criterion: nn.Module,
-    device: torch.device,
-    save_vis: bool = False,
-    vis_dir: Optional[str] = None,
-    mode: str = 'hybrid',
-    max_vis: int = 10,
-) -> Dict[str, float]:
-    model.eval()
+def train_one_epoch_online(
+    model:      OnlineLinearSegmenter,
+    loader:     DataLoader,
+    optimizer:  torch.optim.Optimizer,
+    criterion:  nn.Module,
+    device:     torch.device,
+    epoch:      int,
+) -> float:
+    """One epoch of online linear probe training (backbone + head)."""
+    model.head.train()
+    model.backbone.eval()
     total_loss = 0.0
-    all_ious: Dict[str, List[float]] = {'background': [], 'cell': []}
-    all_dice: List[float] = []
-    n = vis_count = 0
+    n = 0
+    pbar = tqdm(loader, desc=f'Epoch {epoch}', leave=False)
+    for batch in pbar:
+        imgs = batch[0].to(device)
+        sem  = batch[1].to(device)
 
-    for imgs, masks in tqdm(loader, desc='Evaluating'):
-        imgs, masks = imgs.to(device), masks.to(device)
         logits = model(imgs)
-        loss = criterion(logits, masks)
-        miou, class_ious = calculate_miou(logits, masks)
-        dice = calculate_dice(logits, masks)
+        loss   = criterion(logits, sem)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
         total_loss += loss.item()
-        for cls, iou in class_ious.items():
-            if not np.isnan(iou):
-                all_ious.setdefault(cls, []).append(iou)
-        all_dice.append(dice)
         n += 1
-
-        if save_vis and vis_dir and vis_count < max_vis:
-            for i in range(min(imgs.size(0), max_vis - vis_count)):
-                save_prediction_visualization(
-                    imgs[i], masks[i], logits[i],
-                    os.path.join(vis_dir, f'{mode}_sample_{vis_count}.png'),
-                    mode,
-                )
-                vis_count += 1
-
-    return {
-        'loss': total_loss / n,
-        'mIoU': float(np.mean([np.mean(v) for v in all_ious.values() if v])),
-        'IoU_background': float(np.mean(all_ious['background'])) if all_ious['background'] else 0.0,
-        'IoU_cell': float(np.mean(all_ious['cell'])) if all_ious['cell'] else 0.0,
-        'Dice': float(np.mean(all_dice)),
-    }
+        pbar.set_postfix(loss=f'{loss.item():.4f}')
+    return total_loss / max(n, 1)
 
 
 # ============================================================================
-# Single-mode experiment
+# Evaluation
 # ============================================================================
 
-def run_experiment(
-    mode: str,
-    backbone: nn.Module,
-    DatasetClass,
-    train_img_paths: List[str],
-    train_mask_paths: List[str],
-    eval_img_paths: List[str],
-    eval_mask_paths: List[str],
-    output_dir: str,
-    epochs: int = 10,
-    batch_size: int = 8,
-    learning_rate: float = 1e-3,
-    device: torch.device = torch.device('cuda'),
-    num_workers: int = 4,
-    use_multi_scale: bool = False,
+@torch.inference_mode()
+def evaluate_cached(
+    head:          LinearSegHead,
+    loader:        DataLoader,
+    num_classes:   int,
+    orig_size:     Tuple[int, int],
+    device:        torch.device,
+    class_names:   Optional[List[str]] = None,
 ) -> Dict[str, float]:
-    logger.info(f"\n{'='*60}\nStarting experiment: {mode.upper()}\n{'='*60}")
+    """Evaluate on cached features; returns full metric dict."""
+    head.eval()
+    all_pred_sem:  List[np.ndarray] = []
+    all_gt_sem:    List[np.ndarray] = []
+    all_pred_inst: List[np.ndarray] = []
+    all_gt_inst:   List[np.ndarray] = []
+    has_inst = False
 
-    exp_dir = os.path.join(output_dir, mode)
-    vis_dir = os.path.join(exp_dir, 'visualizations')
-    os.makedirs(vis_dir, exist_ok=True)
+    for batch in tqdm(loader, desc='Eval', leave=False):
+        feat = batch[0].to(device)
+        sem  = batch[1]
+        if len(batch) == 3:
+            inst_gt = batch[2].numpy()
+            has_inst = True
+        else:
+            inst_gt = None
 
-    train_ds = DatasetClass(train_img_paths, train_mask_paths, mode=mode, size=(224, 224), augment=True)
-    eval_ds  = DatasetClass(eval_img_paths,  eval_mask_paths,  mode=mode, size=(224, 224), augment=False)
+        logits    = head(feat, out_size=orig_size)
+        pred_sem  = logits.argmax(dim=1).cpu().numpy()
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=num_workers, pin_memory=True, drop_last=True)
-    eval_loader  = DataLoader(eval_ds,  batch_size=batch_size, shuffle=False,
-                              num_workers=num_workers, pin_memory=True)
+        for i in range(len(pred_sem)):
+            all_pred_sem.append(pred_sem[i])
+            all_gt_sem.append(sem[i].numpy())
+            pred_inst = semantic_to_instance(pred_sem[i])
+            all_pred_inst.append(pred_inst)
+            if has_inst and inst_gt is not None:
+                all_gt_inst.append(inst_gt[i])
+            else:
+                all_gt_inst.append(semantic_to_instance(sem[i].numpy()))
 
-    model = DINOv3LinearSegmenter(
-        backbone, num_classes=2, use_multi_scale=use_multi_scale
-    ).to(device)
+    # Semantic metrics
+    sem_metrics = accumulate_semantic_metrics(
+        all_pred_sem, all_gt_sem, num_classes=num_classes, class_names=class_names
+    )
+    # Instance metrics
+    inst_metrics = accumulate_instance_metrics(all_pred_inst, all_gt_inst)
 
-    optimizer = torch.optim.AdamW(model.head.parameters(), lr=learning_rate, weight_decay=0.01)
+    return {**sem_metrics, **inst_metrics}
+
+
+@torch.inference_mode()
+def evaluate_online(
+    model:       OnlineLinearSegmenter,
+    loader:      DataLoader,
+    num_classes: int,
+    device:      torch.device,
+    class_names: Optional[List[str]] = None,
+) -> Dict[str, float]:
+    """Evaluate the full online model."""
+    model.eval()
+    all_pred_sem:  List[np.ndarray] = []
+    all_gt_sem:    List[np.ndarray] = []
+    all_pred_inst: List[np.ndarray] = []
+    all_gt_inst:   List[np.ndarray] = []
+
+    for batch in tqdm(loader, desc='Eval', leave=False):
+        imgs = batch[0].to(device)
+        sem  = batch[1]
+
+        logits   = model(imgs)
+        pred_sem = logits.argmax(dim=1).cpu().numpy()
+
+        for i in range(len(pred_sem)):
+            all_pred_sem.append(pred_sem[i])
+            all_gt_sem.append(sem[i].numpy())
+            pred_inst = semantic_to_instance(pred_sem[i])
+            all_pred_inst.append(pred_inst)
+            gt_inst   = semantic_to_instance(sem[i].numpy())
+            all_gt_inst.append(gt_inst)
+
+    sem_metrics  = accumulate_semantic_metrics(
+        all_pred_sem, all_gt_sem, num_classes=num_classes, class_names=class_names
+    )
+    inst_metrics = accumulate_instance_metrics(all_pred_inst, all_gt_inst)
+    return {**sem_metrics, **inst_metrics}
+
+
+# ============================================================================
+# Main training loop (cached mode)
+# ============================================================================
+
+def run_cached_linear_probe(
+    train_cache:  str,
+    val_cache:    str,
+    test_cache:   Optional[str],
+    output_dir:   str,
+    num_classes:  int,
+    class_names:  Optional[List[str]],
+    epochs:       int = 50,
+    lr:           float = 1e-3,
+    batch_size:   int  = 64,
+    weight_decay: float = 1e-4,
+    dropout:      float = 0.1,
+    ignore_index: int   = 255,
+) -> Dict[str, float]:
+    """Full cached linear probe training pipeline."""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # ------------------------------------------------------------------
+    # Load caches
+    # ------------------------------------------------------------------
+    def _load(path):
+        d = np.load(path)
+        has_inst = d['inst_maps'].any()
+        inst = d['inst_maps'] if has_inst else None
+        return d['features'], d['sem_masks'].astype(np.int64), inst, \
+               (int(d['orig_H']), int(d['orig_W']))
+
+    logger.info("Loading train cache ...")
+    tr_feat, tr_sem, tr_inst, orig_size = _load(train_cache)
+    D = tr_feat.shape[1]
+
+    logger.info("Loading val cache ...")
+    val_feat, val_sem, val_inst, _ = _load(val_cache)
+
+    # ------------------------------------------------------------------
+    # Build model
+    # ------------------------------------------------------------------
+    head = LinearSegHead(D, num_classes, dropout).to(device)
+    criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
+    optimizer = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    criterion = nn.CrossEntropyLoss()
 
-    history: Dict[str, List] = {'train': [], 'eval': []}
-    best_miou = best_epoch = 0
+    # DataLoaders
+    tr_ds  = CachedFeatureDataset(tr_feat,  tr_sem,  tr_inst)
+    val_ds = CachedFeatureDataset(val_feat, val_sem, val_inst)
+    tr_loader  = DataLoader(tr_ds,  batch_size=batch_size, shuffle=True,  num_workers=2)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2)
+
+    # ------------------------------------------------------------------
+    # Training
+    # ------------------------------------------------------------------
+    best_val_miou  = -1.0
+    best_ckpt_path = os.path.join(output_dir, 'best_head.pth')
+    os.makedirs(output_dir, exist_ok=True)
 
     for epoch in range(1, epochs + 1):
-        train_m = train_one_epoch(model, train_loader, optimizer, criterion, device, epoch)
+        loss = train_one_epoch_cached(head, tr_loader, optimizer, criterion, device, epoch, orig_size)
         scheduler.step()
-        eval_m  = evaluate(
-            model, eval_loader, criterion, device,
-            save_vis=(epoch == epochs), vis_dir=vis_dir, mode=mode,
+
+        if epoch % 5 == 0 or epoch == epochs:
+            val_metrics = evaluate_cached(
+                head, val_loader, num_classes, orig_size, device, class_names
+            )
+            miou = val_metrics['mIoU']
+            logger.info(
+                f"Epoch {epoch:3d}/{epochs}  loss={loss:.4f}  "
+                f"val_mIoU={miou:.4f}  val_mDice={val_metrics['mDice']:.4f}  "
+                f"val_AJI={val_metrics['AJI']:.4f}  val_AP50={val_metrics['AP50']:.4f}"
+            )
+            if miou > best_val_miou:
+                best_val_miou = miou
+                torch.save(head.state_dict(), best_ckpt_path)
+
+    # ------------------------------------------------------------------
+    # Test evaluation
+    # ------------------------------------------------------------------
+    head.load_state_dict(torch.load(best_ckpt_path, map_location=device))
+    results = {'val': evaluate_cached(head, val_loader, num_classes, orig_size, device, class_names)}
+
+    if test_cache is not None and os.path.exists(test_cache):
+        logger.info("Loading test cache ...")
+        te_feat, te_sem, te_inst, _ = _load(test_cache)
+        te_ds     = CachedFeatureDataset(te_feat, te_sem, te_inst)
+        te_loader = DataLoader(te_ds, batch_size=batch_size, shuffle=False, num_workers=2)
+        results['test'] = evaluate_cached(
+            head, te_loader, num_classes, orig_size, device, class_names
         )
-        history['train'].append(train_m)
-        history['eval'].append(eval_m)
 
-        logger.info(
-            f"Epoch {epoch}/{epochs} | "
-            f"Train Loss={train_m['loss']:.4f} mIoU={train_m['mIoU']:.4f} | "
-            f"Eval Loss={eval_m['loss']:.4f} mIoU={eval_m['mIoU']:.4f} Dice={eval_m['Dice']:.4f}"
-        )
+    # Save results
+    out_json = os.path.join(output_dir, 'results.json')
+    with open(out_json, 'w') as f:
+        json.dump(results, f, indent=2)
+    logger.info(f"Results saved → {out_json}")
 
-        if eval_m['mIoU'] > best_miou:
-            best_miou, best_epoch = eval_m['mIoU'], epoch
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.head.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'metrics': eval_m,
-            }, os.path.join(exp_dir, 'best_model.pth'))
-
-    with open(os.path.join(exp_dir, 'history.json'), 'w') as f:
-        json.dump(history, f, indent=2)
-
-    logger.info(f"[{mode.upper()}] Best mIoU: {best_miou:.4f} (Epoch {best_epoch})")
-    return {'mode': mode, 'best_epoch': best_epoch, 'best_mIoU': best_miou, **history['eval'][-1]}
+    _log_results(results)
+    return results
 
 
 # ============================================================================
-# Entry point
+# Main training loop (online mode)
+# ============================================================================
+
+def run_online_linear_probe(
+    dataset_name: str,
+    data_root:    str,
+    checkpoint:   str,
+    output_dir:   str,
+    num_classes:  int,
+    class_names:  Optional[List[str]],
+    model_size:   str  = 'l',
+    img_size:     int  = 448,
+    n_layers:     int  = 4,
+    epochs:       int  = 20,
+    lr:           float = 1e-3,
+    batch_size:   int  = 4,
+    weight_decay: float = 1e-4,
+    dropout:      float = 0.1,
+    ignore_index: int   = 255,
+    num_workers:  int   = 4,
+) -> Dict[str, float]:
+    """Full online linear probe training pipeline."""
+    from .model_utils import load_dinov3_backbone
+    from .feature_extractor import _build_dataset
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    backbone = load_dinov3_backbone(checkpoint, model_size=model_size, device=device, freeze=True)
+    model    = OnlineLinearSegmenter(backbone, num_classes, n_layers, dropout).to(device)
+
+    os.makedirs(output_dir, exist_ok=True)
+    criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
+    optimizer = torch.optim.AdamW(model.head.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
+    tr_ds  = _build_dataset(dataset_name, data_root, 'train', img_size)
+    val_ds = _build_dataset(dataset_name, data_root, 'val',   img_size)
+
+    tr_loader  = DataLoader(tr_ds,  batch_size=batch_size, shuffle=True,  num_workers=num_workers)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+
+    best_val_miou  = -1.0
+    best_ckpt_path = os.path.join(output_dir, 'best_head.pth')
+
+    for epoch in range(1, epochs + 1):
+        loss = train_one_epoch_online(model, tr_loader, optimizer, criterion, device, epoch)
+        scheduler.step()
+
+        if epoch % 5 == 0 or epoch == epochs:
+            val_metrics = evaluate_online(model, val_loader, num_classes, device, class_names)
+            miou = val_metrics['mIoU']
+            logger.info(
+                f"Epoch {epoch:3d}/{epochs}  loss={loss:.4f}  "
+                f"val_mIoU={miou:.4f}  val_mDice={val_metrics['mDice']:.4f}  "
+                f"val_AJI={val_metrics['AJI']:.4f}  val_AP50={val_metrics['AP50']:.4f}"
+            )
+            if miou > best_val_miou:
+                best_val_miou = miou
+                torch.save(model.head.state_dict(), best_ckpt_path)
+
+    model.head.load_state_dict(torch.load(best_ckpt_path, map_location=device))
+
+    try:
+        te_ds     = _build_dataset(dataset_name, data_root, 'test', img_size)
+        te_loader = DataLoader(te_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+        test_metrics = evaluate_online(model, te_loader, num_classes, device, class_names)
+    except Exception as e:
+        logger.warning(f"Test split not available: {e}")
+        test_metrics = {}
+
+    results = {
+        'val':  evaluate_online(model, val_loader, num_classes, device, class_names),
+        'test': test_metrics,
+    }
+    out_json = os.path.join(output_dir, 'results.json')
+    with open(out_json, 'w') as f:
+        json.dump(results, f, indent=2)
+    _log_results(results)
+    return results
+
+
+# ============================================================================
+# Logging helper
+# ============================================================================
+
+def _log_results(results: Dict):
+    for split, metrics in results.items():
+        if not metrics:
+            continue
+        logger.info(f"\n{'='*60}")
+        logger.info(f"  Split: {split.upper()}")
+        logger.info(f"{'='*60}")
+        for k, v in sorted(metrics.items()):
+            if isinstance(v, float):
+                logger.info(f"  {k:<25s}: {v:.4f}")
+
+
+# ============================================================================
+# Dataset-specific configs
+# ============================================================================
+
+DATASET_CONFIGS = {
+    'bbbc038':  {'num_classes': 2,  'class_names': ['background', 'cell']},
+    'conic':    {'num_classes': 7,  'class_names': ['background', 'neutrophil', 'epithelial',
+                                                     'lymphocyte', 'plasma_cell', 'eosinophil', 'connective']},
+    'livecell': {'num_classes': 2,  'class_names': ['background', 'cell']},
+    'monuseg':  {'num_classes': 2,  'class_names': ['background', 'nucleus']},
+    'pannuke':  {'num_classes': 6,  'class_names': ['background', 'neoplastic', 'inflammatory',
+                                                     'connective', 'dead', 'epithelial']},
+    'tissuenet':{'num_classes': 2,  'class_names': ['background', 'cell']},
+    # existing
+    'cellpose': {'num_classes': 2,  'class_names': ['background', 'cell']},
+    'csc':      {'num_classes': 2,  'class_names': ['background', 'cell']},
+}
+
+
+# ============================================================================
+# CLI
 # ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description='Bio-segmentation linear probing')
+    parser = argparse.ArgumentParser(
+        description='Bio-segmentation linear probe (online or cached mode)'
+    )
+    # Common
+    parser.add_argument('--dataset',     required=True,
+                        choices=list(DATASET_CONFIGS.keys()),
+                        help='Dataset name')
+    parser.add_argument('--output-dir',  required=True)
+    parser.add_argument('--epochs',      type=int,   default=20)
+    parser.add_argument('--lr',          type=float, default=1e-3)
+    parser.add_argument('--batch-size',  type=int,   default=4)
+    parser.add_argument('--weight-decay',type=float, default=1e-4)
+    parser.add_argument('--dropout',     type=float, default=0.1)
+    parser.add_argument('--ignore-index',type=int,   default=255)
+    parser.add_argument('--num-workers', type=int,   default=4)
 
-    parser.add_argument('--dataset', type=str, required=True,
-                        choices=list(DATASET_REGISTRY),
-                        help='Dataset name (e.g. cellpose, csc)')
-    parser.add_argument('--data-path', type=str, required=True,
-                        help='Dataset root directory')
-    parser.add_argument('--output-dir', type=str, required=True,
-                        help='Output directory')
+    # Cached mode
+    parser.add_argument('--use-cached-features', action='store_true',
+                        help='Use pre-extracted feature cache (fast mode)')
+    parser.add_argument('--train-cache', default=None,
+                        help='Path to train .npz cache (cached mode)')
+    parser.add_argument('--val-cache',   default=None,
+                        help='Path to val .npz cache (cached mode)')
+    parser.add_argument('--test-cache',  default=None,
+                        help='Path to test .npz cache (cached mode, optional)')
 
-    parser.add_argument('--checkpoint', type=str, required=True,
-                        help='DINOv3 checkpoint path')
-    parser.add_argument('--model-size', type=str, default='l', choices=['l', '7b'],
-                        help='Backbone size')
-    parser.add_argument('--use-multi-scale', action='store_true',
-                        help='Concatenate last 4 layers instead of last 1')
-
-    parser.add_argument('--train-split', type=str, default='train',
-                        help='Split name used for training')
-    parser.add_argument('--eval-split', type=str, default=None,
-                        help='Split name used for evaluation (defaults: cellpose=test, csc=tune)')
-    parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--batch-size', type=int, default=8)
-    parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--num-workers', type=int, default=4)
-    parser.add_argument('--modes', nargs='+', default=['minmax', 'percentile', 'hybrid'],
-                        help='Preprocessing modes to compare')
+    # Online mode
+    parser.add_argument('--data-root',   default=None,
+                        help='Dataset root directory (online mode)')
+    parser.add_argument('--checkpoint',  default=None,
+                        help='DINOv3 checkpoint path (online mode)')
+    parser.add_argument('--model-size',  default='l', choices=['l', '7b'])
+    parser.add_argument('--img-size',    type=int, default=448)
+    parser.add_argument('--n-layers',    type=int, default=4)
 
     args = parser.parse_args()
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    logger.info(f"Device: {device}")
+    cfg = DATASET_CONFIGS.get(args.dataset, {'num_classes': 2, 'class_names': None})
+    num_classes = cfg['num_classes']
+    class_names = cfg['class_names']
 
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir = os.path.join(args.output_dir, f'{args.dataset}_{timestamp}')
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    with open(os.path.join(output_dir, 'config.json'), 'w') as f:
-        json.dump(vars(args), f, indent=2)
-
-    DatasetClass, get_paths = DATASET_REGISTRY[args.dataset]
-
-    # Default eval split per dataset
-    default_eval = {'cellpose': 'test', 'csc': 'tune'}
-    eval_split = args.eval_split or default_eval.get(args.dataset, 'test')
-
-    train_imgs, train_masks = get_paths(args.data_path, args.train_split)
-    eval_imgs,  eval_masks  = get_paths(args.data_path, eval_split)
-
-    backbone = load_dinov3_backbone(args.checkpoint, args.model_size, device)
-
-    all_results = {}
-    for mode in args.modes:
-        all_results[mode] = run_experiment(
-            mode=mode,
-            backbone=backbone,
-            DatasetClass=DatasetClass,
-            train_img_paths=train_imgs,
-            train_mask_paths=train_masks,
-            eval_img_paths=eval_imgs,
-            eval_mask_paths=eval_masks,
-            output_dir=output_dir,
-            epochs=args.epochs,
-            batch_size=args.batch_size,
-            learning_rate=args.lr,
-            device=device,
-            num_workers=args.num_workers,
-            use_multi_scale=args.use_multi_scale,
+    if args.use_cached_features:
+        if args.train_cache is None or args.val_cache is None:
+            parser.error('--train-cache and --val-cache required in cached mode.')
+        run_cached_linear_probe(
+            train_cache  = args.train_cache,
+            val_cache    = args.val_cache,
+            test_cache   = args.test_cache,
+            output_dir   = args.output_dir,
+            num_classes  = num_classes,
+            class_names  = class_names,
+            epochs       = args.epochs,
+            lr           = args.lr,
+            batch_size   = args.batch_size,
+            weight_decay = args.weight_decay,
+            dropout      = args.dropout,
+            ignore_index = args.ignore_index,
         )
-
-    logger.info(f"\n{'='*60}\nResults summary\n{'='*60}")
-    summary = []
-    for mode, r in all_results.items():
-        summary.append(r)
-        logger.info(
-            f"[{mode.upper():12s}] mIoU={r['best_mIoU']:.4f}  "
-            f"Dice={r['Dice']:.4f}  Cell-IoU={r['IoU_cell']:.4f}"
+    else:
+        if args.data_root is None or args.checkpoint is None:
+            parser.error('--data-root and --checkpoint required in online mode.')
+        run_online_linear_probe(
+            dataset_name = args.dataset,
+            data_root    = args.data_root,
+            checkpoint   = args.checkpoint,
+            output_dir   = args.output_dir,
+            num_classes  = num_classes,
+            class_names  = class_names,
+            model_size   = args.model_size,
+            img_size     = args.img_size,
+            n_layers     = args.n_layers,
+            epochs       = args.epochs,
+            lr           = args.lr,
+            batch_size   = args.batch_size,
+            weight_decay = args.weight_decay,
+            dropout      = args.dropout,
+            ignore_index = args.ignore_index,
+            num_workers  = args.num_workers,
         )
-
-    best = max(summary, key=lambda x: x['mIoU'])
-    logger.info(f"\nBest preprocessing: {best['mode'].upper()}  mIoU={best['mIoU']:.4f}")
-
-    with open(os.path.join(output_dir, 'summary.json'), 'w') as f:
-        json.dump(summary, f, indent=2)
-
-    logger.info(f"Done. Results saved to: {output_dir}")
 
 
 if __name__ == '__main__':
