@@ -35,7 +35,8 @@ Mask2Former 在训练时在线提取特征，**不需要先跑 feature_extractor
 python -m dinov3.eval.bio_segmentation.scripts.extract_datasets \
     --src-dir /data1/xuzijing/dataset/BBBC038 \
     --dst-dir /data1/xuzijing/dataset \
-    --datasets bbbc038
+    --datasets bbbc038 \
+    --overwrite
 
 # CoNIC
 python -m dinov3.eval.bio_segmentation.scripts.extract_datasets \
@@ -43,9 +44,11 @@ python -m dinov3.eval.bio_segmentation.scripts.extract_datasets \
     --dst-dir /data1/xuzijing/dataset \
     --datasets conic
 
-# LIVECell
+# LIVECell — images/ is already extracted inside LIVECell_dataset_2021/
+# The script will detect the existing images/ and print the correct --data-root.
+# Point --src-dir to the inner folder so the script finds images.zip next to it.
 python -m dinov3.eval.bio_segmentation.scripts.extract_datasets \
-    --src-dir /data1/xuzijing/dataset/LIVECell \
+    --src-dir /data1/xuzijing/dataset/LIVECell/LIVECell_dataset_2021 \
     --dst-dir /data1/xuzijing/dataset \
     --datasets livecell
 
@@ -113,6 +116,18 @@ for DATASET in bbbc038 conic livecell monuseg pannuke tissuenet; do
     done
 done
 ```
+# LIVECell: data-root points to the outer LIVECell/ folder
+# (NOT .../livecell/extracted — LIVECell uses its own nested directory layout)
+for SPLIT in train val test; do
+    python -m dinov3.eval.bio_segmentation.feature_extractor \
+        --dataset    livecell \
+        --data-root  /data1/xuzijing/dataset/LIVECell \
+        --checkpoint $CKPT_7B \
+        --output-dir ./cache/livecell \
+        --model-size 7b \
+        --split      $SPLIT \
+        --batch-size 4
+done
 
 > **缓存文件示例**（MoNuSeg, ViT-L）:
 > ```
@@ -248,7 +263,7 @@ CUDA_VISIBLE_DEVICES=0 python -m dinov3.eval.bio_segmentation.mask2former \
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    livecell \
-    --data-root  /data1/xuzijing/dataset/livecell/extracted \
+    --data-root  /data1/xuzijing/dataset/LIVECell \
     --checkpoint /data1/xuzijing/checkpoints/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth \
     --output-dir ./outputs/mask2former/livecell_vitl \
     --model-size l \

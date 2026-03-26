@@ -92,9 +92,8 @@ def compute_aji(
     if len(gt_ids) == 0 or len(pred_ids) == 0:
         return 0.0
 
-    iou_mat = _pairwise_iou(pred_instance, gt_instance, pred_ids, gt_ids)
-    # Transpose so shape is [n_gt, n_pred]
-    iou_mat = _pairwise_iou(pred_instance, gt_instance, pred_ids, gt_ids).T  # [n_gt, n_pred]
+    # Pairwise IoU matrix is shaped [n_gt, n_pred]
+    iou_mat = _pairwise_iou(pred_instance, gt_instance, pred_ids, gt_ids)  # [n_gt, n_pred]
 
     numerator   = 0.0
     denominator = 0.0
@@ -154,7 +153,8 @@ def _compute_pq_single_class(
     if len(pred_ids) == 0:
         return 0.0, 0.0, 0.0, 0, 0, len(gt_ids)
 
-    iou_mat = _pairwise_iou(pred_instance, gt_instance, pred_ids, gt_ids).T  # [n_gt, n_pred]
+    # Pairwise IoU matrix is shaped [n_gt, n_pred]
+    iou_mat = _pairwise_iou(pred_instance, gt_instance, pred_ids, gt_ids)  # [n_gt, n_pred]
 
     matched_gt   = set()
     matched_pred = set()
@@ -311,7 +311,8 @@ def compute_ap(
     pred_areas = {pid: (pred_instance == pid).sum() for pid in pred_ids}
     pred_ids_sorted = sorted(pred_ids, key=lambda p: pred_areas[p], reverse=True)
 
-    iou_mat = _pairwise_iou(pred_instance, gt_instance, pred_ids_sorted, gt_ids).T  # [n_gt, n_pred_sorted]
+    # Pairwise IoU matrix is shaped [n_gt, n_pred_sorted]
+    iou_mat = _pairwise_iou(pred_instance, gt_instance, pred_ids_sorted, gt_ids)  # [n_gt, n_pred_sorted]
 
     ap_list: List[float] = []
     results: Dict[str, float] = {}

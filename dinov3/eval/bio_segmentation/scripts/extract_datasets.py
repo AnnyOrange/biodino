@@ -148,23 +148,83 @@ def extract_dataset(name: str, src_dir: Path, dst_dir: Path, overwrite: bool = F
     # share the same directory tree for easy lookup.                       #
     # ------------------------------------------------------------------ #
     if name == 'livecell':
-        archives = _find_all_archives(src_dir)
-        img_archives = [a for a in archives if 'images' in a.name.lower()
-                        and a.stat().st_size >= _MIN_ARCHIVE_BYTES]
+        # LIVECell stores everything under a nested subdirectory
+        # (e.g. LIVECell_dataset_2021/).  Search recursively for images.zip
+        # so the script works whether --src-dir is the outer folder or the
+        # inner one.
+        all_zips = sorted(src_dir.rglob('images.zip'))
+        img_archives = [a for a in all_zips if a.stat().st_size >= _MIN_ARCHIVE_BYTES]
+
         if not img_archives:
-            logger.warning("[livecell] No images.zip found in %s", src_dir)
+            # Check if images/ is already extracted somewhere beneath src_dir
+            already_imgs = list(src_dir.rglob('livecell_train_val_images'))
+            if already_imgs:
+                nested_root = already_imgs[0].parent.parent  # …/images/..  → go up twice
+                # Actually we want the parent of images/
+                nested_root = already_imgs[0].parent.parent
+                logger.info(
+                    "[livecell] images/ already extracted at %s — no action needed.",
+                    already_imgs[0].parent,
+                )
+                logger.info(
+                    "[livecell] Use --data-root %s when running experiments.",
+                    nested_root.parent,
+                )
+            else:
+                logger.warning(
+                    "[livecell] Neither images.zip nor extracted images/ found under %s.\n"
+                    "  Try pointing --src-dir to the LIVECell_dataset_2021 subdirectory.",
+                    src_dir,
+                )
         else:
             for arch in img_archives:
-                already_done = src_dir / 'images'
+                extract_here = arch.parent   # extract in-place next to the zip
+                already_done = extract_here / 'images'
                 if already_done.exists() and not overwrite:
-                    logger.info("[livecell] %s already extracted at %s", arch.name, already_done)
+                    logger.info("[livecell] images/ already exists at %s — skipping.", already_done)
+                    continue
+                logger.info("[livecell] Extracting %s → %s", arch.name, extract_here)
+                if arch.suffix.lower() == '.zip':
+                    _extract_zip(arch, extract_here)
                 else:
-                    logger.info("[livecell] Extracting %s in-place → %s", arch.name, src_dir)
-                    if arch.suffix.lower() == '.zip':
-                        _extract_zip(arch, src_dir)
-                    else:
-                        _extract_tar(arch, src_dir)
-        logger.info("[livecell] Done.  Use --data-root %s when running experiments.", src_dir.parent)
+                    _extract_tar(arch, extract_here)
+                logger.info("[livecell] Done.  Use --data-root %s when running experiments.",
+                            extract_here.parent)
+        return
+
+    # ------------------------------------------------------------------ #
+    # BBBC038 special case: extract each zip to its own named sub-dir.  #
+    # stage1_train.zip → extracted/stage1_train/                        #
+    # stage1_test.zip  → extracted/stage1_test/   (no GT, infer only)  #
+    # stage2_test_final.zip → extracted/stage2_test_final/  (optional) #
+    # This keeps train/test samples separate so get_bbbc038_paths can   #
+    # find them reliably.                                                #
+    # ------------------------------------------------------------------ #
+    if name == 'bbbc038':
+        keywords = DATASET_PATTERNS.get('bbbc038', ['stage1'])
+        archives = [a for a in _find_archives(src_dir, keywords)
+                    if a.stat().st_size >= _MIN_ARCHIVE_BYTES]
+        if not archives:
+            archives = [a for a in _find_all_archives(src_dir)
+                        if a.stat().st_size >= _MIN_ARCHIVE_BYTES]
+        if not archives:
+            logger.error("[bbbc038] No archives found in %s", src_dir)
+            return
+        for arch in archives:
+            # Derive subdirectory name from zip stem
+            # e.g. stage1_train.zip → extracted/stage1_train/
+            sub_name = arch.stem.replace('-', '_')   # normalise hyphens
+            sub_dst  = target / sub_name
+            if sub_dst.exists() and not overwrite:
+                logger.info("[bbbc038] %s already extracted at %s", arch.name, sub_dst)
+                continue
+            sub_dst.mkdir(parents=True, exist_ok=True)
+            logger.info("[bbbc038] Extracting %s → %s", arch.name, sub_dst)
+            if arch.suffix.lower() == '.zip':
+                _extract_zip(arch, sub_dst)
+            else:
+                _extract_tar(arch, sub_dst)
+        logger.info("[bbbc038] Done.  Output: %s", target)
         return
 
     # ------------------------------------------------------------------ #
