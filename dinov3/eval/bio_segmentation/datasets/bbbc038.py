@@ -147,81 +147,98 @@ class BBBC038Dataset(BioSegDataset):
 def get_bbbc038_paths(
     data_root: str,
     split: str = 'train',
-    val_ratio: float = 0.15,
+    val_ratio:  float = 0.15,
+    test_ratio: float = 0.15,
     seed: int = 42,
 ) -> Tuple[List[str], List[str]]:
     """
     Discover BBBC038 image / mask-directory pairs.
 
-    BBBC038 has no official validation split.  When split='val' is requested
-    a deterministic random subset (``val_ratio`` fraction of training data)
-    is held out.  The remaining training samples are returned for split='train'.
-    The held-out indices are cached to a file for reproducibility.
+    Only ``stage1_train`` (670 samples with GT masks) is used for all three
+    splits.  ``stage1_test`` and ``stage2_test_final`` from the original
+    Kaggle competition contain NO ground-truth masks and are therefore
+    unsuitable for segmentation evaluation.
+
+    Split strategy (deterministic, seed=42):
+        train : 70 % of stage1_train
+        val   : 15 % of stage1_train
+        test  : 15 % of stage1_train
+
+    The ``stage1_train`` directory is searched in this order:
+        1. <data_root>/stage1_train/         (re-extracted with new script)
+        2. <data_root>/                      (flat extraction, legacy)
 
     Args:
-        data_root : root directory (contains ``stage1_train``, ``stage1_test``).
-        split     : 'train', 'val', or 'test'.
-        val_ratio : fraction of training samples used for validation.
-        seed      : RNG seed.
+        data_root  : root directory (output of extract_datasets.py).
+        split      : 'train', 'val', or 'test'.
+        val_ratio  : fraction held out for validation.
+        test_ratio : fraction held out for test.
+        seed       : RNG seed for reproducibility.
 
     Returns:
-        (img_paths, mask_dirs) - mask_dirs are directories with per-instance masks.
+        (img_paths, mask_dirs)  — mask_dirs are directories with per-instance
+        mask PNGs.
     """
-    need_train = split in ('train', 'val')
-    raw_split  = 'train' if need_train else 'test'
+    # ---- Locate stage1_train directory ----
+    # New extraction puts it at <data_root>/stage1_train/
+    stage1_train_dir = os.path.join(data_root, 'stage1_train')
+    if not os.path.isdir(stage1_train_dir):
+        # Legacy flat extraction: hash folders sit directly in data_root
+        stage1_train_dir = data_root
+        logger.info(
+            "[BBBC038] stage1_train/ subdirectory not found — falling back "
+            "to data_root directly.  Consider re-extracting with:\n"
+            "  python -m dinov3.eval.bio_segmentation.scripts.extract_datasets "
+            "--dataset bbbc038 --src-dir <BBBC038_ZIP_DIR> "
+            "--dst-dir /data1/xuzijing/dataset --overwrite"
+        )
 
-    split_map = {
-        'train': 'stage1_train',
-        'test':  'stage1_test',
-    }
-    split_dir = os.path.join(data_root, split_map[raw_split])
-    if not os.path.isdir(split_dir):
-        candidates = glob(os.path.join(data_root, '*', split_map[raw_split]))
-        if candidates:
-            split_dir = candidates[0]
-        else:
-            raise FileNotFoundError(f"Split directory not found: {split_dir}")
-
-    # Collect all train samples
+    # ---- Collect all samples that have both an image and a masks/ dir ----
     all_imgs, all_masks = [], []
-    for sample_id in sorted(os.listdir(split_dir)):
-        sample_dir = os.path.join(split_dir, sample_id)
+    for sample_id in sorted(os.listdir(stage1_train_dir)):
+        sample_dir = os.path.join(stage1_train_dir, sample_id)
         if not os.path.isdir(sample_dir):
             continue
         img_dir  = os.path.join(sample_dir, 'images')
         mask_dir = os.path.join(sample_dir, 'masks')
-
         imgs = glob(os.path.join(img_dir, '*.png')) + glob(os.path.join(img_dir, '*.tif'))
-        if not imgs:
+        if not imgs or not os.path.isdir(mask_dir):
             continue
-        if raw_split == 'train' and not os.path.isdir(mask_dir):
-            continue
-
         all_imgs.append(sorted(imgs)[0])
-        all_masks.append(mask_dir if raw_split == 'train' else '')
+        all_masks.append(mask_dir)
 
-    if split == 'test':
-        logger.info(f"[BBBC038 test] {len(all_imgs)} samples in {split_dir}")
-        return all_imgs, all_masks
-
-    # Train / val split
     total = len(all_imgs)
-    idx_file = os.path.join(data_root, 'bbbc038_val_indices.npy')
-    if os.path.exists(idx_file):
-        val_idx = set(np.load(idx_file).tolist())
+    if total == 0:
+        raise FileNotFoundError(
+            f"[BBBC038] No valid samples found in {stage1_train_dir}. "
+            "Make sure stage1_train.zip was extracted to the right location."
+        )
+
+    # ---- Deterministic train / val / test split ----
+    split_file = os.path.join(data_root, 'bbbc038_splits.npz')
+    if os.path.exists(split_file):
+        sp = np.load(split_file)
+        val_idx  = set(sp['val_idx'].tolist())
+        test_idx = set(sp['test_idx'].tolist())
     else:
-        rng     = np.random.default_rng(seed)
-        perm    = rng.permutation(total)
-        n_val   = max(1, int(total * val_ratio))
-        val_idx = set(perm[:n_val].tolist())
-        np.save(idx_file, np.array(sorted(val_idx)))
+        rng      = np.random.default_rng(seed)
+        perm     = rng.permutation(total)
+        n_val    = max(1, int(total * val_ratio))
+        n_test   = max(1, int(total * test_ratio))
+        val_idx  = set(perm[:n_val].tolist())
+        test_idx = set(perm[n_val:n_val + n_test].tolist())
+        np.savez(split_file,
+                 val_idx=np.array(sorted(val_idx)),
+                 test_idx=np.array(sorted(test_idx)))
 
     if split == 'val':
         sel = [i for i in range(total) if i in val_idx]
+    elif split == 'test':
+        sel = [i for i in range(total) if i in test_idx]
     else:  # 'train'
-        sel = [i for i in range(total) if i not in val_idx]
+        sel = [i for i in range(total) if i not in val_idx and i not in test_idx]
 
-    img_paths  = [all_imgs[i]  for i in sel]
-    mask_dirs  = [all_masks[i] for i in sel]
-    logger.info(f"[BBBC038 {split}] {len(img_paths)}/{total} samples")
+    img_paths = [all_imgs[i]  for i in sel]
+    mask_dirs = [all_masks[i] for i in sel]
+    logger.info(f"[BBBC038 {split}] {len(img_paths)}/{total} samples (from stage1_train)")
     return img_paths, mask_dirs

@@ -34,6 +34,7 @@ Usage
 """
 
 import argparse
+import importlib.util
 import json
 import logging
 import os
@@ -59,6 +60,50 @@ from .feature_extractor import DATASET_DEFAULT_IMG_SIZES
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('bio_seg.mask2former')
+
+
+# ============================================================================
+# Environment checks
+# ============================================================================
+
+def _ensure_ms_deform_attn_available() -> None:
+    """
+    Fail fast if the official MultiScaleDeformableAttention CUDA extension is
+    not installed.
+
+    Why this is needed:
+    - Official DINOv3 Mask2Former uses `MSDeformAttn` in the pixel decoder.
+    - Its forward path has a PyTorch fallback, so inference may appear to work.
+    - Its backward path requires the compiled CUDA extension and raises at the
+      first `loss.backward()` if the extension is missing.
+
+    This helper surfaces the real issue immediately, before we spend minutes
+    loading a large backbone checkpoint.
+    """
+    if importlib.util.find_spec("MultiScaleDeformableAttention") is not None:
+        return
+
+    ops_dir = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        "segmentation",
+        "models",
+        "utils",
+        "ops",
+    )
+    raise RuntimeError(
+        "Mask2Former training requires the official "
+        "`MultiScaleDeformableAttention` CUDA extension, but it is not "
+        "installed in the current environment.\n\n"
+        "This is NOT a bio_segmentation-specific bug: the requirement comes "
+        "from official `dinov3/eval/segmentation/models/utils/ms_deform_attn.py`, "
+        "whose backward() raises exactly this error when the extension is missing.\n\n"
+        "Please compile it first in the same conda environment:\n"
+        f"  cd {ops_dir}\n"
+        "  python setup.py build install\n\n"
+        "If compilation fails, check that CUDA toolkit / `nvcc` is available. "
+        "Inference-only forward may work without this extension, but training "
+        "(loss.backward) cannot."
+    )
 
 
 # ============================================================================
@@ -714,6 +759,10 @@ def run_mask2former(
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.makedirs(output_dir, exist_ok=True)
+
+    # Official Mask2Former training needs the compiled CUDA op for
+    # MultiScaleDeformableAttention backward.
+    _ensure_ms_deform_attn_available()
 
     # ---- Resolve crop size for training / inference ----
     # img_size here controls the per-dataset canonical crop size used during
