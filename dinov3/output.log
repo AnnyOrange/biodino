@@ -1,0 +1,153 @@
+(dinov3) lxy@server:/mnt/huawei_deepcad/dinov3$ python3 - <<'PY'
+> import tarfile
+> 
+> paths = [
+>     "/mnt/huawei_deepcad/wds_shards/mixed_1ch-007469.tar",
+>     "/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-000935.tar",
+> ]
+> 
+> for path in paths:
+>     print("=" * 80)
+>     print(path)
+>     with tarfile.open(path, "r") as tf:
+>         names = tf.getnames()[:20]
+>     for name in names:
+>         print(name)
+> PY
+================================================================================
+/mnt/huawei_deepcad/wds_shards/mixed_1ch-007469.tar
+113949097.npy
+63464565.npy
+904623.npy
+25570290.npy
+52688189.npy
+100333324.npy
+31294101.npy
+51970742.npy
+82463412.npy
+5890408.npy
+10839242.npy
+70535392.npy
+18945864.npy
+32701872.npy
+18945840.npy
+44477276.npy
+97257860.npy
+31533881.npy
+25352495.npy
+10328412.npy
+================================================================================
+/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-000935.tar
+id000041323_oid20748119_ch3.json
+id000041323_oid20748119_ch3.tif
+id000391898_oid71070444_ch3.json
+id000391898_oid71070444_ch3.tif
+(dinov3) lxy@server:/mnt/huawei_deepcad/dinov3$ conda run --no-capture-output -n dinov3 python - <<'PY'
+> import sys
+> sys.path.insert(0, "/mnt/huawei_deepcad/dinov3")
+> 
+> import webdataset as wds
+> 
+> paths = [
+>     "/mnt/huawei_deepcad/wds_shards/mixed_1ch-007469.tar",
+>     "/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-000935.tar",
+> ]
+> 
+> for path in paths:
+>     print("=" * 80)
+>     print("RAW SAMPLE KEYS FROM:", path)
+>     ds = wds.DataPipeline(
+>         wds.SimpleShardList(path),
+>         wds.tarfile_to_samples(),
+>     )
+>     it = iter(ds)
+>     for i in range(3):
+>         sample = next(it)
+>         print(i, list(sample.keys()))
+> PY
+================================================================================
+RAW SAMPLE KEYS FROM: /mnt/huawei_deepcad/wds_shards/mixed_1ch-007469.tar
+0 ['__key__', '__url__', 'npy']
+1 ['__key__', '__url__', 'npy']
+2 ['__key__', '__url__', 'npy']
+================================================================================
+RAW SAMPLE KEYS FROM: /mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-000935.tar
+0 ['__key__', '__url__', 'json', 'tif']
+1 ['__key__', '__url__', 'json', 'tif']
+Traceback (most recent call last):
+  File "<stdin>", line 20, in <module>
+StopIteration
+ERROR conda.cli.main_run:execute(127): `conda run python -` failed. (See above for error)
+(dinov3) lxy@server:/mnt/huawei_deepcad/dinov3$ conda run --no-capture-output -n dinov3 python - <<'PY'
+> import sys
+> sys.path.insert(0, "/mnt/huawei_deepcad/dinov3")
+> 
+> import webdataset as wds
+> from dinov3.data.wds_pipeline import _find_image_key
+> from dinov3.data.wds_decoder import decode_npy_bytes, decode_tiff_bytes
+> 
+> paths = [
+>     "/mnt/huawei_deepcad/wds_shards/mixed_1ch-007469.tar",
+>     "/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-000935.tar",
+> ]
+> 
+> for path in paths:
+>     print("=" * 80)
+>     print("TEST _find_image_key ON:", path)
+>     ds = wds.DataPipeline(
+>         wds.SimpleShardList(path),
+>         wds.tarfile_to_samples(),
+>     )
+>     sample = next(iter(ds))
+>     print("sample keys:", list(sample.keys()))
+>     image_key = _find_image_key(sample)
+>     print("matched image_key:", image_key)
+> 
+>     if image_key is not None:
+>         if image_key.lower() in ("npy",) or image_key.lower().endswith(".npy"):
+>             x = decode_npy_bytes(sample[image_key], target_channels=3)
+>         else:
+>             x = decode_tiff_bytes(sample[image_key], target_channels=3)
+> 
+>         print("decoded:", None if x is None else (tuple(x.shape), str(x.dtype), float(x.min()), float(x.max())))
+> PY
+================================================================================
+TEST _find_image_key ON: /mnt/huawei_deepcad/wds_shards/mixed_1ch-007469.tar
+sample keys: ['__key__', '__url__', 'npy']
+matched image_key: npy
+decoded: ((3, 1080, 1280), 'torch.float32', 0.0008545052260160446, 0.16523994505405426)
+================================================================================
+TEST _find_image_key ON: /mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-000935.tar
+sample keys: ['__key__', '__url__', 'json', 'tif']
+matched image_key: tif
+decoded: ((3, 16384, 16384), 'torch.float32', 0.0, 1.0)
+
+(dinov3) lxy@server:/mnt/huawei_deepcad/dinov3$ conda run --no-capture-output -n dinov3 python - <<'PY'
+> import sys
+> sys.path.insert(0, "/mnt/huawei_deepcad/dinov3")
+> 
+> from dinov3.data.loaders import make_dataset
+> 
+> paths = [
+>     "/mnt/huawei_deepcad/wds_shards/mixed_1ch-007469.tar",
+>     "/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-000935.tar",
+> ]
+> 
+> for path in paths:
+>     print("=" * 80)
+>     print("TEST make_dataset ON:", path)
+>     ds = make_dataset(
+>         dataset_str=f"wds:{path}",
+>         target_channels=3,
+>     )
+>     sample = next(iter(ds))
+>     image = sample["image"]
+>     print("ok:", tuple(image.shape), image.dtype, float(image.min()), float(image.max()), sample["__key__"])
+> PY
+================================================================================
+TEST make_dataset ON: /mnt/huawei_deepcad/wds_shards/mixed_1ch-007469.tar
+TIFF 解码失败: TiffFileError: not a TIFF file: header=b'\x93NUM'
+TIFF 解码失败: TiffFileError: not a TIFF file: header=b'\x93NUM'
+TIFF 解码失败: TiffFileError: not a TIFF file: header=b'\x93NUM'
+TIFF 解码失败: TiffFileError: not a TIFF file: header=b'\x93NUM'
+

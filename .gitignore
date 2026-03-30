@@ -19,6 +19,7 @@ outputs/
 # Ignore vscode directory
 .vscode/
 benchmark_data/features
+benchmark_data
 dinov3/.cursorrulues
 dinov3/ray_webdataset.md
 dinov3/dataset_webdataset/test

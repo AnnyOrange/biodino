@@ -136,6 +136,7 @@ crops:
   localcrops_subset_of_globalcrops: false
   share_color_jitter: false
   horizontal_flips: false
+  float_input: true
   rgb_mean:
   - 0.485
   - 0.456

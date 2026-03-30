@@ -85,6 +85,7 @@ def make_dataset(
     transform: Optional[Callable] = None,
     target_transform: Optional[Callable] = None,
     transforms: Optional[Callable] = None,
+    target_channels: Optional[int] = None,
 ):
     """
     Creates a dataset with the specified parameters.
@@ -95,6 +96,7 @@ def make_dataset(
         transform: A transform to apply to images.
         target_transform: A transform to apply to targets.
         transforms: A transform to apply to both images and targets.
+        target_channels: 仅在 WebDataset 模式下生效；为解码后的样本对齐目标通道数。
 
     Returns:
         The created dataset.
@@ -103,7 +105,7 @@ def make_dataset(
 
     # 检测 WebDataset 格式
     if dataset_str.startswith("wds:"):
-        return _make_webdataset(dataset_str[4:], transform)
+        return _make_webdataset(dataset_str[4:], transform, target_channels=target_channels)
 
     class_, kwargs = _parse_dataset_str(dataset_str)
     dataset = class_(transform=transform, target_transform=target_transform, transforms=transforms, **kwargs)
@@ -124,6 +126,7 @@ def make_dataset(
 def _make_webdataset(
     shard_pattern: str,
     transform: Optional[Callable] = None,
+    target_channels: Optional[int] = None,
 ):
     """
     创建 WebDataset 数据管道。
@@ -131,6 +134,7 @@ def _make_webdataset(
     Args:
         shard_pattern: tar 分片路径模式，如 "/path/to/shards-{0000..0099}.tar"。
         transform: 图像变换函数。
+        target_channels: 解码后样本要对齐到的目标通道数。
 
     Returns:
         WebDataset IterableDataset 管道。
@@ -142,6 +146,7 @@ def _make_webdataset(
     config = WdsConfig(
         shard_urls=shard_pattern,
         shuffle_buffer=1000,
+        target_channels=target_channels,
     )
     pipeline = build_wds_pipeline(config, transform=transform)
 

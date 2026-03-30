@@ -20,4 +20,8 @@ dependencies:
     - torch 
     - torchvision 
     - torchmetrics
+    - tqdm
+    - webdataset
+    - scikit-image
+    - tifffile
     
