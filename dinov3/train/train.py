@@ -312,6 +312,7 @@ def build_data_loader_from_cfg(
         dataset_str=dataset_path,
         transform=model.build_data_augmentation_dino(cfg),
         target_transform=lambda _: (),
+        target_channels=cfg.student.in_chans,
     )
 
     if isinstance(dataset, torch.utils.data.IterableDataset):

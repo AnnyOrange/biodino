@@ -274,7 +274,19 @@ def init_fsdp_model_from_checkpoint(
 ):
     if not Path(checkpoint_path).is_dir():  # PyTorch standard checkpoint
         logger.info(f"Loading pretrained weights from {checkpoint_path}")
-        chkpt = torch.load(checkpoint_path, map_location="cpu")["teacher"]
+        raw = torch.load(checkpoint_path, map_location="cpu")
+        if isinstance(raw, dict) and "teacher" in raw:
+            chkpt = raw["teacher"]
+        else:
+            # Flat backbone-only checkpoint (e.g. official released weights).
+            # Keys need a "backbone." prefix to match the ModuleDict layout.
+            state = raw if not isinstance(raw, dict) else raw
+            first_key = next(iter(state))
+            if not first_key.startswith("backbone."):
+                chkpt = {f"backbone.{k}": v for k, v in state.items()}
+                logger.info("Detected flat backbone checkpoint — added 'backbone.' prefix to all keys")
+            else:
+                chkpt = dict(state)
         from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
         if process_group is None:
