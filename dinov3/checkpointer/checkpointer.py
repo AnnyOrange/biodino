@@ -287,31 +287,53 @@ def init_fsdp_model_from_checkpoint(
                 logger.info("Detected flat backbone checkpoint — added 'backbone.' prefix to all keys")
             else:
                 chkpt = dict(state)
-        from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+        model_state = model.state_dict()
+        converted_chkpt = {}
+        for key, tensor in chkpt.items():
+            if any(key_not_sharded in key for key_not_sharded in keys_not_sharded):
+                converted_chkpt[key] = tensor
+                continue
+            target_tensor = model_state.get(key)
+            if isinstance(target_tensor, torch.distributed.tensor.DTensor):
+                converted_chkpt[key] = torch.distributed.tensor.distribute_tensor(
+                    tensor,
+                    device_mesh=target_tensor.device_mesh,
+                    placements=target_tensor.placements,
+                    src_data_rank=None,
+                )
+            else:
+                converted_chkpt[key] = tensor
+        chkpt = converted_chkpt
+        filtered_chkpt = {
+            key: tensor
+            for key, tensor in chkpt.items()
+            if not any(skip_load_key in key for skip_load_key in skip_load_keys)
+        }
+        missing, unexpected = model.load_state_dict(filtered_chkpt, strict=False)
 
-        if process_group is None:
-            world_mesh = init_device_mesh(
-                "cuda",
-                mesh_shape=(dist.get_world_size(),),
-                mesh_dim_names=("dp",),
+        # Classify missing keys: backbone core vs heads/centers (expected to be missing for backbone-only ckpt)
+        backbone_missing = [
+            k for k in missing
+            if "backbone." in k and "head" not in k and "center" not in k
+        ]
+        other_missing = [k for k in missing if k not in backbone_missing]
+
+        if backbone_missing:
+            logger.warning(
+                f"[CKPT] backbone keys MISSING — likely prefix mismatch! "
+                f"({len(backbone_missing)} keys, e.g. {backbone_missing[:5]})"
             )
         else:
-            world_mesh = DeviceMesh.from_group(process_group, "cuda")
-        chkpt = {
-            key: (
-                torch.distributed.tensor.distribute_tensor(tensor, world_mesh, src_data_rank=None)
-                if not any(key_not_sharded in key for key_not_sharded in keys_not_sharded)
-                else tensor
-            )
-            for key, tensor in chkpt.items()
-        }
-        model.load_state_dict(
-            {
-                key: tensor
-                for key, tensor in chkpt.items()
-                if not any(skip_load_key in key for skip_load_key in skip_load_keys)
-            }
+            logger.info("[CKPT] backbone fully loaded (0 backbone core keys missing)")
+        logger.info(
+            f"[CKPT] non-backbone missing (random init): {len(other_missing)} keys, "
+            f"e.g. {other_missing[:3]}"
         )
+        if unexpected:
+            logger.warning(
+                f"[CKPT] unexpected keys (ignored): {len(unexpected)} keys, "
+                f"e.g. {unexpected[:3]}"
+            )
     else:  # DCP checkpoint
         load_checkpoint(ckpt_dir=checkpoint_path, model=model, process_group=process_group)
 

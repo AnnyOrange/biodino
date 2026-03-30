@@ -339,6 +339,24 @@ class SSLMetaArch(nn.Module):
                 process_group=distributed.get_process_subgroup(),
             )
             self.model_ema.load_state_dict(self.student.state_dict())
+            # Spot-check: verify student and teacher backbone are identical after weight sync
+            if distributed.is_main_process():
+                teacher_params = dict(self.teacher.named_parameters())
+                checked = 0
+                for name, s_param in self.student.named_parameters():
+                    t_param = teacher_params.get(name)
+                    if t_param is None or "backbone." not in name:
+                        continue
+                    try:
+                        s_data = s_param._local_tensor if hasattr(s_param, "_local_tensor") else s_param.data
+                        t_data = t_param._local_tensor if hasattr(t_param, "_local_tensor") else t_param.data
+                        match = torch.allclose(s_data.float(), t_data.float(), atol=0)
+                        logger.info(f"[INIT CHECK] {name}: student == teacher: {match}")
+                    except Exception as e:
+                        logger.info(f"[INIT CHECK] skip {name}: {e}")
+                    checked += 1
+                    if checked >= 2:
+                        break
         if self.cfg.distillation.enabled:
             if self.cfg.distillation.checkpoint_path != "ignore":
                 logger.info(f"Loading teacher to distil from : {self.cfg.distillation.checkpoint_path}")
@@ -428,6 +446,18 @@ class SSLMetaArch(nn.Module):
         )
 
         self.backprop_loss(loss_accumulator)
+
+        # Log loss finite check at iteration 0 to catch degenerate initialization early
+        if iteration == 0 and distributed.is_main_process():
+            try:
+                loss_val = loss_accumulator.item()
+            except Exception:
+                loss_val = float(loss_accumulator)
+            import math
+            if math.isfinite(loss_val):
+                logger.info(f"[LOSS CHECK] iter 0 loss = {loss_val:.4f} (finite OK)")
+            else:
+                logger.warning(f"[LOSS CHECK] iter 0 loss = {loss_val} — NON-FINITE, check init")
 
         # Return total weighted loss and a dict of metrics to log
         return loss_accumulator, metrics_dict | loss_dict

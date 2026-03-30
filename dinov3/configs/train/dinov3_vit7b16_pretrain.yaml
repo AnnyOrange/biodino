@@ -7,6 +7,7 @@ compute_precision:
   param_dtype: bf16
   reduce_dtype: fp32
   sharding_strategy: SHARD_GRAD_OP
+  hsdp_shards: 1
 dino:
   loss_weight: 1.0
   global_ignore_diagonal: true
