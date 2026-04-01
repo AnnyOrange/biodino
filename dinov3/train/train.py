@@ -313,6 +313,9 @@ def build_data_loader_from_cfg(
         transform=model.build_data_augmentation_dino(cfg),
         target_transform=lambda _: (),
         target_channels=cfg.student.in_chans,
+        s3_cache_root=getattr(cfg.train, "s3_cache_root", None),
+        aws_profile=getattr(cfg.train, "aws_profile", None),
+        aws_region=getattr(cfg.train, "aws_region", None),
     )
 
     if isinstance(dataset, torch.utils.data.IterableDataset):

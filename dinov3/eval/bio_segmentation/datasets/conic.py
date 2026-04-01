@@ -90,7 +90,10 @@ class CoNICDataset(Dataset):
         inst = self.labels[i, :, :, 0].copy().astype(np.int64)    # [H, W]
         sem  = self.labels[i, :, :, 1].copy().astype(np.int64)    # [H, W]
 
-        h, w = self.size
+        if self.size is None:
+            h, w = img.shape[:2]
+        else:
+            h, w = self.size
         if img.shape[:2] != (h, w):
             img  = cv2.resize(img,  (w, h), interpolation=cv2.INTER_LINEAR)
             inst = cv2.resize(inst.astype(np.float32), (w, h),

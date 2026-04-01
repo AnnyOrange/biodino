@@ -1,9 +1,16 @@
-# DINOv3 ViT-7B Pretrain with LoRA + ChannelViT
-# This configuration enables both LoRA fine-tuning and ChannelViT for multi-channel biological images
-# Combines the benefits of efficient LoRA training with multi-channel image support
+# DINOv3 ViT-7B Pretrain with WebDataset — S3 data source examples
+#
+# 四种数据读取模式：
+#   1. dino_native:          dataset_path: "ImageNet:split=TRAIN:root=/path"
+#   2. webdataset_local:     dataset_path: "wds:/local/shards-{0000..0099}.tar"
+#   3. webdataset_s3_stream: dataset_path: "s3wds:s3://bucket/shards-{0000..0099}.tar"
+#   4. webdataset_s3_cache:  dataset_path: "cachewds:s3://bucket/shards-{0000..0099}.tar"
+#
+# 只需修改 train.dataset_path 前缀即可切换模式。
+# S3 模式额外配置: aws_profile, aws_region, s3_cache_root (仅 cachewds 需要)
 
 MODEL:
-  META_ARCHITECTURE: SSLMetaArchLoRA  # Use LoRA meta architecture
+  META_ARCHITECTURE: SSLMetaArch
   DEVICE: cuda
   WEIGHTS: ''
   DTYPE: float32
@@ -12,19 +19,6 @@ compute_precision:
   param_dtype: bf16
   reduce_dtype: fp32
   sharding_strategy: SHARD_GRAD_OP
-  hsdp_shards:1
-
-# LoRA Configuration
-lora:
-  r: 16                    # Rank of LoRA matrices
-  alpha: 32.0              # Scaling factor (typically 2x of r)
-  dropout: 0.05            # Dropout for LoRA layers
-  target_modules: null     # null = default (qkv, proj, mlp layers)
-  enable_q: true           # Apply LoRA to Q projection
-  enable_k: true           # Apply LoRA to K projection  
-  enable_v: true           # Apply LoRA to V projection
-  train_bias: false        # Whether to train bias parameters
-  train_heads: true        # Whether to train DINO/IBOT heads (recommended for domain adaptation)
 
 dino:
   loss_weight: 1.0
@@ -61,15 +55,32 @@ gram:
   compute_stats: false
 
 train:
-  batch_size_per_gpu: 4    # Reduced for multi-channel + LoRA (adjust based on GPU memory)
-  dataset_path: null        # Set this to your multi-channel dataset path
+  batch_size_per_gpu: 16
+  # ──────────────────────────────────────────────────────────
+  # 数据模式选择 — 取消注释其中一行
+  # ──────────────────────────────────────────────────────────
+  # 模式 1: 本地 WebDataset
+  # dataset_path: "wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel_hwlt600_chw/ch1/train-{000000..000099}.tar"
+
+  # 模式 2: S3 流式读取 (无需本地存储, 直接 pipe 读取)
+  dataset_path: "s3wds:s3://xuzijing-biofm-ap-southeast-1-57gb/webds_micro_100k_by_channel_hwlt600_chw/ch1/train-{000000..000099}.tar"
+
+  # 模式 3: S3 缓存模式 (启动时下载到 s3_cache_root, 之后本地读取)
+  # dataset_path: "cachewds:s3://xuzijing-biofm-ap-southeast-1-57gb/webds_micro_100k_by_channel_hwlt600_chw/ch1/train-{000000..000099}.tar"
+  # ──────────────────────────────────────────────────────────
+
+  # S3 相关配置 (仅 s3wds: / cachewds: 模式使用)
+  aws_profile: sg
+  aws_region: ap-southeast-1
+  s3_cache_root: /local_nvme/cache/webds_micro_100k_by_channel_hwlt600_chw
+
   saveckp_freq: 20
   seed: 0
-  num_workers: 10
+  num_workers: 8
   OFFICIAL_EPOCH_LENGTH: 1000
   monitor_gradient_norm: false
   chunk_schedule: []
-  cache_dataset: true
+  cache_dataset: false
   use_teacher_head: true
   learn_from_teacher_tokens: false
   centering: sinkhorn_knopp
@@ -90,7 +101,7 @@ student:
   pretrained_weights: ''
   ffn_layer: swiglu64
   ffn_ratio: 3
-  resume_from_teacher_chkpt: ''  # Set to pretrained checkpoint path
+  resume_from_teacher_chkpt: ''
   qkv_bias: false
   proj_bias: true
   ffn_bias: true
@@ -99,8 +110,8 @@ student:
   untie_cls_and_patch_norms: false
   untie_global_and_local_cls_norm: true
   mask_k_bias: true
-  in_chans: 4              # Number of channels (e.g., 4 for biological images)
-  enable_channelvit: true  # Enable ChannelViT mode
+  in_chans: 4
+  enable_channelvit: true
   pos_embed_type: rope
   pos_embed_rope_base: 100
   pos_embed_rope_min_period: null
@@ -119,8 +130,8 @@ teacher:
   warmup_teacher_temp: null
   teacher_temp: null
   warmup_teacher_temp_epochs: null
-  in_chans: 4              # Must match student.in_chans
-  enable_channelvit: true  # Must match student.enable_channelvit
+  in_chans: 4
+  enable_channelvit: true
 
 distillation:
   enabled: false
@@ -135,7 +146,7 @@ hrft:
   checkpoint_path: ''
 
 optim:
-  epochs: 100              # Fewer epochs for fine-tuning
+  epochs: 1000
   optimizer: adamw
   weight_decay: null
   weight_decay_end: null
@@ -177,17 +188,17 @@ crops:
   - 0.225
 
 checkpointing:
-  period: 500            # More frequent checkpoints for fine-tuning
+  period: 1000
   max_to_keep: 3
-  keep_every: 10000
+  keep_every: 50000
 
 schedules:
   lr:
     start: 0
-    peak: 1.0e-04        # Higher LR for LoRA (only training small part of model)
-    end: 1.0e-05
-    warmup_epochs: 10
-    freeze_last_layer_epochs: 2
+    peak: 5.0e-05
+    end: 5.0e-05
+    warmup_epochs: 100
+    freeze_last_layer_epochs: 5
   weight_decay:
     start: 0.04
     peak: 0.04
@@ -197,10 +208,9 @@ schedules:
     start: 0.04
     peak: 0.07
     end: 0.07
-    warmup_epochs: 10
+    warmup_epochs: 100
   momentum:
     start: 0.994
     peak: 0.994
-    end: 0.999
+    end: 0.994
     warmup_epochs: 0
-

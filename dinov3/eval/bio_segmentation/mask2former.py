@@ -34,6 +34,7 @@ Usage
 """
 
 import argparse
+import gc
 import importlib.util
 import json
 import logging
@@ -49,8 +50,10 @@ import torch.nn.functional as F
 from scipy.ndimage import label as scipy_label
 from scipy.optimize import linear_sum_assignment
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
+from dinov3 import distributed as dist_utils
 from .metrics import (
     accumulate_instance_metrics,
     accumulate_semantic_metrics,
@@ -65,6 +68,41 @@ logger = logging.getLogger('bio_seg.mask2former')
 # ============================================================================
 # Environment checks
 # ============================================================================
+
+
+def _maybe_enable_distributed() -> None:
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    if world_size > 1 and not dist_utils.is_enabled():
+        dist_utils.enable()
+
+
+def _is_main_process() -> bool:
+    return dist_utils.is_main_process()
+
+
+def _get_world_size() -> int:
+    return dist_utils.get_world_size()
+
+
+def _unwrap_module(module: nn.Module) -> nn.Module:
+    return module.module if hasattr(module, "module") else module
+
+
+def _load_checkpoint_for_final_eval(checkpoint_path: str, device: torch.device) -> Dict:
+    if device.type != "cuda":
+        return torch.load(checkpoint_path, map_location=device)
+
+    ckpt_size = os.path.getsize(checkpoint_path)
+    free_bytes, _ = torch.cuda.mem_get_info(device=device)
+    required_free = max(int(ckpt_size * 3), 512 * 1024 * 1024)
+    map_location = device if free_bytes >= required_free else "cpu"
+    logger.info(
+        "Final eval checkpoint load: free=%.2f GiB, ckpt=%.2f GiB, target=%s",
+        free_bytes / (1024 ** 3),
+        ckpt_size / (1024 ** 3),
+        map_location,
+    )
+    return torch.load(checkpoint_path, map_location=map_location)
 
 def _ensure_ms_deform_attn_available() -> None:
     """
@@ -485,7 +523,7 @@ def train_one_epoch(
 
     total_loss = 0.0
     n = 0
-    pbar = tqdm(loader, desc=f'M2F Epoch {epoch}', leave=False)
+    pbar = tqdm(loader, desc=f'M2F Epoch {epoch}', leave=False, disable=not _is_main_process())
 
     for batch in pbar:
         imgs  = batch[0].to(device)       # [B, 3, H, W]
@@ -519,9 +557,11 @@ def train_one_epoch(
         )
         optimizer.step()
 
-        total_loss += loss.item()
+        reduced = dist_utils.reduce_dict({"loss": loss.detach()}, average=True)
+        loss_value = float(reduced["loss"].item())
+        total_loss += loss_value
         n += 1
-        pbar.set_postfix(loss=f'{loss.item():.4f}')
+        pbar.set_postfix(loss=f'{loss_value:.4f}')
 
     return total_loss / max(n, 1)
 
@@ -757,7 +797,13 @@ def run_mask2former(
     from dinov3.eval.segmentation.models import build_segmentation_decoder, BackboneLayersSet
     from .feature_extractor import _build_dataset, DATASET_DEFAULT_IMG_SIZES
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    _maybe_enable_distributed()
+    if torch.cuda.is_available():
+        device = torch.device('cuda', torch.cuda.current_device())
+    else:
+        device = torch.device('cpu')
+    world_size = _get_world_size()
+    is_main = _is_main_process()
     os.makedirs(output_dir, exist_ok=True)
 
     # Official Mask2Former training needs the compiled CUDA op for
@@ -808,6 +854,23 @@ def run_mask2former(
     # seg_model.segmentation_model = ModuleList([backbone_adapter, m2f_head])
     backbone_adapter = seg_model.segmentation_model[0].to(device)
     m2f_head         = seg_model.segmentation_model[1].to(device)
+    if world_size > 1:
+        # MARK(lxy): enable multi-GPU DDP via torchrun without changing single-GPU usage.
+        backbone_adapter = nn.parallel.DistributedDataParallel(
+            backbone_adapter,
+            device_ids=[device.index],
+            output_device=device.index,
+            broadcast_buffers=False,
+        )
+        m2f_head = nn.parallel.DistributedDataParallel(
+            m2f_head,
+            device_ids=[device.index],
+            output_device=device.index,
+            broadcast_buffers=False,
+        )
+
+    backbone_adapter_raw = _unwrap_module(backbone_adapter)
+    m2f_head_raw = _unwrap_module(m2f_head)
 
     # ---- Parameter groups ----
     # DINOv3_Adapter.__init__ already calls self.backbone.requires_grad_(False),
@@ -819,7 +882,10 @@ def run_mask2former(
 
     n_adapter = sum(p.numel() for p in adapter_params)
     n_head    = sum(p.numel() for p in head_params)
-    logger.info(f"Trainable params — adapter: {n_adapter:,}  head: {n_head:,}")
+    logger.info(
+        f"Trainable params — adapter: {n_adapter:,}  head: {n_head:,}  "
+        f"world_size={world_size}"
+    )
 
     optimizer = torch.optim.AdamW(
         [
@@ -841,10 +907,15 @@ def run_mask2former(
 
     # Training: random-crop collate to produce crop_size × crop_size batches
     train_collate = partial(_random_crop_collate_fn, crop_size=crop_size)
+    train_sampler = (
+        DistributedSampler(tr_ds, num_replicas=world_size, rank=dist_utils.get_rank(), shuffle=True)
+        if world_size > 1 else None
+    )
     tr_loader = DataLoader(
         tr_ds,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         num_workers=num_workers,
         pin_memory=True,
         collate_fn=train_collate,
@@ -862,15 +933,19 @@ def run_mask2former(
     best_ckpt = os.path.join(output_dir, 'best_m2f.pth')
 
     for epoch in range(1, epochs + 1):
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
         loss = train_one_epoch(
             backbone_adapter, m2f_head, tr_loader,
             optimizer, device, epoch, num_classes,
         )
         scheduler.step()
+        if world_size > 1:
+            torch.distributed.barrier()
 
-        if epoch % 5 == 0 or epoch == epochs:
+        if is_main and (epoch % 5 == 0 or epoch == epochs):
             val_metrics = evaluate_m2f(
-                backbone_adapter, m2f_head,
+                backbone_adapter_raw, m2f_head_raw,
                 val_loader, num_classes, device, class_names,
                 inference_mode=inference_mode,
                 crop_size=crop_size, stride=stride,
@@ -886,19 +961,35 @@ def run_mask2former(
                 best_miou = miou
                 torch.save(
                     {
-                        'adapter': backbone_adapter.state_dict(),
-                        'head':    m2f_head.state_dict(),
+                        'adapter': backbone_adapter_raw.state_dict(),
+                        'head':    m2f_head_raw.state_dict(),
                         'epoch':   epoch,
                         'miou':    miou,
                     },
                     best_ckpt,
                 )
+        if world_size > 1:
+            torch.distributed.barrier()
+
+    if not is_main:
+        return {}
 
     # ---- Final evaluation ----
-    ckpt = torch.load(best_ckpt, map_location=device)
-    backbone_adapter.load_state_dict(ckpt['adapter'])
-    m2f_head.load_state_dict(ckpt['head'])
-    logger.info(f"Loaded best checkpoint from epoch {ckpt['epoch']} (val_mIoU={ckpt['miou']:.4f})")
+    del optimizer, scheduler
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    ckpt = _load_checkpoint_for_final_eval(best_ckpt, device)
+    best_epoch = ckpt['epoch']
+    best_miou = ckpt['miou']
+    backbone_adapter_raw.load_state_dict(ckpt['adapter'])
+    m2f_head_raw.load_state_dict(ckpt['head'])
+    del ckpt
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    logger.info(f"Loaded best checkpoint from epoch {best_epoch} (val_mIoU={best_miou:.4f})")
 
     eval_kwargs = dict(
         inference_mode=inference_mode,
@@ -907,7 +998,7 @@ def run_mask2former(
     )
     results = {
         'val': evaluate_m2f(
-            backbone_adapter, m2f_head,
+            backbone_adapter_raw, m2f_head_raw,
             val_loader, num_classes, device, class_names, **eval_kwargs,
         )
     }
@@ -916,7 +1007,7 @@ def run_mask2former(
         te_loader = DataLoader(te_ds, batch_size=1, shuffle=False,
                                num_workers=num_workers, pin_memory=True)
         results['test'] = evaluate_m2f(
-            backbone_adapter, m2f_head,
+            backbone_adapter_raw, m2f_head_raw,
             te_loader, num_classes, device, class_names, **eval_kwargs,
         )
     except Exception as e:

@@ -19,7 +19,7 @@ compute_precision:
   # gradient all-reduce (DDP-style).
   # Override at runtime: compute_precision.hsdp_shards=6
   # Set to 1 to disable HSDP and use pure 1-D FSDP across all GPUs.
-  hsdp_shards: 1
+  hsdp_shards: 2
 
 # LoRA Configuration
 lora:

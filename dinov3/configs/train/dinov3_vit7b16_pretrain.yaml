@@ -139,13 +139,13 @@ crops:
   horizontal_flips: false
   float_input: true
   rgb_mean:
-  - 0.485
-  - 0.456
-  - 0.406
+  - 0.175
+  - 0.175
+  - 0.175
   rgb_std:
-  - 0.229
-  - 0.224
-  - 0.225
+  - 0.264
+  - 0.264
+  - 0.264
 checkpointing:
   period: 1000
   max_to_keep: 3

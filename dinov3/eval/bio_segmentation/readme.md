@@ -228,90 +228,101 @@ python -m dinov3.eval.bio_segmentation.linear_probe \
 
 Mask2Former 内部通过 `DINOv3_Adapter` 使用 `FOUR_EVEN_INTERVALS`（4 层均匀间隔），
 推理时对大图采用滑窗（`--inference-mode slide`），对小 patch 使用全图推理（`whole`）。
-
+下面的 `batch-size` / `num-workers` 以当前 32GB GPU 为基准；若使用 `torchrun`，`batch-size` 表示**单卡 batch**。
+```bash
+export CUDA_HOME=/usr/local/cuda-12.8
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=/home/lxy/miniconda3/envs/dinov3/lib/python3.11/site-packages/torch/lib:$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+```
 ### MoNuSeg（大图 1000×1000 → slide 推理）
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    monuseg \
-    --data-root  /data1/xuzijing/dataset/monuseg/extracted \
-    --checkpoint /data1/xuzijing/checkpoints/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth \
-    --output-dir ./outputs/mask2former/monuseg_vitl \
-    --model-size l \
+    --data-root  /mnt/huawei_deepcad/benchmark/segmentation/monuseg/extracted \
+    --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
+    --output-dir ./outputs/mask2former/monuseg_vit7b \
+    --model-size 7b \
     --inference-mode slide \
     --crop-size  512 \
     --stride     341 \
+    --num-workers 4 \
     --epochs 50 --batch-size 2 --lr 1e-4 --adapter-lr 1e-5
 ```
 
 ### BBBC038（大图 → slide 推理）
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=4 torchrun --nproc_per_node=2 -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    bbbc038 \
-    --data-root  /data1/xuzijing/dataset/bbbc038/extracted \
-    --checkpoint /data1/xuzijing/checkpoints/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth \
-    --output-dir ./outputs/mask2former/bbbc038_vitl \
-    --model-size l \
+    --data-root  /mnt/huawei_deepcad/benchmark/segmentation/bbbc038/extracted \
+    --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth\
+    --output-dir ./outputs/mask2former/bbbc038_vit7b \
+    --model-size 7b \
     --inference-mode slide \
     --crop-size  512 --stride 341 \
-    --epochs 50 --batch-size 2 --lr 1e-4 --adapter-lr 1e-5
+    --num-workers 8 \
+    --epochs 50 --batch-size 4 --lr 1e-4 --adapter-lr 1e-5
 ```
 
 ### LIVECell
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=4 torchrun -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    livecell \
-    --data-root  /data1/xuzijing/dataset/LIVECell \
-    --checkpoint /data1/xuzijing/checkpoints/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth \
-    --output-dir ./outputs/mask2former/livecell_vitl \
-    --model-size l \
+    --data-root  /mnt/huawei_deepcad/benchmark/segmentation/LIVECell \
+    --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
+    --output-dir ./outputs/mask2former/livecell_vit7b \
+    --model-size 7b \
     --inference-mode whole \
     --crop-size  512 \
+    --num-workers 8 \
     --epochs 50 --batch-size 2 --lr 1e-4 --adapter-lr 1e-5
 ```
 
 ### CoNIC（小 patch 256×256 → whole 推理）
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    conic \
-    --data-root  /data1/xuzijing/dataset/conic/extracted \
-    --checkpoint /data1/xuzijing/checkpoints/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth \
-    --output-dir ./outputs/mask2former/conic_vitl \
-    --model-size l \
+    --data-root  /mnt/huawei_deepcad/benchmark/segmentation/conic/extracted \
+    --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
+    --output-dir ./outputs/mask2former/conic_vit7b_ddp \
+    --model-size 7b \
     --inference-mode whole \
     --crop-size  256 \
-    --epochs 50 --batch-size 4 --lr 1e-4 --adapter-lr 1e-5
+    --num-workers 4 \
+    --epochs 50 --batch-size 8 --lr 1e-4 --adapter-lr 1e-5
 ```
 
 ### PanNuke（小 patch 256×256 → whole 推理）
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=5 python -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    pannuke \
-    --data-root  /data1/xuzijing/dataset/pannuke/extracted \
-    --checkpoint /data1/xuzijing/checkpoints/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth \
-    --output-dir ./outputs/mask2former/pannuke_vitl \
-    --model-size l \
+    --data-root  /mnt/huawei_deepcad/benchmark/segmentation/pannuke/extracted \
+    --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
+    --output-dir ./outputs/mask2former/pannuke_vit7b \
+    --model-size 7b \
     --inference-mode whole \
     --crop-size  256 \
-    --epochs 50 --batch-size 4 --lr 1e-4 --adapter-lr 1e-5
+    --num-workers 8 \
+    --epochs 50 --batch-size 8 --lr 1e-4 --adapter-lr 1e-5
 ```
 
 ### TissueNet
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=5 python -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    tissuenet \
-    --data-root  /data1/xuzijing/dataset/tissuenet/extracted \
-    --checkpoint /data1/xuzijing/checkpoints/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth \
-    --output-dir ./outputs/mask2former/tissuenet_vitl \
-    --model-size l \
+    --data-root  /mnt/huawei_deepcad/benchmark/segmentation/tissuenet/extracted \
+    --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
+    --output-dir ./outputs/mask2former/tissuenet_vit7b \
+    --model-size 7b \
     --inference-mode whole \
     --crop-size  256 \
-    --epochs 50 --batch-size 4 --lr 1e-4 --adapter-lr 1e-5
+    --num-workers 8 \
+    --epochs 50 --batch-size 8 --lr 1e-4 --adapter-lr 1e-5
 ```
 
 ---

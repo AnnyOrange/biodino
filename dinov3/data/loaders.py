@@ -5,7 +5,7 @@
 
 import logging
 from enum import Enum
-from typing import Any, Callable, List, Optional, TypeVar
+from typing import Any, Callable, List, Optional, TypeVar, Union
 
 import torch
 from torch.utils.data import Sampler
@@ -86,33 +86,61 @@ def make_dataset(
     target_transform: Optional[Callable] = None,
     transforms: Optional[Callable] = None,
     target_channels: Optional[int] = None,
+    s3_cache_root: Optional[str] = None,
+    aws_profile: Optional[str] = None,
+    aws_region: Optional[str] = None,
 ):
     """
     Creates a dataset with the specified parameters.
 
+    Prefix-based routing (resolved once at init, not on the hot path):
+        - no prefix          → DINOv3 native dataset (ImageNet:split=TRAIN …)
+        - ``wds:``           → local WebDataset shards
+        - ``s3wds:``         → S3 streaming WebDataset (pipe:aws s3 cp …)
+        - ``cachewds:``      → download S3 shards to *s3_cache_root*, then
+                               read as local WebDataset
+
     Args:
-        dataset_str: A dataset string description (e.g. ImageNet:split=TRAIN).
-            支持 WebDataset 格式：以 "wds:" 为前缀，如 "wds:/path/to/shards-{0000..0099}.tar"
-        transform: A transform to apply to images.
-        target_transform: A transform to apply to targets.
-        transforms: A transform to apply to both images and targets.
-        target_channels: 仅在 WebDataset 模式下生效；为解码后的样本对齐目标通道数。
+        dataset_str: Dataset descriptor string.
+        transform: Image transform.
+        target_transform: Target transform.
+        transforms: Joint image+target transform.
+        target_channels: Align decoded samples to this channel count (WebDataset only).
+        s3_cache_root: Local cache directory for ``cachewds:`` mode.
+        aws_profile: AWS CLI profile name for S3 modes (optional).
+        aws_region: AWS region for S3 modes (optional).
 
     Returns:
         The created dataset.
     """
     logger.info(f'using dataset: "{dataset_str}"')
 
-    # 检测 WebDataset 格式
     if dataset_str.startswith("wds:"):
         return _make_webdataset(dataset_str[4:], transform, target_channels=target_channels)
 
+    if dataset_str.startswith("s3wds:"):
+        return _make_s3_stream_webdataset(
+            dataset_str[6:], transform,
+            target_channels=target_channels,
+            aws_profile=aws_profile,
+            aws_region=aws_region,
+        )
+
+    if dataset_str.startswith("cachewds:"):
+        return _make_s3_cache_webdataset(
+            dataset_str[9:], transform,
+            target_channels=target_channels,
+            cache_root=s3_cache_root,
+            aws_profile=aws_profile,
+            aws_region=aws_region,
+        )
+
+    # DINOv3 native dataset path
     class_, kwargs = _parse_dataset_str(dataset_str)
     dataset = class_(transform=transform, target_transform=target_transform, transforms=transforms, **kwargs)
 
     logger.info(f"# of dataset samples: {len(dataset):,d}")
 
-    # Aggregated datasets do not expose (yet) these attributes, so add them.
     if not hasattr(dataset, "transform"):
         dataset.transform = transform
     if not hasattr(dataset, "target_transform"):
@@ -124,27 +152,27 @@ def make_dataset(
 
 
 def _make_webdataset(
-    shard_pattern: str,
+    shard_urls: Union[str, List[str]],
     transform: Optional[Callable] = None,
     target_channels: Optional[int] = None,
 ):
-    """
-    创建 WebDataset 数据管道。
+    """Create a WebDataset pipeline from local shards or pre-resolved URL list.
 
     Args:
-        shard_pattern: tar 分片路径模式，如 "/path/to/shards-{0000..0099}.tar"。
-        transform: 图像变换函数。
-        target_channels: 解码后样本要对齐到的目标通道数。
+        shard_urls: Brace pattern string **or** explicit list of URLs
+            (local paths, ``pipe:`` URLs, etc.).
+        transform: Image transform.
+        target_channels: Align decoded samples to this channel count.
 
     Returns:
-        WebDataset IterableDataset 管道。
+        WebDataset IterableDataset pipeline.
     """
     from .wds_pipeline import WdsConfig, build_wds_pipeline
 
-    logger.info(f"creating WebDataset from: {shard_pattern}")
+    logger.info(f"creating WebDataset from: {shard_urls if isinstance(shard_urls, str) else f'{len(shard_urls)} URLs'}")
 
     config = WdsConfig(
-        shard_urls=shard_pattern,
+        shard_urls=shard_urls,
         shuffle_buffer=1000,
         target_channels=target_channels,
     )
@@ -152,6 +180,43 @@ def _make_webdataset(
 
     logger.info("WebDataset pipeline created (infinite streaming)")
     return pipeline
+
+
+def _make_s3_stream_webdataset(
+    s3_shard_pattern: str,
+    transform: Optional[Callable] = None,
+    target_channels: Optional[int] = None,
+    aws_profile: Optional[str] = None,
+    aws_region: Optional[str] = None,
+):
+    """S3 streaming mode: expand pattern → pipe:aws s3 cp URLs → WebDataset."""
+    from .s3_utils import resolve_s3_stream_urls
+
+    pipe_urls = resolve_s3_stream_urls(s3_shard_pattern, profile=aws_profile, region=aws_region)
+    return _make_webdataset(pipe_urls, transform, target_channels=target_channels)
+
+
+def _make_s3_cache_webdataset(
+    s3_shard_pattern: str,
+    transform: Optional[Callable] = None,
+    target_channels: Optional[int] = None,
+    cache_root: Optional[str] = None,
+    aws_profile: Optional[str] = None,
+    aws_region: Optional[str] = None,
+):
+    """S3 cache mode: download shards to *cache_root*, then read locally."""
+    from .s3_utils import sync_s3_to_cache
+
+    if not cache_root:
+        raise ValueError(
+            "cachewds: mode requires 'train.s3_cache_root' in config — "
+            "set it to a local directory for shard caching"
+        )
+
+    local_paths = sync_s3_to_cache(
+        s3_shard_pattern, cache_root, profile=aws_profile, region=aws_region,
+    )
+    return _make_webdataset(local_paths, transform, target_channels=target_channels)
 
 
 def _make_sampler(
