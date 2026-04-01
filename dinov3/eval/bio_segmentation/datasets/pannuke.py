@@ -150,7 +150,10 @@ class PanNukeDataset(Dataset):
 
         sem, inst = self._masks_to_semantic_instance(mask6)
 
-        h, w = self.size
+        if self.size is None:
+            h, w = img.shape[:2]
+        else:
+            h, w = self.size
         if img.shape[:2] != (h, w):
             img  = cv2.resize(img,  (w, h), interpolation=cv2.INTER_LINEAR)
             sem  = cv2.resize(sem.astype(np.float32),  (w, h),

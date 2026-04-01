@@ -13,7 +13,7 @@ In webdataset 1.0.x, DataPipeline does NOT support method-chaining
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, List, Optional, Union
 
 import torch
 
@@ -25,12 +25,13 @@ class WdsConfig:
     """WebDataset pipeline configuration.
 
     Attributes:
-        shard_urls: tar shard URL list or brace expression.
+        shard_urls: tar shard URL list, brace expression string, or explicit
+            list of URLs (e.g. pipe: URLs for S3 streaming).
         shuffle_buffer: shuffle buffer size.
         batch_size: optional batch size (usually set in DataLoader).
         num_workers: number of worker processes.
     """
-    shard_urls: str
+    shard_urls: Union[str, List[str]]
     shuffle_buffer: int = 1000
     batch_size: Optional[int] = None
     num_workers: int = 4

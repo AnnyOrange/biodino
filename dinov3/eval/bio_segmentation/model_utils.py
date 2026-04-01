@@ -59,6 +59,9 @@ def load_dinov3_backbone(
 
     model.load_state_dict(cleaned, strict=True)
     model = model.to(device)
+    # MARK(lxy): keep the frozen 7B backbone in bf16 on GPU to reduce VRAM.
+    if freeze and model_size.lower() == '7b':
+        model = model.to(dtype=torch.bfloat16)
     model.eval()
 
     if freeze:
