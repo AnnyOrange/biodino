@@ -1,0 +1,5 @@
+D20260407 07:06:37 1914009 nan_logger __init__.py:132] PyTorch distributed environment: TorchElastic job (none) using 127.0.0.1:29500 (rank=1, world size=4)
+D20260407 07:07:05 1915169 nan_logger __init__.py:132] PyTorch distributed environment: TorchElastic job (none) using 127.0.0.1:29500 (rank=1, world size=4)
+D20260407 07:09:15 1918450 nan_logger __init__.py:132] PyTorch distributed environment: TorchElastic job (none) using 127.0.0.1:29500 (rank=1, world size=4)
+D20260407 07:23:07 1943627 nan_logger __init__.py:132] PyTorch distributed environment: TorchElastic job (none) using 127.0.0.1:29500 (rank=1, world size=2)
+D20260407 07:27:34 1951509 nan_logger __init__.py:132] PyTorch distributed environment: TorchElastic job (none) using 127.0.0.1:29500 (rank=1, world size=2)
