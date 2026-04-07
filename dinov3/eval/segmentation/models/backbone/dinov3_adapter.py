@@ -55,8 +55,18 @@ def get_reference_points(spatial_shapes, device):
 
 def deform_inputs(x, patch_size):
     bs, c, h, w = x.shape
+    def _ceil_div(a, b):
+        return (a + b - 1) // b
+
+    # SPM path uses stride-2 conv/pool with padding, whose output spatial sizes
+    # follow ceil-div behavior for non-divisible inputs. Using floor division
+    # here can desync reference_points/query lengths in MSDeformAttn.
+    h8, w8 = _ceil_div(h, 8), _ceil_div(w, 8)
+    h16, w16 = _ceil_div(h, 16), _ceil_div(w, 16)
+    h32, w32 = _ceil_div(h, 32), _ceil_div(w, 32)
+
     spatial_shapes = torch.as_tensor(
-        [(h // 8, w // 8), (h // 16, w // 16), (h // 32, w // 32)], dtype=torch.long, device=x.device
+        [(h8, w8), (h16, w16), (h32, w32)], dtype=torch.long, device=x.device
     )
     level_start_index = torch.cat((spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
     reference_points = get_reference_points([(h // patch_size, w // patch_size)], x.device)
@@ -64,7 +74,7 @@ def deform_inputs(x, patch_size):
 
     spatial_shapes = torch.as_tensor([(h // patch_size, w // patch_size)], dtype=torch.long, device=x.device)
     level_start_index = torch.cat((spatial_shapes.new_zeros((1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
-    reference_points = get_reference_points([(h // 8, w // 8), (h // 16, w // 16), (h // 32, w // 32)], x.device)
+    reference_points = get_reference_points([(h8, w8), (h16, w16), (h32, w32)], x.device)
     deform_inputs2 = [reference_points, spatial_shapes, level_start_index]
 
     return deform_inputs1, deform_inputs2

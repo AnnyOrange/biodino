@@ -54,6 +54,7 @@ class TissueNetDataset(Dataset):
         size: Tuple[int, int] = (448, 448),
         augment: bool = False,
         norm_mode: str = 'percentile',
+        cache_preprocessed: bool = True,
     ):
         """
         Args:
@@ -62,6 +63,7 @@ class TissueNetDataset(Dataset):
             size      : output (H, W).
             augment   : random horizontal/vertical flips.
             norm_mode : per-channel normalisation – 'minmax', 'percentile', or 'hybrid'.
+            cache_preprocessed : eagerly build a pseudo-RGB cache in RAM for faster training.
         """
         logger.info(f"Loading TissueNet from {npz_path} ...")
         data = np.load(npz_path)
@@ -72,11 +74,60 @@ class TissueNetDataset(Dataset):
         self.size      = size
         self.augment   = augment
         self.norm_mode = norm_mode
+        self.cache_preprocessed = cache_preprocessed
+        self.rgb_cache: Optional[np.ndarray] = None
 
-        logger.info(f"TissueNet: {len(self.X)} samples  target={target}  size={size}")
+        if self.cache_preprocessed:
+            logger.info("TissueNet: building cached pseudo-RGB tensors in RAM...")
+            self.rgb_cache = self._build_rgb_cache().astype(np.float16, copy=False)
+            self.X = None
+
+        logger.info(
+            f"TissueNet: {len(self.y)} samples  target={target}  size={size}  "
+            f"cache_preprocessed={self.cache_preprocessed}"
+        )
 
     def __len__(self) -> int:
-        return len(self.X)
+        return len(self.y)
+
+    def _normalize_stack(self, arr: np.ndarray) -> np.ndarray:
+        arr = arr.astype(np.float32, copy=False)
+
+        if self.norm_mode == 'minmax':
+            mins = arr.min(axis=(1, 2), keepdims=True)
+            maxs = arr.max(axis=(1, 2), keepdims=True)
+            denom = maxs - mins
+            out = np.zeros_like(arr, dtype=np.float32)
+            valid = denom > 0
+            np.divide(arr - mins, denom + 1e-8, out=out, where=valid)
+            return out
+
+        if self.norm_mode == 'percentile':
+            p_low, p_high = np.percentile(arr, [0.3, 99.7], axis=(1, 2))
+            p_low = p_low[:, None, None]
+            p_high = p_high[:, None, None]
+            out = np.empty_like(arr, dtype=np.float32)
+            fallback = arr / (arr.max(axis=(1, 2), keepdims=True) + 1e-8)
+            valid = p_high > p_low
+            clipped = np.clip(arr, p_low, p_high)
+            np.divide(clipped - p_low, p_high - p_low + 1e-8, out=out, where=valid)
+            out = np.where(valid, out, fallback)
+            return out
+
+        if self.norm_mode == 'hybrid':
+            p_high = np.percentile(arr, 99.9, axis=(1, 2))[:, None, None]
+            clipped = np.clip(arr, 0, p_high)
+            out = np.zeros_like(arr, dtype=np.float32)
+            valid = p_high > 0
+            np.divide(clipped, p_high + 1e-8, out=out, where=valid)
+            return out
+
+        raise ValueError(f"Unknown preprocessing mode: {self.norm_mode}")
+
+    def _build_rgb_cache(self) -> np.ndarray:
+        ch0 = self._normalize_stack(self.X[:, :, :, 0])
+        ch1 = self._normalize_stack(self.X[:, :, :, 1])
+        return np.stack([ch0, ch1, ch0], axis=-1)
 
     def _make_rgb(self, x: np.ndarray) -> np.ndarray:
         """
@@ -95,7 +146,10 @@ class TissueNetDataset(Dataset):
             sem_t  : [H, W] int64  binary semantic (0=bg, 1=cell)
             inst_t : [H, W] int64  instance IDs   (0=bg, 1..N)
         """
-        img  = self._make_rgb(self.X[idx])           # [H, W, 3] float32
+        if self.rgb_cache is not None:
+            img = self.rgb_cache[idx].astype(np.float32, copy=False)
+        else:
+            img = self._make_rgb(self.X[idx])        # [H, W, 3] float32
         inst = self.y[idx, :, :, self.target].astype(np.int64)  # [H, W]
 
         # Resize only when a fixed output size is requested
