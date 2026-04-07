@@ -237,7 +237,7 @@ export LD_LIBRARY_PATH=/home/lxy/miniconda3/envs/dinov3/lib/python3.11/site-pack
 ### MoNuSeg（大图 1000×1000 → slide 推理）
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=7 python -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    monuseg \
     --data-root  /mnt/huawei_deepcad/benchmark/segmentation/monuseg/extracted \
     --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
@@ -247,16 +247,16 @@ CUDA_VISIBLE_DEVICES=0 python -m dinov3.eval.bio_segmentation.mask2former \
     --crop-size  512 \
     --stride     341 \
     --num-workers 4 \
-    --epochs 50 --batch-size 2 --lr 1e-4 --adapter-lr 1e-5
+    --epochs 20 --batch-size 2 --lr 1e-4 --adapter-lr 1e-5
 ```
 
 ### BBBC038（大图 → slide 推理）
 
 ```bash
-CUDA_VISIBLE_DEVICES=4 torchrun --nproc_per_node=2 -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=4,5 torchrun --nproc_per_node=2 -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    bbbc038 \
-    --data-root  /mnt/huawei_deepcad/benchmark/segmentation/bbbc038/extracted \
-    --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth\
+    --data-root  /data/dataset/segmentation/bbbc038/extracted \
+    --checkpoint /data/checkpoints/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth\
     --output-dir ./outputs/mask2former/bbbc038_vit7b \
     --model-size 7b \
     --inference-mode slide \
@@ -268,7 +268,7 @@ CUDA_VISIBLE_DEVICES=4 torchrun --nproc_per_node=2 -m dinov3.eval.bio_segmentati
 ### LIVECell
 
 ```bash
-CUDA_VISIBLE_DEVICES=4 torchrun -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=4 python -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    livecell \
     --data-root  /mnt/huawei_deepcad/benchmark/segmentation/LIVECell \
     --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
@@ -283,7 +283,7 @@ CUDA_VISIBLE_DEVICES=4 torchrun -m dinov3.eval.bio_segmentation.mask2former \
 ### CoNIC（小 patch 256×256 → whole 推理）
 
 ```bash
-CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=5 python -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    conic \
     --data-root  /mnt/huawei_deepcad/benchmark/segmentation/conic/extracted \
     --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
@@ -313,7 +313,7 @@ CUDA_VISIBLE_DEVICES=5 python -m dinov3.eval.bio_segmentation.mask2former \
 ### TissueNet
 
 ```bash
-CUDA_VISIBLE_DEVICES=5 python -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=6 python -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    tissuenet \
     --data-root  /mnt/huawei_deepcad/benchmark/segmentation/tissuenet/extracted \
     --checkpoint /mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \

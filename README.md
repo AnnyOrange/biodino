@@ -28,6 +28,8 @@ micromamba activate dinov3
 
 > 以下示例基于 WebDataset 输入：  
 > `train.dataset_path="wds:/path/to/train-{000000..xxx}.tar"`
+>
+> `ChannelViT`（`student/teacher.in_chans`、`enable_channelvit`）与 LoRA 细节可直接命令行覆盖，无需额外 YAML。
 
 ### 2.1 单机多卡（例如 1 机 4 卡）
 
@@ -47,6 +49,30 @@ torchrun \
 - `student.resume_from_teacher_chkpt` 可用于加载官方预训练权重初始化 backbone。
 - `student.fp8_enabled=false` 表示关闭 FP8 路径，使用常规混合精度；若硬件与 PyTorch 支持 FP8 且你希望启用，可改为 `true`（需与配置一致）。
 - `compute_precision.hsdp_shards=1` 表示纯 FSDP（1D mesh）。当 `hsdp_shards>1` 时启用 HSDP：每组 `hsdp_shards` 张卡内做 FSDP 分片，组间做 DDP 式同步；需满足 `world_size % hsdp_shards == 0`。
+
+### 2.3 命令行开启 ChannelViT（无需 channelvit YAML）
+
+```bash
+torchrun --nproc_per_node=8 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
+  train.dataset_path="wds:/mnt/data/shards/ch1/train-{000000..000099}.tar" \
+  student.in_chans=4 \
+  teacher.in_chans=4 \
+  student.enable_channelvit=true \
+  teacher.enable_channelvit=true
+```
+
+### 2.4 LoRA + ChannelViT（无需 lora_channelvit YAML）
+
+```bash
+torchrun --nproc_per_node=8 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_lora.yaml \
+  train.dataset_path="wds:/mnt/data/shards/ch1/train-{000000..000099}.tar" \
+  student.in_chans=4 \
+  teacher.in_chans=4 \
+  student.enable_channelvit=true \
+  teacher.enable_channelvit=true
+```
 
 ### 2.2 多机多卡（例如 2 机，每机 4 卡）
 
@@ -95,6 +121,7 @@ torchrun \
 
 ## 3) 四种数据加载模式（启动命令示例）
 
+模式 2–4 共用同一份 WebDataset 配置 [`dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml`](dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml)，只需在命令行改 `train.dataset_path` 前缀；S3 时再带上 `train.aws_profile` / `train.aws_region`，缓存模式再加 `train.s3_cache_root`。
 
 ### 模式 1：DINOv3 原生读取（ImageNet 等）
 
@@ -114,31 +141,42 @@ torchrun --nproc_per_node=8 dinov3/train/train.py \
 
 ### 模式 3：S3 流式 WebDataset
 
+在**本仓库根目录**执行（需已配置 `aws` CLI 与 profile `sg`，并能访问该 bucket）：
+
 ```bash
-torchrun --nproc_per_node=8 dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset_s3.yaml \
-  train.dataset_path="s3wds:s3://xuzijing-biofm-ap-southeast-1-57gb/webds_micro_100k_by_channel_hwlt600_chw/ch1/train-{000000..000099}.tar" \
+torchrun --nproc_per_node=4 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
+  --output-dir ./outputs/debug_ch1 \
+  train.dataset_path="s3wds:s3://xuzijing-biofm-ap-southeast-1-100k/webds_micro_100k_by_channel/ch1/train-{000000..000003}.tar" \
   train.aws_profile=sg \
-  train.aws_region=ap-southeast-1
+  train.aws_region=ap-southeast-1 \
+  student.fp8_enabled=false
 ```
 
 ### 模式 4：S3 缓存 + 本地 WebDataset
 
+`train.s3_cache_root` 请指向**本机可写目录**（不要用机器上不存在的路径，例如未挂载的 `/local_nvme/...`）。下面示例用 `$HOME/.cache/dinov3_webds`，可先 `mkdir` 再跑；同步 shard 时也会按需创建子目录。
+
+在**本仓库根目录**执行：
+
 ```bash
-torchrun --nproc_per_node=8 dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset_s3.yaml \
-  train.dataset_path="cachewds:s3://xuzijing-biofm-ap-southeast-1-57gb/webds_micro_100k_by_channel_hwlt600_chw/ch1/train-{000000..000099}.tar" \
-  train.s3_cache_root=/local_nvme/cache/webds \
+mkdir -p "${HOME}/.cache/dinov3_webds"
+
+torchrun --nproc_per_node=4 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
+  --output-dir ./outputs/debug_ch1 \
+  train.dataset_path="cachewds:s3://xuzijing-biofm-ap-southeast-1-100k/webds_micro_100k_by_channel/ch1/train-{000000..000003}.tar" \
+  train.s3_cache_root="${HOME}/.cache/dinov3_webds" \
   train.aws_profile=sg \
-  train.aws_region=ap-southeast-1
+  train.aws_region=ap-southeast-1 \
+  student.fp8_enabled=false
 ```
 
----
 
 ## 4) 常见参数
 
 - `train.dataset_path`：  
-  以 `wds:` 开头时使用本地 WebDataset；`s3wds:` / `cachewds:` 等前缀见对应配置与 `loaders` 实现。
+  以 `wds:` / `s3wds:` / `cachewds:` 切换 WebDataset 数据源（均使用 `dinov3_vit7b16_pretrain_webdataset.yaml`）；路由逻辑见 `dinov3/data/loaders.py` 中 `make_dataset`。
 - `student.in_chans` / `teacher.in_chans`：  
   输入通道数（默认 3）。如需改多通道训练，请在命令行覆盖。
 - `compute_precision.hsdp_shards`：  

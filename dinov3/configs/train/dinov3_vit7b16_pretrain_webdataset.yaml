@@ -1,6 +1,11 @@
 # DINOv3 ViT-7B Pretrain with WebDataset
-# 使用 WebDataset 流式读取多通道 TIFF 图像
-# 适用于海量数据（100TB+）的自监督预训练
+# 使用 WebDataset 流式读取多通道 TIFF 图像；适用于海量数据（100TB+）的自监督预训练。
+#
+# 数据模式仅由 train.dataset_path 前缀决定（建议命令行覆盖，无需换 yaml）：
+#   wds:       本地 shard
+#   s3wds:     S3 流式（pipe 读取）
+#   cachewds:  先同步到 s3_cache_root 再本地读
+# S3 模式在命令行设置 train.aws_profile / train.aws_region；cachewds 还需 train.s3_cache_root。
 
 MODEL:
   META_ARCHITECTURE: SSLMetaArch
@@ -49,9 +54,10 @@ gram:
 
 train:
   batch_size_per_gpu: 16
-  # WebDataset 数据集路径格式: wds:/path/to/shards-{0000..0999}.tar
-  # 前缀 "wds:" 表示使用 WebDataset 模式
   dataset_path: "wds:/path/to/your/shards-{0000..0999}.tar"
+  aws_profile: null
+  aws_region: null
+  s3_cache_root: null
   saveckp_freq: 20
   seed: 0
   num_workers: 8          # WebDataset 推荐使用较多 workers
