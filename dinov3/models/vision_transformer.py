@@ -235,19 +235,10 @@ class DinoVisionTransformer(nn.Module):
             # x: (B, H', W', embed_dim)
             H_patch, W_patch = x.shape[1], x.shape[2]
             x = x.flatten(1, 2)  # (B, H'*W', embed_dim)
-        ##if masks is not None:
-            # === 新增：自动适配 ChannelViT 的 Mask 维度 ===
-            # if self.enable_channelvit and masks.shape[1] == (H_patch * W_patch):
-            #     # 如果传入的 mask 是单通道的 (B, HW)，但 x 是多通道的 (B, C*HW, D)
-            #     # 我们需要把 mask 重复 C 次
-            #     # masks: (B, HW) -> (B, C, HW) -> (B, C*HW)
-            #     masks = masks.unsqueeze(1).repeat(1, C, 1).flatten(1, 2)
-            # # ==========================================
-
-            # x = torch.where(masks.unsqueeze(-1), self.mask_token.to(x.dtype).unsqueeze(0), x)
-            # cls_token = self.cls_token
-        ##
         if masks is not None:
+            if self.enable_channelvit and masks.shape[1] != x.shape[1]:
+                # masks: (B, H'*W') → (B, C*H'*W') to match ChannelViT token count
+                masks = masks.unsqueeze(1).expand(-1, C, -1).reshape(B, -1)
             x = torch.where(masks.unsqueeze(-1), self.mask_token.to(x.dtype).unsqueeze(0), x)
             cls_token = self.cls_token
         else:
