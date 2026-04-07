@@ -30,3 +30,4 @@ dinov3/dataset_webdataset
 cache
 dinov3/eval/segmentation/models/utils/ops/build_msda.log
 dinov3/md
+local_dino
