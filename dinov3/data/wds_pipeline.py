@@ -128,6 +128,108 @@ def build_wds_pipeline(
     return pipeline
 
 
+class _MultiChannelWdsDataset(torch.utils.data.IterableDataset):
+    """Zip N single-channel WebDataset streams into multi-channel samples.
+
+    Each per-channel stream independently shuffles and yields 1-channel
+    float32 tensors.  This dataset round-robin reads one sample from each
+    stream and stacks them along the channel dimension, producing an
+    (N, H, W) tensor.  A DINOv3 transform is then applied.
+
+    Because per-channel shards are shuffled independently, paired channels
+    in one sample may NOT originate from the same physical specimen.  For
+    self-supervised pretraining this is acceptable.
+    """
+
+    def __init__(
+        self,
+        per_channel_pipelines: List[torch.utils.data.IterableDataset],
+        channel_names: List[str],
+        transform: Optional[Callable] = None,
+    ):
+        super().__init__()
+        self.pipelines = per_channel_pipelines
+        self.channel_names = channel_names
+        self.transform = transform
+
+    def __iter__(self):
+        iters = [iter(p) for p in self.pipelines]
+        while True:
+            channels = []
+            try:
+                for it in iters:
+                    sample = next(it)
+                    channels.append(sample["image"])  # (1, H, W)
+            except StopIteration:
+                return
+
+            stacked = torch.cat(channels, dim=0)  # (N, H, W)
+
+            if self.transform is not None:
+                transformed = self.transform(stacked)
+                yield transformed, ()
+            else:
+                yield stacked, ()
+
+
+def build_multichannel_wds_pipeline(
+    shard_patterns: List[str],
+    channel_names: List[str],
+    transform: Optional[Callable] = None,
+    shuffle_buffer: int = 1000,
+) -> torch.utils.data.IterableDataset:
+    """Build a multi-channel WebDataset by zipping per-channel streams.
+
+    Args:
+        shard_patterns: One shard pattern (brace expression) per channel.
+        channel_names: Human-readable channel names for logging.
+        transform: DINOv3-style transform applied to the stacked N-channel tensor.
+        shuffle_buffer: Per-stream shuffle buffer size.
+
+    Returns:
+        An IterableDataset that yields (transformed_image, ()) tuples.
+    """
+    try:
+        import webdataset as wds
+    except ImportError:
+        logger.error("webdataset not installed — run: pip install webdataset")
+        raise
+
+    from .wds_decoder import decode_npy_bytes, decode_tiff_bytes
+
+    per_channel_pipelines = []
+    for i, pattern in enumerate(shard_patterns):
+        def _make_decoder():
+            def decode_sample(sample: dict) -> Optional[dict]:
+                image_key = _find_image_key(sample)
+                if image_key is None:
+                    return None
+                fmt = _infer_image_format(image_key)
+                if fmt == "npy":
+                    tensor = decode_npy_bytes(sample[image_key], target_channels=1)
+                else:
+                    tensor = decode_tiff_bytes(sample[image_key], target_channels=1)
+                if tensor is None:
+                    return None
+                return {"image": tensor, "__key__": sample.get("__key__", "")}
+            return decode_sample
+
+        stages = [
+            wds.SimpleShardList(pattern),
+            wds.split_by_node,
+            wds.split_by_worker,
+            wds.tarfile_to_samples(),
+            wds.shuffle(shuffle_buffer),
+            wds.map(_make_decoder()),
+            wds.select(lambda x: x is not None),
+        ]
+        pipeline = wds.DataPipeline(*stages)
+        per_channel_pipelines.append(pipeline)
+        logger.info(f"  channel {channel_names[i]}: {pattern}")
+
+    return _MultiChannelWdsDataset(per_channel_pipelines, channel_names, transform)
+
+
 def is_webdataset(dataset) -> bool:
     """Return True if dataset is a WebDataset IterableDataset."""
     return isinstance(dataset, torch.utils.data.IterableDataset)

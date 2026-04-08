@@ -31,3 +31,4 @@ cache
 dinov3/eval/segmentation/models/utils/ops/build_msda.log
 dinov3/md
 local_dino
+dinov3/data/repackage/pipeline.md
