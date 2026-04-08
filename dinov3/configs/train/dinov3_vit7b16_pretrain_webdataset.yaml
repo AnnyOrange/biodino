@@ -1,11 +1,31 @@
 # DINOv3 ViT-7B Pretrain with WebDataset
 # 使用 WebDataset 流式读取多通道 TIFF 图像；适用于海量数据（100TB+）的自监督预训练。
 #
-# 数据模式仅由 train.dataset_path 前缀决定（建议命令行覆盖，无需换 yaml）：
-#   wds:       本地 shard
-#   s3wds:     S3 流式（pipe 读取）
-#   cachewds:  先同步到 s3_cache_root 再本地读
-# S3 模式在命令行设置 train.aws_profile / train.aws_region；cachewds 还需 train.s3_cache_root。
+# ── 数据模式（train.dataset_path 前缀）────────────────────────────────────────
+#
+#  旧格式（按通道分目录的单通道 tar）：
+#    wds:/mnt/data/webds_micro_100k_by_channel/ch1/train-{000000..000129}.tar
+#
+#  新格式（data/repackage 打包的多通道 tar）：                ← 推荐
+#    packwds:/mnt/data/wds_packed_shards/filtered_mixed_train_w*-{000000..000999}.tar
+#
+#    packwds: 每条样本包含 ch1.tif…chN.tif + meta.json，通道严格对齐。
+#    缺失通道自动零填充至 target_channels 维度。
+#    需同步修改：
+#      student.in_chans / teacher.in_chans = target_channels（如 8）
+#      train.target_channels = 8（命令行覆盖或在此 yaml 设置）
+#
+#  多流旧格式（各通道独立流 zip，通道不保证来自同一 FOV）：
+#    multiwds:/mnt/data/{ch}/train-{000000..000128}.tar::ch1,ch2,...,ch8
+#
+#  S3 流式：
+#    s3wds:s3://your-bucket/shards/train-{0000..9999}.tar
+#
+#  S3 先下载到本地：
+#    cachewds:s3://your-bucket/shards/train-{0000..9999}.tar
+#    （需同时设置 train.s3_cache_root）
+#
+# ─────────────────────────────────────────────────────────────────────────────
 
 MODEL:
   META_ARCHITECTURE: SSLMetaArch
@@ -55,7 +75,12 @@ gram:
 
 train:
   batch_size_per_gpu: 16
-  dataset_path: "wds:/path/to/your/shards-{0000..0999}.tar"
+  # 新格式示例（推荐）：
+  # w* 会被 glob 解析为实际存在的 w00/w01/… 前缀文件，{000000..000999} 做花括号展开
+  dataset_path: "packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000999}.tar"
+  # 旧格式示例（仍然兼容）：
+  # dataset_path: "wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000129}.tar"
+  target_channels: 8           # packwds 必填；输出 tensor 的通道数，需与 in_chans 一致
   aws_profile: null
   aws_region: null
   s3_cache_root: null
@@ -95,7 +120,7 @@ student:
   untie_cls_and_patch_norms: false
   untie_global_and_local_cls_norm: true
   mask_k_bias: true
-  in_chans: 3              # 多通道图像（根据实际数据调整）
+  in_chans: 8              # packwds 格式与 train.target_channels 保持一致
   enable_channelvit: true  # 启用 ChannelViT 处理多通道
   pos_embed_type: rope
   pos_embed_rope_base: 100
@@ -115,7 +140,7 @@ teacher:
   warmup_teacher_temp: null
   teacher_temp: null
   warmup_teacher_temp_epochs: null
-  in_chans: 3
+  in_chans: 8
   enable_channelvit: true
 
 distillation:
