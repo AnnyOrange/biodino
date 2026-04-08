@@ -230,6 +230,71 @@ def build_multichannel_wds_pipeline(
     return _MultiChannelWdsDataset(per_channel_pipelines, channel_names, transform)
 
 
+def build_packed_wds_pipeline(
+    config: WdsConfig,
+    transform: Optional[Callable] = None,
+) -> torch.utils.data.IterableDataset:
+    """Build a WebDataset pipeline for packed multi-channel shards (``packwds:``).
+
+    Packed shards are produced by ``data/repackage``.  Each tar sample
+    contains one ``ch<N>.tif`` file per available channel plus a
+    ``meta.json``.  All channels are decoded and assembled into a single
+    ``(target_channels, H, W)`` float32 tensor; missing channels are
+    zero-padded so the tensor shape is always fixed.
+
+    Fully backward-compatible: old single-channel shards (``wds:``) are
+    unaffected — they continue to use :func:`build_wds_pipeline`.
+
+    Args:
+        config: ``WdsConfig``; ``target_channels`` is **required** and
+            defines the output tensor channel count (e.g. 8).
+        transform: DINOv3-style transform applied to each image tensor.
+
+    Returns:
+        An IterableDataset suitable for use with DataLoader.
+    """
+    try:
+        import webdataset as wds
+    except ImportError:
+        logger.error("webdataset not installed — run: pip install webdataset")
+        raise
+
+    from .wds_decoder import decode_packed_sample
+
+    target_ch = config.target_channels or 8
+
+    def decode_sample(sample: dict) -> Optional[dict]:
+        tensor = decode_packed_sample(sample, target_channels=target_ch)
+        if tensor is None:
+            return None
+        return {"image": tensor, "__key__": sample.get("__key__", "")}
+
+    stages = [
+        wds.SimpleShardList(config.shard_urls),
+        wds.split_by_node,
+        wds.split_by_worker,
+        wds.tarfile_to_samples(),
+        wds.shuffle(config.shuffle_buffer),
+        wds.map(decode_sample),
+        wds.select(lambda x: x is not None),
+    ]
+
+    if transform is not None:
+        def apply_transform(sample: dict) -> tuple:
+            transformed = transform(sample["image"])
+            return transformed, ()
+
+        stages.append(wds.map(apply_transform))
+
+    pipeline = wds.DataPipeline(*stages)
+    logger.info(
+        "Packed WebDataset pipeline built: target_channels=%d  urls=%s",
+        target_ch,
+        config.shard_urls,
+    )
+    return pipeline
+
+
 def is_webdataset(dataset) -> bool:
     """Return True if dataset is a WebDataset IterableDataset."""
     return isinstance(dataset, torch.utils.data.IterableDataset)

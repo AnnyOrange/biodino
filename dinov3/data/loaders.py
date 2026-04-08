@@ -98,6 +98,13 @@ def make_dataset(
         - ``wds:``           → local WebDataset shards (supports ``;`` for
                                multiple shard patterns, e.g.
                                ``wds:/data/ch1/train-{...}.tar;/data/ch2/train-{...}.tar``)
+        - ``packwds:``       → packed multi-channel shards from ``data/repackage``.
+                               Each sample bundles all channels (``ch1.tif`` …
+                               ``chN.tif``) in one tar entry; missing channels
+                               are zero-filled.  Requires ``target_channels``
+                               to match ``student.in_chans`` in the YAML.
+                               Example:
+                               ``packwds:/data/packed/filtered_mixed_train_w*-{000000..000999}.tar``
         - ``multiwds:``      → multi-channel WebDataset: parallel streams from
                                multiple channel directories are zipped into a
                                single N-channel tensor per sample.  Pattern
@@ -121,6 +128,11 @@ def make_dataset(
         The created dataset.
     """
     logger.info(f'using dataset: "{dataset_str}"')
+
+    if dataset_str.startswith("packwds:"):
+        return _make_packed_webdataset(
+            dataset_str[8:], transform, target_channels=target_channels
+        )
 
     if dataset_str.startswith("multiwds:"):
         return _make_multichannel_webdataset(dataset_str[9:], transform)
@@ -163,6 +175,101 @@ def make_dataset(
         dataset.transforms = transforms
 
     return dataset
+
+
+def _make_packed_webdataset(
+    shard_spec: str,
+    transform: Optional[Callable] = None,
+    target_channels: Optional[int] = None,
+):
+    """Create a pipeline for packed multi-channel shards (``packwds:`` prefix).
+
+    Packed shards are produced by ``data/repackage``.  Each sample contains
+    ``ch<N>.tif`` files for all available channels plus a ``meta.json``.
+    Missing channels are zero-filled to produce a fixed
+    ``(target_channels, H, W)`` tensor.
+
+    The shard spec is resolved in two stages:
+    1. Brace expansion: ``{000000..000999}`` → individual numbers.
+    2. Shell glob expansion: ``w*`` → all matching worker prefixes.
+
+    This means patterns like
+    ``/data/packed/filtered_mixed_train_w*-{000000..000999}.tar``
+    work correctly even when worker-numbered files exist on disk.
+
+    Args:
+        shard_spec: Brace/glob pattern or ``;``-separated list of patterns.
+        transform: DINOv3-style transform.
+        target_channels: Number of output channels (default 8).
+            Must match ``student.in_chans`` / ``teacher.in_chans`` in the YAML.
+
+    Returns:
+        WebDataset IterableDataset pipeline.
+    """
+    from .wds_pipeline import WdsConfig, build_packed_wds_pipeline
+
+    raw_patterns = [s.strip() for s in shard_spec.split(";") if s.strip()]
+    shard_urls: List[str] = _expand_shard_patterns(raw_patterns)
+
+    if not shard_urls:
+        raise FileNotFoundError(
+            f"packwds: no tar shards found matching: {shard_spec}\n"
+            "Check that the output directory exists and the pattern is correct."
+        )
+
+    logger.info(
+        "creating packed WebDataset from %d pattern(s) → %d shards",
+        len(raw_patterns),
+        len(shard_urls),
+    )
+
+    effective_channels = target_channels or 8
+    config = WdsConfig(
+        shard_urls=shard_urls,
+        shuffle_buffer=1000,
+        target_channels=effective_channels,
+    )
+    pipeline = build_packed_wds_pipeline(config, transform=transform)
+    logger.info(
+        "Packed WebDataset pipeline created (target_channels=%d)", effective_channels
+    )
+    return pipeline
+
+
+def _expand_shard_patterns(patterns: List[str]) -> List[str]:
+    """Expand brace expressions and shell globs; return sorted, deduplicated paths.
+
+    Handles patterns that mix both notations, e.g.::
+
+        /data/packed/filtered_mixed_train_w*-{000000..000999}.tar
+
+    Steps:
+      1. ``braceexpand`` turns ``{a..b}`` into individual strings.
+      2. ``glob.glob`` resolves ``*``, ``?``, ``[...]`` against the filesystem.
+      3. Results are sorted and deduplicated.
+    """
+    import glob as _glob
+
+    from braceexpand import braceexpand
+
+    resolved: List[str] = []
+    for pattern in patterns:
+        brace_expanded = list(braceexpand(pattern))
+        for bp in brace_expanded:
+            if any(c in bp for c in ("*", "?", "[")):
+                matches = sorted(_glob.glob(bp))
+                resolved.extend(matches)
+            else:
+                resolved.append(bp)
+
+    # Deduplicate while preserving order
+    seen: set = set()
+    unique: List[str] = []
+    for path in resolved:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
 
 
 def _make_webdataset(

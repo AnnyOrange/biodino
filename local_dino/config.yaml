@@ -64,7 +64,7 @@ gram:
   loss_weight_schedule: null
 train:
   batch_size_per_gpu: 4
-  dataset_path: wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch2/train-{000000..000005}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch4/train-{000000..000003}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch5/train-{000000..000003}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch6/train-{000000..000003}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch7/train-{000000..000001}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch8/train-{000000..000000}.tar
+  dataset_path: packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000006}.tar
   data_config: null
   output_dir: /mnt/huawei_deepcad/dinov3/local_dino
   saveckp_freq: 20

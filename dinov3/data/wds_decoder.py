@@ -180,6 +180,76 @@ def _to_float_tensor(image_array: np.ndarray) -> Tensor:
     return torch.from_numpy(array)
 
 
+def decode_packed_sample(
+    sample: dict,
+    target_channels: int = 8,
+) -> Optional[Tensor]:
+    """Decode a packed multi-channel sample produced by ``data/repackage``.
+
+    Sample keys follow the pattern ``ch<N>.tif`` (N is 1-indexed).
+    Channels present in the sample are decoded and placed at position
+    ``ch_num - 1`` in the output tensor.  Missing channels remain **zero**,
+    so the model always receives a fixed-size ``(target_channels, H, W)``
+    tensor regardless of how many channels a given sample has.
+
+    Args:
+        sample: Raw WebDataset sample dict with ``ch*.tif`` and ``meta.json``.
+        target_channels: Output tensor channel count.  Channels numbered
+            above this value are silently ignored.
+
+    Returns:
+        Float32 Tensor ``(target_channels, H, W)`` normalised to ``[0, 1]``,
+        or ``None`` if no valid channel could be decoded.
+    """
+    import re
+
+    ch_key_re = re.compile(r"^ch(\d+)\.tiff?$", re.IGNORECASE)
+
+    # Collect channel bytes keyed by 1-indexed channel number
+    channel_bytes: dict[int, bytes] = {}
+    for key, value in sample.items():
+        m = ch_key_re.match(key)
+        if m and isinstance(value, (bytes, bytearray)):
+            channel_bytes[int(m.group(1))] = value
+
+    if not channel_bytes:
+        logger.warning(
+            "packed sample %s has no ch*.tif keys — keys: %s",
+            sample.get("__key__", "?"),
+            list(sample.keys()),
+        )
+        return None
+
+    # Decode each channel; derive H/W from first successful decode
+    decoded: dict[int, Tensor] = {}
+    h: Optional[int] = None
+    w: Optional[int] = None
+
+    for ch_num in sorted(channel_bytes):
+        if ch_num < 1 or ch_num > target_channels:
+            continue
+        tensor = decode_tiff_bytes(channel_bytes[ch_num], target_channels=1)
+        if tensor is None:
+            logger.debug("packed sample: failed to decode ch%d", ch_num)
+            continue
+        decoded[ch_num] = tensor  # (1, H, W)
+        if h is None:
+            _, h, w = tensor.shape
+
+    if not decoded or h is None:
+        logger.warning(
+            "packed sample %s: all channels failed to decode",
+            sample.get("__key__", "?"),
+        )
+        return None
+
+    result = torch.zeros(target_channels, h, w, dtype=torch.float32)
+    for ch_num, tensor in decoded.items():
+        result[ch_num - 1] = tensor[0]
+
+    return result
+
+
 def create_tiff_decoder() -> callable:
     """
     创建用于 WebDataset 的 TIFF 解码器函数。

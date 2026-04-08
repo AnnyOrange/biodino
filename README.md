@@ -1,9 +1,19 @@
 # DINOv3（当前分支）快速使用说明
 
-本文档包含：
-- 环境配置
-- 训练命令（单机多卡 / 多机多卡）
-- 四种数据加载模式示例（ImageNet / 本地 WebDataset / S3 流式 / S3 缓存）
+## 文档怎么读
+
+| 顺序 | 内容 |
+|------|------|
+| **1** | 环境配置 |
+| **2** | **推荐流程**：多通道显微 → 重打包 → 按通道统计 → 用 `packwds:` + ChannelViT（及可选 LoRA）训练 |
+| **3** | **补充**：常用参数、分布式启动、LoRA / 三通道等命令行变体 |
+| **4** | **补充数据源**：从 S3 或按通道分目录的本地 shard **直接**训练（`wds:` / `s3wds:` / `cachewds:`） |
+
+配置文件：`dinov3_vit7b16_pretrain_webdataset.yaml`（全量预训练）、`dinov3_vit7b16_pretrain_lora.yaml`（LoRA）、`dinov3_vit7b16_pretrain.yaml`（全量预训练默认无channelvit）。`in_chans`、`enable_channelvit`、`train.dataset_path` 等优先**命令行覆盖**。
+
+**前缀约定：** `train.dataset_path` 必须以合法前缀开头，否则会被当成 ImageNet 风格字符串解析而报错。支持的前缀见 [`dinov3/data/loaders.py`](dinov3/data/loaders.py) 中 `make_dataset`，主要包括：`packwds:`（重打包后的多通道 tar）、`wds:`、`s3wds:`、`cachewds:` 等。
+
+---
 
 ## 1) 环境配置
 
@@ -16,67 +26,133 @@ conda env create -f conda.yaml
 conda activate dinov3
 ```
 
-如果你使用的是 `micromamba`：
+若使用 `micromamba`：
 
 ```bash
 micromamba env create -f conda.yaml
 micromamba activate dinov3
 ```
 
+---
 
-## 2) 训练命令
+## 2) 推荐流程：多通道显微 + ChannelViT（重打包 → 统计 → 训练）
 
-> 以下示例基于 WebDataset 输入：  
-> `train.dataset_path="wds:/path/to/train-{000000..xxx}.tar"`
->
-> `ChannelViT`（`student/teacher.in_chans`、`enable_channelvit`）与 LoRA 细节可直接命令行覆盖，无需额外 YAML。
+目标：同一物理视野的多通道对齐在**同一条** WebDataset 样本内（[`dinov3/data/repackage`](dinov3/data/repackage) 流水线），再按通道估计 `rgb_mean` / `rgb_std`，最后用 **`packwds:`** 解码 + **ChannelViT** 训练。重打包细节见 **[`dinov3/data/repackage/README.md`](dinov3/data/repackage/README.md)**。
 
-### 2.1 单机多卡（例如 1 机 4 卡）
+### 2.1 输入数据从哪来
+
+- **已在 NFS / 本地**：按通道分目录的原始布局，直接作为 `preprocess_repack.py` 的 `--input-root`。
+- **仅在 S3**：先用 `aws s3 sync` 拉到本机，再重打包；或仅用第 4 节的 `s3wds:` / `cachewds:` **跳过 repackage、直接训**（通道对齐方式不同，见第 4 节说明）。
+
+### 2.2 重打包
+对数据进行切割，具体的切割方法详细见 [`dinov3/data/repackage/README.md`](dinov3/data/repackage/README.md) 可以适当调节参数
+在**仓库根目录**执行：
 
 ```bash
-torchrun \
-  --nproc_per_node=4 \
+python dinov3/data/repackage/preprocess_repack.py \
+  --input-root /mnt/huawei_deepcad/webds_micro_100k_by_channel \
+  --output-root /mnt/huawei_deepcad/wds_packed_shards \
+  --reference-channel 1 \
+  --variance-threshold 40.0 \
+  --num-workers 16 \
+  --shuffle-buffer-size 10000
+```
+
+输出示例：`filtered_mixed_train_w*-{000000..}.tar`（每样本含 `ch1.tif` …、`meta.json` 等）。
+
+### 2.3 按通道统计 mean / std
+
+对 **packed** shard 统计（与解码 uint16→[0,1] 一致），结果粘贴进 YAML 的 `crops.rgb_mean` / `crops.rgb_std`：
+
+```bash
+python dinov3/data/repackage/compute_channel_stats.py \
+  --shard-pattern "/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000999}.tar" \
+  --max-channels 8 \
+  --max-samples 0
+```
+
+- `--max-samples 0`：全量（慢、更准）；可改为 `10000` 做快速近似。
+
+### 2.4 训练：使用 `packwds:`（全量预训练 + ChannelViT + 官方权重）
+
+`packwds:` 会按 `meta.json` / `ch*.tif` 组出固定 `student.in_chans` 维度的张量；**`student.in_chans` / `teacher.in_chans` 须与 `--max-channels`（及 YAML 中张量宽度）一致**。将上一步打印的 `rgb_mean` / `rgb_std` 写入 `dinov3_vit7b16_pretrain_webdataset.yaml` 的 `crops` 段后再启动，或用 Hydra 覆盖列表。
+
+在**仓库根目录**执行（示例 8 通道；请按本机 GPU 设置 `CUDA_VISIBLE_DEVICES` 与 `nproc_per_node`）：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 \
+  dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
+  --output-dir ./outputs/chvit_packed \
+  train.dataset_path="packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000999}.tar" \
+  student.in_chans=8 \
+  teacher.in_chans=8 \
+  student.enable_channelvit=true \
+  teacher.enable_channelvit=true \
+  student.resume_from_teacher_chkpt=/mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
+  student.fp8_enabled=false
+```
+
+**训练：LoRA + `packwds:`（示例）**
+
+```bash
+CUDA_VISIBLE_DEVICES=1,2 torchrun --nproc_per_node=2 \
+  dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_lora.yaml \
+  --output-dir ./outputs/lora_packed \
+  train.dataset_path="packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000006}.tar" \
+  student.in_chans=8 \
+  teacher.in_chans=8 \
+  student.enable_channelvit=true \
+  teacher.enable_channelvit=true \
+  student.resume_from_teacher_chkpt=/mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
+  student.fp8_enabled=false
+```
+
+（通道数、shard 范围、是否 ChannelViT 可按数据与实验修改；`crops.rgb_mean` / `rgb_std` 需与通道数匹配，建议沿用 2.3 的输出。）
+
+**训练：nochannelvit + `packwds:`（示例）**
+请更改对应yaml中的rgb_mean和rgb_std。同理这里lora请将dinov3_vit7b16_pretrain.yaml改为dinov3_vit7b16_pretrain_lora.yaml
+```bash
+CUDA_VISIBLE_DEVICES=1,2 torchrun --nproc_per_node=2 \
   dinov3/train/train.py \
   --config-file dinov3/configs/train/dinov3_vit7b16_pretrain.yaml \
-  --output-dir ./outputs/debug_ch1 \
-  train.dataset_path="wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000128}.tar" \
-  student.fp8_enabled=false \
-  student.resume_from_teacher_chkpt=/mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth
-```
-
-说明：
-- `--nproc_per_node=4` 表示单机启 4 个进程（通常对应 4 张 GPU）。
-- `student.resume_from_teacher_chkpt` 可用于加载官方预训练权重初始化 backbone。
-- `student.fp8_enabled=false` 表示关闭 FP8 路径，使用常规混合精度；若硬件与 PyTorch 支持 FP8 且你希望启用，可改为 `true`（需与配置一致）。
-- `compute_precision.hsdp_shards=1` 表示纯 FSDP（1D mesh）。当 `hsdp_shards>1` 时启用 HSDP：每组 `hsdp_shards` 张卡内做 FSDP 分片，组间做 DDP 式同步；需满足 `world_size % hsdp_shards == 0`。
-
-### 2.3 命令行开启 ChannelViT（无需 channelvit YAML）
-
-```bash
-torchrun --nproc_per_node=8 dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
-  train.dataset_path="wds:/mnt/data/shards/ch1/train-{000000..000099}.tar" \
-  student.in_chans=4 \
-  teacher.in_chans=4 \
-  student.enable_channelvit=true \
-  teacher.enable_channelvit=true
-```
-
-### 2.4 LoRA + ChannelViT（无需 lora_channelvit YAML）
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,6,7 torchrun --nproc_per_node=4 dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_lora.yaml \
-  train.dataset_path="wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch2/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch4/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch5/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch6/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch7/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch8/train-{000000..000128}.tar" \
+  --output-dir ./outputs/lora_packed \
+  train.dataset_path="packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000006}.tar" \
   student.in_chans=3 \
   teacher.in_chans=3 \
-  student.enable_channelvit=true \
-  teacher.enable_channelvit=true
+  student.resume_from_teacher_chkpt=/mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth \
+  student.fp8_enabled=false
 ```
 
-### 2.2 多机多卡（例如 2 机，每机 4 卡）
+---
 
-#### 节点 0（主节点，`node_rank=0`）
+## 3) 补充：参数与启动方式
+
+### 3.1 GPU 与 `torchrun`
+
+- **`CUDA_VISIBLE_DEVICES` 与 `--nproc_per_node`：** 进程可见的 GPU 个数必须等于 `nproc_per_node`。例如 `CUDA_VISIBLE_DEVICES=7` 只暴露 1 张卡时，应使用 `--nproc_per_node=1`。
+- 所有示例均假设在**仓库根目录**执行，入口为 `dinov3/train/train.py`。
+
+### 3.2 常用训练相关参数
+
+| 项 | 说明 |
+|----|------|
+| `train.dataset_path` | 前缀决定数据源；推荐流水线用 `packwds:`；直连 S3/按通道 shard 见第 4 节。 |
+| `train.batch_size_per_gpu` | 单卡 batch。当前训练在 **FSDP 数据并行** 下，**全局 batch = `batch_size_per_gpu × world_size`**（`world_size` 为参与训练的 GPU 总数）。DINOv3 原文 ViT-7B 规模预训练常取 **全局 batch 约 4096**（例如 8 卡 × 512/卡、64 卡 × 64/卡 等），需按显存与卡数折算 `batch_size_per_gpu`。 |
+| `student.resume_from_teacher_chkpt` | 加载预训练 backbone + checkpoint，初步调试可以不加这部分 |
+| `student.fp8_enabled` | 与配置一致；调试可先 `false`。 |
+| `student.in_chans` / `teacher.in_chans` | 通道数；数据 `target_channels` 以 `student.in_chans` 为准，建议与 teacher 一致。 |
+| `student.enable_channelvit` / `teacher.enable_channelvit` | 多通道显微推荐 `true`。 |
+| `crops.rgb_mean` / `crops.rgb_std` | 与通道数一致；packed 数据建议用 2.3 脚本结果。 |
+| `compute_precision.hsdp_shards` | `1` 纯 FSDP；`>1` 为 HSDP，需 `world_size % hsdp_shards == 0`。 |
+| `train.compile` | 多机时若遇编译问题可设 `train.compile=false`。 |
+
+### 3.3 多机多卡（模板）
+
+各节点 `--master_addr` / `--master_port` 相同，仅 `--node_rank` 不同（`0 … nnodes-1`）。`world_size = nnodes * nproc_per_node`。
+
+**节点 0：**
 
 ```bash
 torchrun \
@@ -86,66 +162,99 @@ torchrun \
   --master_addr=10.0.0.1 \
   --master_port=29500 \
   dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain.yaml \
-  --output-dir ./outputs/debug_ch1 \
-  train.dataset_path="wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000128}.tar" \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
+  --output-dir ./outputs/chvit_packed \
+  train.dataset_path="packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000999}.tar" \
   train.compile=false \
-  student.fp8_enabled=false \
-  student.resume_from_teacher_chkpt=/mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth
+  student.in_chans=8 \
+  teacher.in_chans=8 \
+  student.enable_channelvit=true \
+  teacher.enable_channelvit=true \
+  student.fp8_enabled=false
 ```
 
-#### 节点 1（`node_rank=1`）
+**节点 1：** 将 `--node_rank=1`，其余同上。
+
+### 3.4 其他命令行变体（非 packed、或未用 S3 直连）
+
+**LoRA + 按通道分目录的本地 `wds:`（单通道 shard，非 `packwds:`）：**
 
 ```bash
-torchrun \
-  --nnodes=2 \
-  --nproc_per_node=4 \
-  --node_rank=1 \
-  --master_addr=10.0.0.1 \
-  --master_port=29500 \
-  dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain.yaml \
-  --output-dir ./outputs/debug_ch1 \
+torchrun --nproc_per_node=4 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_lora.yaml \
+  --output-dir ./outputs/lora_chvit \
   train.dataset_path="wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000128}.tar" \
-  train.compile=false \
-  student.fp8_enabled=false \
+  student.in_chans=4 \
+  teacher.in_chans=4 \
+  student.enable_channelvit=true \
+  teacher.enable_channelvit=true \
   student.resume_from_teacher_chkpt=/mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth
 ```
 
-说明：
-- 所有节点的 `--master_addr` / `--master_port` 必须一致。
-- 每台机器只改 `--node_rank`（从 `0` 到 `nnodes-1`）。
-- `world_size = nnodes * nproc_per_node`。
+**RGB 三通道 + ChannelViT：**
+
+```bash
+torchrun --nproc_per_node=4 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
+  --output-dir ./outputs/rgb3_chvit \
+  train.dataset_path="wds:/path/to/shards/train-{000000..000099}.tar" \
+  student.in_chans=3 \
+  teacher.in_chans=3 \
+  student.enable_channelvit=true \
+  teacher.enable_channelvit=true
+```
+
+**RGB 三通道、不启用 ChannelViT：**
+
+```bash
+torchrun --nproc_per_node=4 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
+  --output-dir ./outputs/rgb3 \
+  train.dataset_path="wds:/path/to/shards/train-{000000..000099}.tar" \
+  student.in_chans=3 \
+  teacher.in_chans=3 \
+  student.enable_channelvit=false \
+  teacher.enable_channelvit=false
+```
+
+更多见 [`dinov3/docs/LORA_CHANNELVIT_USAGE.md`](dinov3/docs/LORA_CHANNELVIT_USAGE.md)。
+
+### 3.5 无 ChannelViT vs 有 ChannelViT（数据与模型）
+
+- **数据：** `dinov3/train/train.py` → `make_dataset(..., target_channels=cfg.student.in_chans)` → `dinov3/data/wds_decoder.py` 等对通道的补齐 / 截断 / 循环填充；`packwds:` 走 `decode_packed_sample`，缺通道零填充到 `target_channels`。
+- **模型：** `dinov3/models/vision_transformer.py`：`enable_channelvit=false` 为标准 `PatchEmbed`；`true` 为 `PatchEmbedPerChannel` + `channel_embed` 与 RoPE 多通道分支。
+
+不开启 ChannelViT 时，样本会对齐到 `student.in_chans`（例如 3 通道即常见的「少补齐、多截断」语义）。开启 ChannelViT 时，建议 `student.in_chans` 等于真实通道数。注意`rgb_mean` 和 `rgb_std` 的个数应该和 `in_chans` 相同。
 
 ---
 
-## 3) 四种数据加载模式（启动命令示例）
+## 4) 补充数据源：从 S3 或按通道本地 shard 直接训练
 
-模式 2–4 共用同一份 WebDataset 配置 [`dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml`](dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml)，只需在命令行改 `train.dataset_path` 前缀；S3 时再带上 `train.aws_profile` / `train.aws_region`，缓存模式再加 `train.s3_cache_root`。
+本节适合：**不重跑 repackage**、直接从 **S3** 或 **本机按通道分目录的单通道 tar** 读取。与第 2 节 `packwds:` 的差异在于：样本格式与解码分支不同（单 tar 内多为单通道 `tif`/`npy`，而非 `ch*.tif` + `meta.json` 的 packed 格式）。
 
-### 模式 1：DINOv3 原生读取（ImageNet 等）
+| 前缀 | 适用场景 |
+|------|----------|
+| `wds:` | 本地路径上的 shard（可 `;` 拼接多段 pattern） |
+| `s3wds:` | S3 上对象流式读（`pipe:aws s3 cp`），不落盘缓存 |
+| `cachewds:` | 先下载到 `train.s3_cache_root`，再本地读 |
+
+均需配合 `dinov3_vit7b16_pretrain_webdataset.yaml`（或 LoRA 配置），并设置 `train.aws_profile` / `train.aws_region`（S3 模式）。
+
+### 4.1 本地 `wds:`
 
 ```bash
-torchrun --nproc_per_node=8 dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain.yaml \
-  train.dataset_path="ImageNet:split=TRAIN:root=/path/to/imagenet"
-```
-
-### 模式 2：本地 WebDataset
-
-```bash
-torchrun --nproc_per_node=8 dinov3/train/train.py \
+torchrun --nproc_per_node=4 dinov3/train/train.py \
   --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
-  train.dataset_path="wds:/mnt/data/shards/ch1/train-{000000..000099}.tar"
+  --output-dir ./outputs/debug_ch1 \
+  train.dataset_path="wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000128}.tar" \
+  student.fp8_enabled=false
 ```
 
-### 模式 3：S3 流式 WebDataset
-
-在**本仓库根目录**执行（需已配置 `aws` CLI 与 profile `sg`，并能访问该 bucket）：
+### 4.2 S3 流式 `s3wds:`
 
 ```bash
-CUDA_VISIBLE_DEVICES=7 torchrun --nproc_per_node=1 dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_lora.yaml \
+torchrun --nproc_per_node=4 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
   --output-dir ./outputs/debug_ch1 \
   train.dataset_path="s3wds:s3://xuzijing-biofm-ap-southeast-1-100k/webds_micro_100k_by_channel/ch1/train-{000000..000003}.tar" \
   train.aws_profile=sg \
@@ -153,17 +262,13 @@ CUDA_VISIBLE_DEVICES=7 torchrun --nproc_per_node=1 dinov3/train/train.py \
   student.fp8_enabled=false
 ```
 
-### 模式 4：S3 缓存 + 本地 WebDataset
-
-`train.s3_cache_root` 请指向**本机可写目录**。下面示例用 `$HOME/.cache/dinov3_webds`，可先 `mkdir` 再跑；同步 shard 时也会按需创建子目录。
-
-在**本仓库根目录**执行：
+### 4.3 S3 缓存 `cachewds:`
 
 ```bash
 mkdir -p "${HOME}/.cache/dinov3_webds"
 
-CUDA_VISIBLE_DEVICES=7 torchrun --nproc_per_node=4 dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_lora.yaml \
+torchrun --nproc_per_node=4 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
   --output-dir ./outputs/debug_ch1 \
   train.dataset_path="cachewds:s3://xuzijing-biofm-ap-southeast-1-100k/webds_micro_100k_by_channel/ch1/train-{000000..000003}.tar" \
   train.s3_cache_root="${HOME}/.cache/dinov3_webds" \
@@ -172,42 +277,12 @@ CUDA_VISIBLE_DEVICES=7 torchrun --nproc_per_node=4 dinov3/train/train.py \
   student.fp8_enabled=false
 ```
 
+`cachewds:` 与 `s3wds:` 的差别不仅是多几个参数：前者会把对象同步到本地再读；后者边训边流式拉取。
 
-## 4) 常见参数
+### 4.4 DINOv3 原生数据集（ImageNet，无前缀 WebDataset）
 
-- `train.dataset_path`：  
-  以 `wds:` / `s3wds:` / `cachewds:` 切换 WebDataset 数据源（均使用 `dinov3_vit7b16_pretrain_webdataset.yaml`）；路由逻辑见 `dinov3/data/loaders.py` 中 `make_dataset`。
-- `student.in_chans` / `teacher.in_chans`：  
-  输入通道数（默认 3）。当前训练代码中，数据解码和 student/teacher backbone 构建都由 `student.in_chans` 驱动；建议命令行同时覆盖 `student.*` 与 `teacher.*` 以保持配置语义一致。
-- `compute_precision.hsdp_shards`：  
-  `1` 表示纯 FSDP；`>1` 启用 HSDP（需整除 `world_size`）。
-
-## 5) 无 ChannelViT vs 有 ChannelViT（基于当前代码）
-
-这一节按当前仓库实现总结，关键代码路径：
-- 数据通道对齐：`dinov3/train/train.py` → `make_dataset(..., target_channels=cfg.student.in_chans)` → `dinov3/data/wds_decoder.py::_ensure_target_channels`
-- 模型分支：`dinov3/models/vision_transformer.py` 中 `enable_channelvit` 开关（`PatchEmbed` vs `PatchEmbedPerChannel`）
-
-### 5.1 不开启 ChannelViT（`student.enable_channelvit=false`）
-
-- 走标准 `PatchEmbed`（`Conv2d(in_chans -> embed_dim)`），把输入当作普通多通道图像一次性投影。
-- 对 WebDataset 输入，解码阶段会先把样本通道数对齐到 `student.in_chans`：
-  - 原图 1 通道：复制到目标通道数；
-  - 原图通道数 > 目标：截断前 `target_channels` 个通道；
-  - 原图通道数 < 目标（且不为 1）：循环填充到目标通道数。
-- 因此你记忆里的“少于 3 补齐、大于 3 截断”在**`student.in_chans=3`** 时成立；若你设 `student.in_chans=4`，规则会变成“对齐到 4”。
-
-### 5.2 开启 ChannelViT（`student.enable_channelvit=true`）
-
-- 走 `PatchEmbedPerChannel`：每个通道独立做 patch embedding，并叠加 `channel_embed`，再展平为 token 序列。
-- RoPE 会按通道数复制对齐 token（代码里有 ChannelViT 专门分支）。
-- 多通道输入是原生支持的；但输入通道数仍会先在解码阶段对齐到 `student.in_chans`，因此建议将其显式设为你的真实通道数（如 4、6、8）。
-
-### 5.3 实操建议与验证
-
-- 若你要“尽量保留全部通道信息”，请把 `student.in_chans` 设为数据真实通道数；否则在解码阶段就可能被截断/填充。
-- 快速验证是否启用 ChannelViT：
-  - 开启时日志应出现：`ChannelViT enabled with <N> channels`
-  - 不开启时不会出现上述日志，模型走标准 `PatchEmbed`
-- 快速验证通道对齐是否生效：临时用 1~2 个 shard 跑一个短任务，观察训练是否稳定起步；若 `student.in_chans` 设得不合理，常见现象是信息丢失（截断）或重复通道（填充）带来效果波动。
-
+```bash
+torchrun --nproc_per_node=8 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain.yaml \
+  train.dataset_path="ImageNet:split=TRAIN:root=/path/to/imagenet"
+```
