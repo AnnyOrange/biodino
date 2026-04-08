@@ -64,7 +64,7 @@ gram:
   loss_weight_schedule: null
 train:
   batch_size_per_gpu: 4
-  dataset_path: wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000128}.tar
+  dataset_path: wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch2/train-{000000..000005}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch4/train-{000000..000003}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch5/train-{000000..000003}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch6/train-{000000..000003}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch7/train-{000000..000001}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch8/train-{000000..000000}.tar
   data_config: null
   output_dir: /mnt/huawei_deepcad/dinov3/local_dino
   saveckp_freq: 20
@@ -114,7 +114,6 @@ student:
   fp8_enabled: false
   fp8_filter: blocks
   patch_drop: 0.0
-  enable_channelvit: true
 teacher:
   momentum_teacher: null
   final_momentum_teacher: null
@@ -122,7 +121,6 @@ teacher:
   teacher_temp: null
   warmup_teacher_temp_epochs: null
   in_chans: 3
-  enable_channelvit: true
 distillation:
   enabled: false
   full_cfg_path: ''

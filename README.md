@@ -67,7 +67,7 @@ torchrun --nproc_per_node=8 dinov3/train/train.py \
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,6,7 torchrun --nproc_per_node=4 dinov3/train/train.py \
   --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_lora.yaml \
-  train.dataset_path="wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000128}.tar" \
+  train.dataset_path="wds:/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch1/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch2/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch3/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch4/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch5/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch6/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch7/train-{000000..000128}.tar;/mnt/huawei_deepcad/webds_micro_100k_by_channel/ch8/train-{000000..000128}.tar" \
   student.in_chans=3 \
   teacher.in_chans=3 \
   student.enable_channelvit=true \
@@ -144,8 +144,8 @@ torchrun --nproc_per_node=8 dinov3/train/train.py \
 在**本仓库根目录**执行（需已配置 `aws` CLI 与 profile `sg`，并能访问该 bucket）：
 
 ```bash
-torchrun --nproc_per_node=4 dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
+CUDA_VISIBLE_DEVICES=7 torchrun --nproc_per_node=1 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_lora.yaml \
   --output-dir ./outputs/debug_ch1 \
   train.dataset_path="s3wds:s3://xuzijing-biofm-ap-southeast-1-100k/webds_micro_100k_by_channel/ch1/train-{000000..000003}.tar" \
   train.aws_profile=sg \
@@ -162,8 +162,8 @@ torchrun --nproc_per_node=4 dinov3/train/train.py \
 ```bash
 mkdir -p "${HOME}/.cache/dinov3_webds"
 
-torchrun --nproc_per_node=4 dinov3/train/train.py \
-  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_webdataset.yaml \
+CUDA_VISIBLE_DEVICES=7 torchrun --nproc_per_node=4 dinov3/train/train.py \
+  --config-file dinov3/configs/train/dinov3_vit7b16_pretrain_lora.yaml \
   --output-dir ./outputs/debug_ch1 \
   train.dataset_path="cachewds:s3://xuzijing-biofm-ap-southeast-1-100k/webds_micro_100k_by_channel/ch1/train-{000000..000003}.tar" \
   train.s3_cache_root="${HOME}/.cache/dinov3_webds" \

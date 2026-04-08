@@ -95,7 +95,14 @@ def make_dataset(
 
     Prefix-based routing (resolved once at init, not on the hot path):
         - no prefix          → DINOv3 native dataset (ImageNet:split=TRAIN …)
-        - ``wds:``           → local WebDataset shards
+        - ``wds:``           → local WebDataset shards (supports ``;`` for
+                               multiple shard patterns, e.g.
+                               ``wds:/data/ch1/train-{...}.tar;/data/ch2/train-{...}.tar``)
+        - ``multiwds:``      → multi-channel WebDataset: parallel streams from
+                               multiple channel directories are zipped into a
+                               single N-channel tensor per sample.  Pattern
+                               uses ``{ch}`` as channel placeholder, e.g.
+                               ``multiwds:/data/{ch}/train-{000000..000128}.tar::ch1,ch2,...,ch8``
         - ``s3wds:``         → S3 streaming WebDataset (pipe:aws s3 cp …)
         - ``cachewds:``      → download S3 shards to *s3_cache_root*, then
                                read as local WebDataset
@@ -115,8 +122,15 @@ def make_dataset(
     """
     logger.info(f'using dataset: "{dataset_str}"')
 
+    if dataset_str.startswith("multiwds:"):
+        return _make_multichannel_webdataset(dataset_str[9:], transform)
+
     if dataset_str.startswith("wds:"):
-        return _make_webdataset(dataset_str[4:], transform, target_channels=target_channels)
+        shard_spec = dataset_str[4:]
+        if ";" in shard_spec:
+            shard_patterns = [s.strip() for s in shard_spec.split(";") if s.strip()]
+            return _make_webdataset(shard_patterns, transform, target_channels=target_channels)
+        return _make_webdataset(shard_spec, transform, target_channels=target_channels)
 
     if dataset_str.startswith("s3wds:"):
         return _make_s3_stream_webdataset(
@@ -159,8 +173,8 @@ def _make_webdataset(
     """Create a WebDataset pipeline from local shards or pre-resolved URL list.
 
     Args:
-        shard_urls: Brace pattern string **or** explicit list of URLs
-            (local paths, ``pipe:`` URLs, etc.).
+        shard_urls: Brace pattern string, explicit list of URLs, or list of
+            brace pattern strings (all patterns are expanded and merged).
         transform: Image transform.
         target_channels: Align decoded samples to this channel count.
 
@@ -169,7 +183,18 @@ def _make_webdataset(
     """
     from .wds_pipeline import WdsConfig, build_wds_pipeline
 
-    logger.info(f"creating WebDataset from: {shard_urls if isinstance(shard_urls, str) else f'{len(shard_urls)} URLs'}")
+    if isinstance(shard_urls, list):
+        from braceexpand import braceexpand
+        expanded = []
+        for pattern in shard_urls:
+            expanded.extend(braceexpand(pattern))
+        logger.info(
+            f"creating WebDataset from {len(shard_urls)} patterns "
+            f"→ {len(expanded)} total shards"
+        )
+        shard_urls = expanded
+    else:
+        logger.info(f"creating WebDataset from: {shard_urls}")
 
     config = WdsConfig(
         shard_urls=shard_urls,
@@ -179,6 +204,52 @@ def _make_webdataset(
     pipeline = build_wds_pipeline(config, transform=transform)
 
     logger.info("WebDataset pipeline created (infinite streaming)")
+    return pipeline
+
+
+def _make_multichannel_webdataset(
+    spec: str,
+    transform: Optional[Callable] = None,
+):
+    """Create a multi-channel WebDataset by zipping parallel per-channel streams.
+
+    The spec format is ``<pattern>::<ch1>,<ch2>,...,<chN>`` where ``{ch}``
+    in *pattern* is replaced with each channel name.  For example::
+
+        /data/{ch}/train-{000000..000128}.tar::ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8
+
+    Each per-channel stream independently decodes single-channel images.
+    Samples from all streams are zipped together (round-robin), producing an
+    N-channel tensor per output sample.
+
+    Note: because each channel's shards are shuffled independently, the
+    paired channels in one output sample do NOT necessarily correspond to the
+    same physical specimen.  For self-supervised pretraining (DINO/iBOT) this
+    is acceptable — the model learns per-channel representations regardless.
+    """
+    from .wds_pipeline import build_multichannel_wds_pipeline
+
+    if "::" not in spec:
+        raise ValueError(
+            "multiwds: spec must be '<pattern>::<ch1>,<ch2>,...' "
+            f"but got: {spec}"
+        )
+    pattern, channels_str = spec.rsplit("::", 1)
+    channel_names = [c.strip() for c in channels_str.split(",") if c.strip()]
+    if not channel_names:
+        raise ValueError(f"multiwds: no channel names after '::' in: {spec}")
+
+    shard_patterns = [pattern.replace("{ch}", ch) for ch in channel_names]
+    logger.info(
+        f"creating multi-channel WebDataset: {len(channel_names)} channels "
+        f"({', '.join(channel_names)})"
+    )
+    pipeline = build_multichannel_wds_pipeline(
+        shard_patterns=shard_patterns,
+        channel_names=channel_names,
+        transform=transform,
+    )
+    logger.info("multi-channel WebDataset pipeline created (infinite streaming)")
     return pipeline
 
 
