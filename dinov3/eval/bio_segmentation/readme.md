@@ -253,7 +253,7 @@ CUDA_VISIBLE_DEVICES=7 python -m dinov3.eval.bio_segmentation.mask2former \
 ### BBBC038（大图 → slide 推理）
 
 ```bash
-CUDA_VISIBLE_DEVICES=4,5 torchrun --nproc_per_node=2 -m dinov3.eval.bio_segmentation.mask2former \
+CUDA_VISIBLE_DEVICES=7 torchrun --nproc_per_node=1 -m dinov3.eval.bio_segmentation.mask2former \
     --dataset    bbbc038 \
     --data-root  /data/dataset/segmentation/bbbc038/extracted \
     --checkpoint /data/checkpoints/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth\
