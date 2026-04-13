@@ -38,6 +38,20 @@ class WdsConfig:
     target_channels: Optional[int] = None
 
 
+def _make_shard_source(wds, shard_urls):
+    """Create an infinite shard source for training.
+
+    We prefer ResampledShards so the stream never exhausts after one pass
+    through the finite shard list.
+    """
+    if hasattr(wds, "ResampledShards"):
+        return wds.ResampledShards(shard_urls)
+    raise RuntimeError(
+        "webdataset.ResampledShards is required for infinite streaming, "
+        "but it was not found in the installed webdataset package."
+    )
+
+
 def _find_image_key(sample: dict) -> Optional[str]:
     """Return the first supported image key found in a WebDataset sample dict."""
     supported_keys = ("tiff", "tif", "npy")
@@ -99,9 +113,7 @@ def build_wds_pipeline(
         return {"image": image_tensor, "__key__": sample.get("__key__", "")}
 
     stages = [
-        wds.SimpleShardList(config.shard_urls),
-        wds.split_by_node,
-        wds.split_by_worker,
+        _make_shard_source(wds, config.shard_urls),
         wds.tarfile_to_samples(),
         wds.shuffle(config.shuffle_buffer),
         wds.map(decode_sample),
@@ -124,7 +136,7 @@ def build_wds_pipeline(
         stages.append(wds.map(apply_transform))
 
     pipeline = wds.DataPipeline(*stages)
-    logger.info(f"WebDataset pipeline built: {config.shard_urls}")
+    logger.info(f"WebDataset pipeline built (resampled infinite): {config.shard_urls}")
     return pipeline
 
 
@@ -215,9 +227,7 @@ def build_multichannel_wds_pipeline(
             return decode_sample
 
         stages = [
-            wds.SimpleShardList(pattern),
-            wds.split_by_node,
-            wds.split_by_worker,
+            _make_shard_source(wds, pattern),
             wds.tarfile_to_samples(),
             wds.shuffle(shuffle_buffer),
             wds.map(_make_decoder()),
@@ -270,9 +280,7 @@ def build_packed_wds_pipeline(
         return {"image": tensor, "__key__": sample.get("__key__", "")}
 
     stages = [
-        wds.SimpleShardList(config.shard_urls),
-        wds.split_by_node,
-        wds.split_by_worker,
+        _make_shard_source(wds, config.shard_urls),
         wds.tarfile_to_samples(),
         wds.shuffle(config.shuffle_buffer),
         wds.map(decode_sample),
@@ -288,7 +296,7 @@ def build_packed_wds_pipeline(
 
     pipeline = wds.DataPipeline(*stages)
     logger.info(
-        "Packed WebDataset pipeline built: target_channels=%d  urls=%s",
+        "Packed WebDataset pipeline built (resampled infinite): target_channels=%d  urls=%s",
         target_ch,
         config.shard_urls,
     )

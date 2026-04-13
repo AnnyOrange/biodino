@@ -47,6 +47,7 @@ def build_model(args, only_teacher=False, img_size=224, device=None):
             layerscale_init=args.layerscale,
             norm_layer=args.norm_layer,
             ffn_layer=args.ffn_layer,
+            ffn_ratio=args.ffn_ratio,
             ffn_bias=args.ffn_bias,
             proj_bias=args.proj_bias,
             n_storage_tokens=args.n_storage_tokens,

@@ -159,18 +159,20 @@ def build_schedulers_v2(cfg):
     total_iterations = cfg.train.OFFICIAL_EPOCH_LENGTH * cfg.optim.epochs
     logger.info(f"Total training iterations {total_iterations}")
 
-    # LR scaling rules
+    # LR scaling rules (use effective global batch including gradient accumulation)
     lr_peak = cfg.schedules.lr.peak
     lr_end = cfg.schedules.lr.end
+    accum_steps = max(1, int(getattr(cfg.optim, "gradient_accumulation_steps", 1)))
+    effective_global_batch = cfg.train.batch_size_per_gpu * distributed.get_world_size() * accum_steps
     if cfg.optim.scaling_rule == "linear_wrt_256":
-        lr_peak *= cfg.train.batch_size_per_gpu * distributed.get_world_size() / 256.0
-        lr_end *= cfg.train.batch_size_per_gpu * distributed.get_world_size() / 256.0
+        lr_peak *= effective_global_batch / 256.0
+        lr_end *= effective_global_batch / 256.0
         logger.info(
             f"Scaling rule {cfg.optim.scaling_rule}, LR peak {cfg.schedules.lr.peak} -> {lr_peak}, LR end {cfg.schedules.lr.end} -> {lr_end}"
         )
     elif cfg.optim.scaling_rule == "sqrt_wrt_1024":
-        lr_peak *= 4 * math.sqrt(cfg.train.batch_size_per_gpu * distributed.get_world_size() / 1024.0)
-        lr_end *= 4 * math.sqrt(cfg.train.batch_size_per_gpu * distributed.get_world_size() / 1024.0)
+        lr_peak *= 4 * math.sqrt(effective_global_batch / 1024.0)
+        lr_end *= 4 * math.sqrt(effective_global_batch / 1024.0)
         logger.info(
             f"Scaling rule {cfg.optim.scaling_rule}, LR peak {cfg.schedules.lr.peak} -> {lr_peak}, LR end {cfg.schedules.lr.end} -> {lr_end}"
         )
@@ -291,6 +293,8 @@ def build_data_loader_from_cfg(
         local_batch_size = None  # will default to the standard local batch size matching the data batch size
         dataloader_batch_size_per_gpu = cfg.train.batch_size_per_gpu
 
+    accum_steps = max(1, int(getattr(cfg.optim, "gradient_accumulation_steps", 1)))
+
     collate_fn = partial(
         collate_data_and_cast,
         mask_ratio_tuple=cfg.ibot.mask_ratio_min_max,
@@ -330,7 +334,7 @@ def build_data_loader_from_cfg(
         shuffle=True,
         seed=cfg.train.seed + start_iter + 1,
         sampler_type=sampler_type,
-        sampler_advance=start_iter * dataloader_batch_size_per_gpu,
+        sampler_advance=start_iter * accum_steps * dataloader_batch_size_per_gpu,
         drop_last=True,
         collate_fn=collate_fn,
     )
@@ -421,10 +425,21 @@ def do_train(cfg, model, resume=False):
         )
     OFFICIAL_EPOCH_LENGTH = cfg.train.OFFICIAL_EPOCH_LENGTH
     max_iter = cfg.optim.epochs * OFFICIAL_EPOCH_LENGTH
+    accum_steps = max(1, int(getattr(cfg.optim, "gradient_accumulation_steps", 1)))
+
     if cfg.multidistillation.enabled:
-        global_batch_size = cfg.multidistillation.global_batch_size
+        real_global_batch_size = cfg.multidistillation.global_batch_size
     else:
-        global_batch_size = cfg.train.batch_size_per_gpu * distributed.get_world_size()
+        real_global_batch_size = cfg.train.batch_size_per_gpu * distributed.get_world_size()
+
+    effective_global_batch_size = real_global_batch_size * accum_steps
+
+    logger.info(
+        "Gradient accumulation: %d | real global batch: %d | effective optimizer batch: %d",
+        accum_steps,
+        real_global_batch_size,
+        effective_global_batch_size,
+    )
 
     # Build data loader
     data_loader = build_multi_resolution_data_loader_from_cfg(
@@ -457,53 +472,54 @@ def do_train(cfg, model, resume=False):
         num_gram_updates = math.ceil((start_iter + 1 - cfg.gram.it_first_update) / cfg.gram.update_frequency)
         logger.info(f"Gram was updated {num_gram_updates} times before iteration {start_iter}")
     consecutive_nan_count = 0
+    micro_step = 0
+    optimizer.zero_grad(set_to_none=True)
+    accum_loss_for_log = None
+    accum_metrics = None
+
     for data in metric_logger.log_every(
         data_loader,
         print_freq=10,
         header="Training",
-        n_iterations=max_iter,
-        start_iteration=start_iter,
+        n_iterations=max_iter * accum_steps,
+        start_iteration=start_iter * accum_steps,
     ):
+        if iteration >= max_iter:
+            break
+
         it = iteration
-        data["global_batch_size"] = global_batch_size
-        if iteration > max_iter:
-            return
+        data["global_batch_size"] = real_global_batch_size
 
-        # Garbage collection (trigger manually so it happens on all ranks at the same time)
-        if (iteration + 1) % 150 == 0:
-            logger.info("Garbage collection")
-            gc.collect()
+        micro_step_in_cycle = micro_step % accum_steps
+        is_cycle_start = micro_step_in_cycle == 0
+        is_update_step = (micro_step_in_cycle + 1) == accum_steps
 
-        if cfg.gram.use_loss and model.gram_it_load_ema_teacher == it:
-            logger.info(f"Loading EMA teacher into Gram teacher before iteration {it}")
-            model.gram_load_ema_teacher()
+        if is_cycle_start:
+            if (iteration + 1) % 150 == 0:
+                logger.info("Garbage collection")
+                gc.collect()
 
-        # Learning rates and other schedules
-        lr = lr_schedule[it]
-        wd = wd_schedule[it]
-        mom = momentum_schedule[it]
-        teacher_temp = teacher_temp_schedule[it]
-        last_layer_lr = last_layer_lr_schedule[it]
-        apply_optim_scheduler(optimizer, lr, wd, last_layer_lr)
+            if cfg.gram.use_loss and model.gram_it_load_ema_teacher == it:
+                logger.info(f"Loading EMA teacher into Gram teacher before iteration {it}")
+                model.gram_load_ema_teacher()
 
-        # Forward backward
-        optimizer.zero_grad(set_to_none=True)
-        total_loss, metrics_dict = model.forward_backward(data, teacher_temp=teacher_temp, iteration=it)
+            lr = lr_schedule[it]
+            wd = wd_schedule[it]
+            mom = momentum_schedule[it]
+            teacher_temp = teacher_temp_schedule[it]
+            last_layer_lr = last_layer_lr_schedule[it]
+            apply_optim_scheduler(optimizer, lr, wd, last_layer_lr)
 
-        # Gradient clipping
-        if cfg.optim.clip_grad:
-            for k, v in student.items():
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    v.parameters(),
-                    max_norm=cfg.optim.clip_grad,
-                )
-                metrics_dict[f"{k}_grad_norm"] = (
-                    grad_norm.full_tensor().item()
-                    if isinstance(grad_norm, torch.distributed.tensor.DTensor)
-                    else grad_norm.item()
-                )
+            accum_loss_for_log = None
+            accum_metrics = {}
 
-        # Reduce total_loss to check for NaNs, reduce metrics for logging
+        total_loss, metrics_dict = model.forward_backward(
+            data,
+            teacher_temp=teacher_temp,
+            iteration=it,
+            loss_divisor=accum_steps,
+        )
+
         total_loss_all_ranks = total_loss.new_empty(distributed.get_subgroup_size())
         torch.distributed.all_gather_into_tensor(
             total_loss_all_ranks,
@@ -511,6 +527,7 @@ def do_train(cfg, model, resume=False):
             group=distributed.get_process_subgroup(),
         )
         total_loss = total_loss_all_ranks.mean()
+
         metrics_values = torch.stack(
             [torch.as_tensor(v, dtype=torch.float32, device=total_loss.device).detach() for v in metrics_dict.values()]
         )
@@ -533,11 +550,39 @@ def do_train(cfg, model, resume=False):
                 raise RuntimeError(msg)
         else:
             consecutive_nan_count = 0
-        # Step optimizer
+
+        if accum_loss_for_log is None:
+            accum_loss_for_log = total_loss.detach()
+        else:
+            accum_loss_for_log = accum_loss_for_log + total_loss.detach()
+
+        assert accum_metrics is not None
+        for k, v in metrics_dict.items():
+            v = v.detach() if torch.is_tensor(v) else torch.as_tensor(v, dtype=torch.float32, device=total_loss.device)
+            accum_metrics[k] = accum_metrics.get(k, torch.zeros_like(v)) + v
+
+        micro_step += 1
+        if not is_update_step:
+            continue
+
+        total_loss = accum_loss_for_log / accum_steps
+        metrics_dict = {k: v / accum_steps for k, v in accum_metrics.items()}
+
+        if cfg.optim.clip_grad:
+            for k, v in student.items():
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    v.parameters(),
+                    max_norm=cfg.optim.clip_grad,
+                )
+                metrics_dict[f"{k}_grad_norm"] = (
+                    grad_norm.full_tensor().item()
+                    if isinstance(grad_norm, torch.distributed.tensor.DTensor)
+                    else grad_norm.item()
+                )
+
         optimizer.step()
         model.update_ema(mom)
 
-        # [GRAM] Update gram teacher when using gram teacher and frequent updates
         if (
             cfg.gram.use_loss
             and model.gram_rep_update
@@ -549,22 +594,21 @@ def do_train(cfg, model, resume=False):
             model.update_gram()
             num_gram_updates += 1
 
-        # Log metrics
         metric_logger.update(lr=lr)
         metric_logger.update(wd=wd)
         metric_logger.update(mom=mom)
         metric_logger.update(last_layer_lr=last_layer_lr)
+        metric_logger.update(real_global_batch_size=real_global_batch_size)
+        metric_logger.update(effective_global_batch_size=effective_global_batch_size)
         metric_logger.update(total_loss=total_loss, **metrics_dict)
 
-        # Submit evaluation jobs
         if (
-            cfg.evaluation.eval_period_iterations > 0 and (iteration + 1) % cfg.evaluation.eval_period_iterations == 0
-            # and iteration != max_iter - 1
+            cfg.evaluation.eval_period_iterations > 0
+            and (iteration + 1) % cfg.evaluation.eval_period_iterations == 0
         ):
             do_test(cfg, model, f"training_{iteration}", process_group=process_subgroup)
             torch.cuda.synchronize()
 
-        # Checkpointing
         if (iteration + 1) % cfg.checkpointing.period == 0:
             torch.cuda.synchronize()
             save_checkpoint(
@@ -581,6 +625,7 @@ def do_train(cfg, model, resume=False):
                     keep_checkpoint_copy(ckpt_dir / str(iteration))
 
         iteration = iteration + 1
+        optimizer.zero_grad(set_to_none=True)
     metric_logger.synchronize_between_processes()
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
