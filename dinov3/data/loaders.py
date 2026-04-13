@@ -578,5 +578,5 @@ def _make_webdataset_loader(
         worker_init_fn=worker_init_fn,
     )
 
-    logger.info("infinite WebDataset data loader")
+    logger.info("WebDataset DataLoader created (dataset controls finiteness/infinite streaming)")
     return data_loader

@@ -1,0 +1,57 @@
+# ViT-S+/16：不接 ChannelViT，3 通道对齐 + 官方 S+ checkpoint；有效全局 batch 1024（64/GPU×8×accum 2）。
+# OFFICIAL_EPOCH_LENGTH = ceil(1048771 / 1024) = 1025。
+
+train:
+  dataset_path: "packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000999}.tar"
+  batch_size_per_gpu: 64
+  num_workers: 10
+  OFFICIAL_EPOCH_LENGTH: 1025
+  output_dir: ./outputs/bio_continue_vitsplus16
+  compile: false
+
+student:
+  arch: vit_small
+  patch_size: 16
+  ffn_layer: swiglu
+  ffn_ratio: 6.0
+  drop_path_rate: 0.3
+  in_chans: 3
+  enable_channelvit: false
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth"
+
+teacher:
+  in_chans: 3
+  enable_channelvit: false
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+
+optim:
+  epochs: 15
+  optimizer: adamw
+  lr: 2.0e-4
+  min_lr: 1.0e-6
+  warmup_epochs: 3
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 2
+
+crops:
+  rgb_mean:
+    - 0.511375
+    - 0.598449
+    - 0.683452
+  rgb_std:
+    - 0.340017
+    - 0.306132
+    - 0.284308
+
+evaluation:
+  eval_period_iterations: 2050
+
+checkpointing:
+  period: 1025
+  max_to_keep: 3
