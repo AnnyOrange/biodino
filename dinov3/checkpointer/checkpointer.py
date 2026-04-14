@@ -34,12 +34,21 @@ from typing import List, Sequence, Set
 
 import torch
 import torch.distributed as dist
+from torch.distributed._tensor import DTensor
 import torch.distributed.checkpoint as dcp
 import torch.distributed.checkpoint.filesystem as dcpfs
 import torch.distributed.checkpoint.state_dict as dcpsd
 from torch.distributed.checkpoint.stateful import Stateful
 
 logger = logging.getLogger("dinov3")
+
+
+def _torch_load_trusted(path: str | Path, *, map_location="cpu"):
+    """torch.load with weights_only=False for trusted checkpoints (PyTorch 2.6+ default is True)."""
+    try:
+        return torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(path, map_location=map_location)
 
 
 class CheckpointRetentionPolicy(Enum):
@@ -72,8 +81,25 @@ class CheckpointRetentionPolicy(Enum):
         return 1
 
 
+def _materialize_to_cpu(obj):
+    """Recursively move tensors / DTensors to CPU for consolidated torch.save (collective-safe)."""
+    if isinstance(obj, DTensor):
+        # full_tensor() is collective; all ranks must execute it
+        return obj.full_tensor().detach().cpu()
+    elif torch.is_tensor(obj):
+        return obj.detach().cpu()
+    elif isinstance(obj, dict):
+        return {k: _materialize_to_cpu(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_materialize_to_cpu(v) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(_materialize_to_cpu(v) for v in obj)
+    else:
+        return obj
+
+
 def save_checkpoint(
-    ckpt_dir: str | Path,  # output_dir/ckpt/199
+    ckpt_dir: str | Path,
     *,
     iteration: int | str,
     model: torch.nn.Module,
@@ -82,19 +108,23 @@ def save_checkpoint(
     process_group: dist.ProcessGroup = None,
     **others: Stateful,
 ):
-    """Save a plain/DDP/FSDP/FSDP2 model, its optimizer, an integer iteration and other stateful objects."""
-    rank = torch.distributed.get_rank(group=process_group)
+    """
+    Save a consolidated single-file checkpoint:
+        ckpt_dir/checkpoint.pth
 
-    # Rank 0 checks if the checkpoint directory exists, but all ranks need to know if if exists,
-    # so they can raise an error when overwrite is False. If overwrite is True, rank 0 will delete it
-    # and other ranks wait for the deletion to finish.
+    Avoids dcp.save() and its NCCL gather_object planner path; directory layout
+    (ckpt/<iter>/) stays the same for find_latest_checkpoint / train loop.
+    """
+    rank = torch.distributed.get_rank(group=process_group)
     ckpt_dir = Path(ckpt_dir)
+
     ckpt_dir_exists = [ckpt_dir.exists() if rank == 0 else None]
     src_rank = 0
     if process_group is not None:
         src_rank = torch.distributed.get_global_rank(group=process_group, group_rank=0)
     torch.distributed.broadcast_object_list(ckpt_dir_exists, src=src_rank, group=process_group)
     ckpt_dir_exists = ckpt_dir_exists[0]
+
     if ckpt_dir_exists:
         if overwrite:
             if rank == 0:
@@ -107,7 +137,6 @@ def save_checkpoint(
         else:
             raise RuntimeError(f"Checkpoint already exists: {ckpt_dir}")
 
-    # Rank 0 creates a temporary directory for the checkpoint and broadcasts the name to all ranks.
     ckpt_dir.parent.mkdir(parents=True, exist_ok=True)
     ckpt_dir_tmp = [tempfile.mkdtemp(dir=ckpt_dir.parent, prefix=ckpt_dir.name) if rank == 0 else None]
     torch.distributed.broadcast_object_list(ckpt_dir_tmp, src=src_rank, group=process_group)
@@ -118,22 +147,37 @@ def save_checkpoint(
     if optimizer is not None:
         to_save["optimizer"] = dcpsd.get_optimizer_state_dict(model, optimizer)
     to_save.update(others)
-    dcp.save(
-        to_save,
-        storage_writer=dcpfs.FileSystemWriter(ckpt_dir_tmp),
-        process_group=process_group,
-    )
 
-    # Rank 0 renames the temporary directory to the final checkpoint directory. All ranks wait for the rename.
+    # All ranks participate: DTensor.full_tensor() is collective.
+    to_save = _materialize_to_cpu(to_save)
+
+    if rank == 0:
+        torch.save(to_save, ckpt_dir_tmp / "checkpoint.pth")
+
+    torch.distributed.barrier(group=process_group)
+
     if rank == 0:
         ckpt_dir_tmp.rename(ckpt_dir)
-    torch.distributed.barrier()
 
-    logger.info(f"Saved: {ckpt_dir}")
+    torch.distributed.barrier(group=process_group)
+    logger.info(f"Saved consolidated checkpoint: {ckpt_dir / 'checkpoint.pth'}")
+
+
+def _iteration_to_python(iteration):
+    if iteration is None:
+        return None
+    if torch.is_tensor(iteration):
+        return int(iteration.item())
+    if hasattr(iteration, "item") and callable(iteration.item):
+        try:
+            return int(iteration.item())
+        except (TypeError, ValueError):
+            return iteration
+    return iteration
 
 
 def load_checkpoint(
-    ckpt_dir: str | Path,  # output_dir/ckpt/199
+    ckpt_dir: str | Path,
     *,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer | None = None,
@@ -142,11 +186,65 @@ def load_checkpoint(
     **others: Stateful,
 ) -> int | None:
     """
-    Load a plain/DDP/FSDP/FSDP2 model, its optimizer, an integer iteration and other stateful objects.
-    Can you take a checkpoint saved on N ranks and load it on M ranks? Sure you can!
-    Activation checkpointing and torch-compile can also be different between save and load, no problem.
+    Load either:
+      1) a DCP checkpoint directory, or
+      2) a consolidated file checkpoint: ``ckpt_dir/checkpoint.pth``
+
+    For consolidated ``.pth`` resume, restores iteration and model weights.
+    Optimizer state in the file is ignored for now (fresh optimizer on resume).
     """
     ckpt_dir = Path(ckpt_dir)
+    pth_file = ckpt_dir / "checkpoint.pth"
+
+    if pth_file.is_file():
+        logger.info("Loading consolidated checkpoint file: %s", pth_file)
+        raw = _torch_load_trusted(pth_file, map_location="cpu")
+
+        iteration = _iteration_to_python(raw.get("iteration", None))
+
+        if "model" not in raw:
+            raise KeyError(f"'model' key not found in consolidated checkpoint: {pth_file}")
+
+        ckpt_model = raw["model"]
+        model_state = model.state_dict()
+        converted_model = {}
+        for key, tensor in ckpt_model.items():
+            if key not in model_state:
+                continue
+            target_tensor = model_state[key]
+            if isinstance(target_tensor, DTensor):
+                converted_model[key] = torch.distributed.tensor.distribute_tensor(
+                    tensor,
+                    device_mesh=target_tensor.device_mesh,
+                    placements=target_tensor.placements,
+                    src_data_rank=None,
+                )
+            else:
+                converted_model[key] = tensor
+
+        incompatible = model.load_state_dict(converted_model, strict=False)
+        missing = incompatible.missing_keys
+        unexpected = incompatible.unexpected_keys
+        logger.info(
+            "Loaded consolidated model checkpoint with %d missing keys and %d unexpected keys",
+            len(missing),
+            len(unexpected),
+        )
+        if strict_loading and (len(missing) > 0 or len(unexpected) > 0):
+            raise RuntimeError(
+                f"Consolidated checkpoint load not strict: "
+                f"missing={list(missing)[:10]}, unexpected={list(unexpected)[:10]}"
+            )
+
+        if optimizer is not None and "optimizer" in raw:
+            logger.warning(
+                "Consolidated .pth contains optimizer state, but optimizer restore is skipped "
+                "in resume mode; training continues with the current optimizer."
+            )
+
+        logger.info("Loaded consolidated checkpoint: %s", pth_file)
+        return iteration
+
     to_load = {"iteration": None}
     to_load["model"] = dcpsd.get_model_state_dict(model)
     if optimizer is not None:
@@ -162,7 +260,7 @@ def load_checkpoint(
     dcpsd.set_model_state_dict(model, to_load["model"])
     if optimizer is not None:
         dcpsd.set_optimizer_state_dict(model, optimizer, to_load["optimizer"])
-    logger.info(f"Loaded: {ckpt_dir}")
+    logger.info("Loaded DCP checkpoint: %s", ckpt_dir)
     return iteration
 
 
@@ -274,7 +372,7 @@ def init_fsdp_model_from_checkpoint(
 ):
     if not Path(checkpoint_path).is_dir():  # PyTorch standard checkpoint
         logger.info(f"Loading pretrained weights from {checkpoint_path}")
-        raw = torch.load(checkpoint_path, map_location="cpu")
+        raw = _torch_load_trusted(checkpoint_path, map_location="cpu")
         if isinstance(raw, dict) and "teacher" in raw:
             chkpt = raw["teacher"]
         else:
@@ -342,16 +440,27 @@ def init_fsdp_model_from_checkpoint(
 def init_model_from_checkpoint_for_evals(
     model: torch.nn.Module, pretrained_weights: str | Path, checkpoint_key: str = None
 ):
-    state_dict = torch.load(pretrained_weights, map_location="cpu")
+    state_dict = _torch_load_trusted(pretrained_weights, map_location="cpu")
     if checkpoint_key is not None and checkpoint_key in state_dict:
-        logger.info(f"Take key {checkpoint_key} in provided checkpoint dict")
+        logger.info("Take key %s in provided checkpoint dict", checkpoint_key)
         state_dict = state_dict[checkpoint_key]
-    # remove `module.` prefix
+
     state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
-    # remove `backbone.` prefix induced by multicrop wrapper
-    state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
+
+    # Full training checkpoints: narrow to backbone weights for bare ViT load.
+    if any(k.startswith("teacher.backbone.") for k in state_dict.keys()):
+        state_dict = {
+            k[len("teacher.backbone.") :]: v
+            for k, v in state_dict.items()
+            if k.startswith("teacher.backbone.")
+        }
+    elif any(k.startswith("backbone.") for k in state_dict.keys()):
+        state_dict = {
+            k[len("backbone.") :]: v for k, v in state_dict.items() if k.startswith("backbone.")
+        }
+
     msg = model.load_state_dict(state_dict, strict=False)
-    logger.info("Pretrained weights found at {} and loaded with msg: {}".format(pretrained_weights, msg))
+    logger.info("Pretrained weights at %s loaded with msg: %s", pretrained_weights, msg)
 
 
 def cleanup_checkpoint(ckpt_dir: str, checkpoint_retention_policy: CheckpointRetentionPolicy):

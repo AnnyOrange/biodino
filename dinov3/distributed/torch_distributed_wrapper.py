@@ -20,6 +20,7 @@ logger = logging.getLogger("dinov3")
 _DEFAULT_PROCESS_GROUP = None
 _PROCESS_SUBGROUP = None
 _BUILTIN_PRINT = None
+_CHECKPOINT_PROCESS_GROUP = None
 
 
 def is_distributed_enabled() -> bool:
@@ -247,6 +248,7 @@ def enable_distributed(
             Default value is 10 minutes for NCCL and 30 minutes for other backends.
     """
     global _DEFAULT_PROCESS_GROUP
+    global _CHECKPOINT_PROCESS_GROUP
 
     if _DEFAULT_PROCESS_GROUP is not None:
         raise RuntimeError("Distributed mode has already been enabled")
@@ -264,6 +266,9 @@ def enable_distributed(
     dist.init_process_group(backend="nccl", timeout=timeout)
     dist.barrier()
 
+    # Dedicated process group for checkpoint save/load (Gloo; avoids NCCL in checkpoint collectives)
+    _CHECKPOINT_PROCESS_GROUP = dist.new_group(backend="gloo")
+
     if restrict_print_to_main_process:
         _restrict_print_to_main_process()
 
@@ -273,6 +278,10 @@ def enable_distributed(
 
 def get_default_process_group():
     return _DEFAULT_PROCESS_GROUP
+
+
+def get_checkpoint_process_group():
+    return _CHECKPOINT_PROCESS_GROUP or _DEFAULT_PROCESS_GROUP
 
 
 def disable_distributed() -> None:
@@ -287,6 +296,11 @@ def disable_distributed() -> None:
     if _PROCESS_SUBGROUP is not None:
         torch.distributed.destroy_process_group(_PROCESS_SUBGROUP)
         _PROCESS_SUBGROUP = None
+
+    global _CHECKPOINT_PROCESS_GROUP
+    if _CHECKPOINT_PROCESS_GROUP is not None:
+        torch.distributed.destroy_process_group(_CHECKPOINT_PROCESS_GROUP)
+        _CHECKPOINT_PROCESS_GROUP = None
 
     global _DEFAULT_PROCESS_GROUP
     if _DEFAULT_PROCESS_GROUP is not None:  # not initialized

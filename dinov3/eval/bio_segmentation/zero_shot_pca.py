@@ -203,8 +203,13 @@ def main():
                         help='Output directory')
 
     parser.add_argument('--checkpoint', type=str, required=True,
-                        help='DINOv3 checkpoint path')
-    parser.add_argument('--model-size', type=str, default='l', choices=['l', '7b'])
+                        help='DCP ckpt dir or consolidated .pth (teacher/model/flat)')
+    parser.add_argument(
+        '--train-config',
+        type=str,
+        required=True,
+        help='Training YAML merged with ssl_default_config; must match checkpoint.',
+    )
 
     parser.add_argument('--split', type=str, default=None,
                         help='Dataset split (default: test for cellpose, tune for csc)')
@@ -233,7 +238,7 @@ def main():
     img_paths, mask_paths = get_paths(args.data_path, split)
     logger.info(f"Found {len(img_paths)} image-mask pairs")
 
-    backbone = load_dinov3_backbone(args.checkpoint, args.model_size, device)
+    backbone = load_dinov3_backbone(args.checkpoint, args.train_config, device=device, freeze=True)
 
     run_pca_visualization(
         backbone=backbone,

@@ -241,6 +241,7 @@ def apply_optim_scheduler(optimizer, lr, wd, last_layer_lr):
 
 
 def do_test(cfg, model, iteration, process_group, do_low_freq=False):
+    checkpoint_pg = distributed.get_checkpoint_process_group()
     # dump a sharded checkpoint
     eval_dir = Path(cfg.train.output_dir) / "eval" / str(iteration)
     if distributed.is_subgroup_main_process():
@@ -252,7 +253,11 @@ def do_test(cfg, model, iteration, process_group, do_low_freq=False):
         torch.distributed.barrier()
         teacher_backbone = model.model_ema
         save_checkpoint(
-            ckpt_dir=ckpt_path, iteration=iteration, model=teacher_backbone, overwrite=True, process_group=process_group
+            ckpt_dir=ckpt_path,
+            iteration=iteration,
+            model=teacher_backbone,
+            overwrite=True,
+            process_group=checkpoint_pg,
         )
         if not distributed.is_subgroup_main_process():
             return
@@ -391,6 +396,7 @@ def build_multi_resolution_data_loader_from_cfg(
 
 def do_train(cfg, model, resume=False):
     process_subgroup = distributed.get_process_subgroup()
+    checkpoint_pg = distributed.get_checkpoint_process_group()
     ckpt_dir = Path(cfg.train.output_dir, "ckpt").expanduser()
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -419,7 +425,7 @@ def do_train(cfg, model, resume=False):
                 model=model,
                 optimizer=optimizer,
                 strict_loading=False,
-                process_group=process_subgroup,
+                process_group=checkpoint_pg,
             )
             + 1
         )
@@ -617,7 +623,7 @@ def do_train(cfg, model, resume=False):
                 model=model,
                 optimizer=optimizer,
                 overwrite=True,
-                process_group=process_subgroup,
+                process_group=checkpoint_pg,
             )
             if distributed.is_subgroup_main_process():
                 keep_last_n_checkpoints(ckpt_dir, cfg.checkpointing.max_to_keep)
@@ -681,7 +687,7 @@ def main(argv=None):
             .get("iteration", -1)
             + 1
         )
-        return do_test(cfg, model, f"manual_{iteration}")
+        return do_test(cfg, model, f"manual_{iteration}", distributed.get_checkpoint_process_group())
     do_train(cfg, model, resume=not args.no_resume)
 
 

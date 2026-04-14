@@ -94,6 +94,7 @@ def build_model_for_eval(
     config,
     pretrained_weights: Union[str, Path] | None,
     shard_unsharded_model: bool = False,  # If the model is not sharded, shard it. No effect if already sharded on disk
+    consolidated_checkpoint_key: str | None = "teacher",
 ):
     model, _ = build_model_from_cfg(config, only_teacher=True)
     if pretrained_weights is None or pretrained_weights == "":
@@ -118,7 +119,7 @@ def build_model_for_eval(
 
         # consolidated checkpoint codepath
         model.to_empty(device="cuda")
-        init_model_from_checkpoint_for_evals(model, pretrained_weights, "teacher")
+        init_model_from_checkpoint_for_evals(model, pretrained_weights, consolidated_checkpoint_key)
     if shard_unsharded_model:
         logger.info("Sharding model")
         moduledict = nn.ModuleDict({"backbone": model})

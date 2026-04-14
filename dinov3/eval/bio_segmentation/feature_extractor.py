@@ -21,9 +21,9 @@ Usage:
         --dataset    monuseg \\
         --data-root  /data1/xuzijing/dataset/monuseg/extracted \\
         --checkpoint /data1/xuzijing/checkpoints/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth \\
+        --train-config dinov3/configs/train/microscopy_continual_vitl16.yaml \\
         --output-dir ./cache/monuseg \\
         --split train \\
-        --model-size l \\
         --img-size 448 \\
         --n-layers 4 \\
         --batch-size 8
@@ -31,7 +31,7 @@ Usage:
     # Run for all splits:
     for SPLIT in train val test; do
         python -m dinov3.eval.bio_segmentation.feature_extractor \\
-            --dataset monuseg --split $SPLIT --data-root ... --checkpoint ...
+            --dataset monuseg --split $SPLIT --data-root ... --checkpoint ... --train-config ...
     done
 """
 
@@ -305,14 +305,17 @@ def main():
     parser.add_argument('--data-root',  required=True,
                         help='Path to extracted dataset root')
     parser.add_argument('--checkpoint', required=True,
-                        help='Path to DINOv3 .pth checkpoint')
+                        help='DCP ckpt dir, or consolidated .pth (teacher/model/state_dict/flat)')
+    parser.add_argument(
+        '--train-config',
+        required=True,
+        help='Training YAML merged with ssl_default_config; must match checkpoint architecture.',
+    )
     parser.add_argument('--output-dir', required=True,
                         help='Directory where .npz cache files will be saved')
     parser.add_argument('--split', default='train',
                         choices=['train', 'val', 'test'],
                         help='Dataset split to process (default: train)')
-    parser.add_argument('--model-size', default='7b', choices=['l', '7b'],
-                        help='Backbone size: l (ViT-L/24 blocks) or 7b (ViT-g/40 blocks)')
     parser.add_argument('--img-size',   type=int, default=0,
                         help='Image size for resizing to a square (H=W). '
                              'Use 0 (default) to apply the per-dataset canonical '
@@ -396,9 +399,14 @@ def main():
     dataset = _build_dataset(args.dataset, args.data_root, args.split, img_size)
     logger.info(f"Dataset size: {len(dataset)}")
 
+    cfg_tag = Path(args.train_config).stem
+
     # Load backbone
     backbone = load_dinov3_backbone(
-        args.checkpoint, model_size=args.model_size, device=device, freeze=True
+        args.checkpoint,
+        train_config_path=args.train_config,
+        device=device,
+        freeze=True,
     )
 
     # Extract
@@ -415,7 +423,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     out_path = os.path.join(
         args.output_dir,
-        f"{args.dataset}_{args.split}_{args.model_size}_{layers_tag}_s{img_size}.npz"
+        f"{args.dataset}_{args.split}_{cfg_tag}_{layers_tag}_s{img_size}.npz"
     )
     n_layers_scalar = (len(layers_to_extract) if isinstance(layers_to_extract, list)
                        else layers_to_extract)
