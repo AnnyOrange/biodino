@@ -20,7 +20,8 @@ Usage – ONLINE:
         --data-root  /data1/xuzijing/dataset/monuseg/extracted \\
         --checkpoint /data1/xuzijing/checkpoints/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth \\
         --output-dir ./outputs/linear_probe/monuseg \\
-        --model-size l --epochs 20 --batch-size 4
+        --train-config dinov3/configs/train/microscopy_continual_vitl16.yaml \\
+        --epochs 20 --batch-size 4
 
 Usage – CACHED:
     python -m dinov3.eval.bio_segmentation.linear_probe \\
@@ -56,7 +57,6 @@ from .metrics import (
     compute_ap,
     compute_pq,
 )
-
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('bio_seg.linear_probe')
 
@@ -453,10 +453,10 @@ def run_online_linear_probe(
     dataset_name: str,
     data_root:    str,
     checkpoint:   str,
+    train_config_path: str,
     output_dir:   str,
     num_classes:  int,
     class_names:  Optional[List[str]],
-    model_size:   str  = 'l',
     img_size:     int  = 448,
     n_layers:     int  = 4,
     epochs:       int  = 20,
@@ -473,7 +473,9 @@ def run_online_linear_probe(
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    backbone = load_dinov3_backbone(checkpoint, model_size=model_size, device=device, freeze=True)
+    backbone = load_dinov3_backbone(
+        checkpoint, train_config_path=train_config_path, device=device, freeze=True
+    )
     model    = OnlineLinearSegmenter(backbone, num_classes, n_layers, dropout).to(device)
 
     os.makedirs(output_dir, exist_ok=True)
@@ -597,8 +599,12 @@ def main():
     parser.add_argument('--data-root',   default=None,
                         help='Dataset root directory (online mode)')
     parser.add_argument('--checkpoint',  default=None,
-                        help='DINOv3 checkpoint path (online mode)')
-    parser.add_argument('--model-size',  default='l', choices=['l', '7b'])
+                        help='DCP dir or consolidated .pth (online mode)')
+    parser.add_argument(
+        '--train-config',
+        default=None,
+        help='Training YAML (online mode); merged with ssl_default_config, must match checkpoint.',
+    )
     parser.add_argument('--img-size',    type=int, default=448)
     parser.add_argument('--n-layers',    type=int, default=4)
 
@@ -630,14 +636,16 @@ def main():
     else:
         if args.data_root is None or args.checkpoint is None:
             parser.error('--data-root and --checkpoint required in online mode.')
+        if args.train_config is None:
+            parser.error('--train-config required in online mode.')
         run_online_linear_probe(
             dataset_name = args.dataset,
             data_root    = args.data_root,
             checkpoint   = args.checkpoint,
+            train_config_path = args.train_config,
             output_dir   = args.output_dir,
             num_classes  = num_classes,
             class_names  = class_names,
-            model_size   = args.model_size,
             img_size     = args.img_size,
             n_layers     = args.n_layers,
             epochs       = args.epochs,

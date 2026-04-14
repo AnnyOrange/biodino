@@ -1,72 +1,81 @@
 """
-DINOv3 backbone loading utilities for bio-image evaluation.
+DINOv3 backbone loading for bio-image evaluation — uses the same local ViT
+definition as training (`build_model_from_cfg` / `build_model_for_eval`).
 """
 
+from __future__ import annotations
+
 import logging
+from pathlib import Path
 
 import torch
-import torch.nn as nn
+from omegaconf import OmegaConf
+
+from dinov3.configs import get_default_config
+from dinov3.models import build_model_for_eval
 
 logger = logging.getLogger(__name__)
 
 
+def _peek_consolidated_checkpoint_key(path: Path) -> str | None:
+    """Return which top-level key to use for init_model_from_checkpoint_for_evals, or None for a flat state dict."""
+    sd = torch.load(path, map_location="cpu", weights_only=False)
+    if not isinstance(sd, dict):
+        return None
+    if "teacher" in sd:
+        return "teacher"
+    if "model" in sd:
+        return "model"
+    if "state_dict" in sd:
+        return "state_dict"
+    return None
+
+
 def load_dinov3_backbone(
     checkpoint_path: str,
-    model_size: str = 'l',
-    device: torch.device = torch.device('cuda'),
+    train_config_path: str,
+    device: torch.device = torch.device("cuda"),
     freeze: bool = True,
-) -> nn.Module:
+):
     """
-    Load a pretrained DINOv3 backbone from a checkpoint file.
+    Load the teacher backbone with the same architecture as training.
 
-    Handles checkpoints saved with various wrapper prefixes
-    ('module.', 'backbone.', 'model', 'state_dict').
+    ``checkpoint_path`` may be:
+      - a **DCP checkpoint directory** (e.g. ``.../ckpt/1024``), or
+      - a **consolidated** ``.pth`` (``teacher`` / ``model`` / ``state_dict`` / flat state dict).
 
-    Args:
-        checkpoint_path: path to the .pth checkpoint file.
-        model_size: 'l' (ViT-L/16) or '7b' (ViT-7B/16).
-        device: target device.
-        freeze: if True, freeze all backbone parameters.
-
-    Returns:
-        Loaded and frozen backbone in eval mode.
+    ``train_config_path`` is merged on top of ``ssl_default_config`` and must match
+    the training run (especially ``student.*`` used by ``build_model_from_cfg``).
     """
-    from dinov3.hub.backbones import dinov3_vitl16, dinov3_vit7b16
+    default_cfg = get_default_config()
+    cfg = OmegaConf.merge(default_cfg, OmegaConf.load(train_config_path))
 
-    logger.info(f"Loading DINOv3 {model_size.upper()} backbone...")
-    if model_size.lower() == 'l':
-        model = dinov3_vitl16(pretrained=False)
-    elif model_size.lower() == '7b':
-        model = dinov3_vit7b16(pretrained=False)
-    else:
-        raise ValueError(f"Unsupported model size: {model_size}. Choose 'l' or '7b'.")
+    ck = Path(checkpoint_path)
+    consolidated_key: str | None = "teacher"
+    if ck.is_file():
+        consolidated_key = _peek_consolidated_checkpoint_key(ck)
 
-    logger.info(f"Loading weights from {checkpoint_path}...")
-    state_dict = torch.load(checkpoint_path, map_location='cpu')
+    logger.info(
+        "Loading train-compatible backbone (config=%s, ckpt=%s, consolidated_key=%s)",
+        train_config_path,
+        checkpoint_path,
+        consolidated_key,
+    )
+    model = build_model_for_eval(
+        cfg,
+        pretrained_weights=checkpoint_path,
+        shard_unsharded_model=False,
+        consolidated_checkpoint_key=consolidated_key,
+    )
 
-    if 'model' in state_dict:
-        state_dict = state_dict['model']
-    elif 'state_dict' in state_dict:
-        state_dict = state_dict['state_dict']
-
-    cleaned = {}
-    for k, v in state_dict.items():
-        if k.startswith('module.'):
-            k = k[7:]
-        if k.startswith('backbone.'):
-            k = k[9:]
-        cleaned[k] = v
-
-    model.load_state_dict(cleaned, strict=True)
     model = model.to(device)
-    # MARK(lxy): keep the frozen 7B backbone in bf16 on GPU to reduce VRAM.
-    if freeze and model_size.lower() == '7b':
+    if freeze and str(getattr(cfg.student, "arch", "")) == "vit_7b":
         model = model.to(dtype=torch.bfloat16)
+
     model.eval()
-
     if freeze:
-        for param in model.parameters():
-            param.requires_grad = False
+        for p in model.parameters():
+            p.requires_grad_(False)
 
-    logger.info(f"Backbone ready: embed_dim={model.embed_dim}, patch_size={model.patch_size}")
+    logger.info("Backbone ready: embed_dim=%s, patch_size=%s", model.embed_dim, model.patch_size)
     return model

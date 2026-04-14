@@ -17,6 +17,8 @@ student:
   drop_path_rate: 0.3
   in_chans: 3
   enable_channelvit: false
+  n_storage_tokens: 4
+  mask_k_bias: true
   resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth"
 
 teacher:
@@ -54,4 +56,4 @@ evaluation:
 
 checkpointing:
   period: 1025
-  max_to_keep: 3
+  max_to_keep: 15
