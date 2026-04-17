@@ -20,11 +20,10 @@
 若需要离线拷贝、或在不启动 DCP 的环境下使用，仍可用 **`export_backbone_from_train_ckpt`** 导出（**`torchrun`**，config 与训练一致）：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
-  -m dinov3.eval.bio_segmentation.export_backbone_from_train_ckpt \
+CUDA_VISIBLE_DEVICES=5 python dinov3/eval/bio_segmentation/export_backbone_from_train_ckpt.py \
   --config-file dinov3/configs/train/microscopy_continual_vitl16.yaml \
-  --output-dir ./outputs/your_run \
-  --ckpt-iter 299 \
+  --output-dir /mnt/huawei_deepcad/dinov3/outputs/bio_continue_vitL16_2xa100_OEP1025_ep15_b1024_ckpt_1025 \
+  --ckpt-iter 15374 \
   student.in_chans=3 \
   teacher.in_chans=3 \
   student.enable_channelvit=false \
@@ -117,16 +116,23 @@ python -m dinov3.eval.bio_segmentation.scripts.extract_datasets \
 
 ```bash
 CKPT_L=/mnt/huawei_deepcad/weights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth
+CKPT_L=/mnt/huawei_deepcad/dinov3/outputs/bio_continue_vitL16_2xa100_OEP1025_ep15_b1024_ckpt_1025/eval/export_15374/teacher_backbone_evalstyle.pth
+CKPT_L=/mnt/huawei_deepcad/dinov3/outputs/bio_continue_vitL16_OEP1025_ep15_b1024_1025/ckpt/2049/checkpoint.pth
 TRAIN_CFG=dinov3/configs/train/microscopy_continual_vitl16.yaml
-
-for DATASET in bbbc038 conic livecell monuseg pannuke tissuenet; do
+TRAIN_CFG=dinov3/configs/train/microscopy_continual_vitb16.yaml
+CKPT_B=/mnt/huawei_deepcad/dinov3/outputs/bio_continue_1025_a100_grad_acc_2_base/ckpt/3074/checkpoint.pth
+CKPT_B=/mnt/huawei_deepcad/weights/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth
+conda activate dinov3
+cd /mnt/huawei_deepcad/dinov3
+monuseg pannuke tissuenet
+for DATASET in bbbc038 conic; do
     for SPLIT in train val test; do
-        python -m dinov3.eval.bio_segmentation.feature_extractor \
+        CUDA_VISIBLE_DEVICES=2 python -m dinov3.eval.bio_segmentation.feature_extractor \
             --dataset    $DATASET \
-            --data-root  /data1/xuzijing/dataset/${DATASET}/extracted \
+            --data-root  /mnt/huawei_deepcad/benchmark/segmentation/${DATASET}/extracted \
             --checkpoint $CKPT_L \
             --train-config $TRAIN_CFG \
-            --output-dir ./cache/${DATASET} \
+            --output-dir ./cache/${DATASET}/base_L_new \
             --split      $SPLIT
             # 默认: --layers last1, --img-size 自动选取每数据集规范尺寸
     done
@@ -187,11 +193,22 @@ done
 ## Step 2a：Linear Probe（使用缓存特征）
 
 所有数据集统一格式，替换 `DATASET` 和对应 cache 路径即可。缓存文件名中的 **config stem** 段须与生成缓存时 **`feature_extractor` 的 `--train-config`** 一致；**online 模式**下需 **`--train-config`**、**`--checkpoint`**（DCP 目录、`teacher_checkpoint_trainstyle.pth` 或兼容的 `.pth`）。
+monuseg pannuke tissuenet bbbc038 conic
+for DATASET in tissuenet conic; do
+    CUDA_VISIBLE_DEVICES=7 python -m dinov3.eval.bio_segmentation.linear_probe \
+    --dataset    $DATASET \
+    --use-cached-features \
+    --train-cache ./cache/$DATASET/base_s/$DATASET\_train_microscopy_continual_vits16_last1_s256.npz \
+    --val-cache   ./cache/$DATASET/base_s/$DATASET\_val_microscopy_continual_vits16_last1_s256.npz \
+    --test-cache  ./cache/$DATASET/base_s/$DATASET\_test_microscopy_continual_vits16_last1_s256.npz \
+    --output-dir  ./outputs/linear_probe/$DATASET\_vits \
+    --epochs 50 --batch-size 64 --lr 1e-3
+done
 
 ### MoNuSeg
 
 ```bash
-python -m dinov3.eval.bio_segmentation.linear_probe \
+CUDA_VISIBLE_DEVICES=6 python -m dinov3.eval.bio_segmentation.linear_probe \
     --dataset    monuseg \
     --use-cached-features \
     --train-cache ./cache/monuseg/monuseg_train_microscopy_continual_vitl16_last1_s512.npz \
@@ -207,9 +224,9 @@ python -m dinov3.eval.bio_segmentation.linear_probe \
 python -m dinov3.eval.bio_segmentation.linear_probe \
     --dataset    bbbc038 \
     --use-cached-features \
-    --train-cache ./cache/bbbc038/bbbc038_train_microscopy_continual_vitl16_last1_s512.npz \
-    --val-cache   ./cache/bbbc038/bbbc038_val_microscopy_continual_vitl16_last1_s512.npz \
-    --test-cache  ./cache/bbbc038/bbbc038_test_microscopy_continual_vitl16_last1_s512.npz \
+    --train-cache ./cache/bbbc038/base_l/bbbc038_train_microscopy_continual_vitl16_last1_s512.npz \
+    --val-cache   ./cache/bbbc038/base_l/bbbc038_val_microscopy_continual_vitl16_last1_s512.npz \
+    --test-cache  ./cache/bbbc038/base_l/bbbc038_test_microscopy_continual_vitl16_last1_s512.npz \
     --output-dir  ./outputs/linear_probe/bbbc038_vitl \
     --epochs 50 --batch-size 64 --lr 1e-3
 ```
