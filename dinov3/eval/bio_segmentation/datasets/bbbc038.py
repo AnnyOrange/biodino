@@ -34,8 +34,7 @@ import cv2
 import numpy as np
 
 import torch
-from dinov3.utils.bio_io import read_bio_image_as_numpy
-from dinov3.eval.bio_segmentation.preprocessing import apply_preprocessing
+from dinov3.utils.bio_io import read_bio_image_as_numpy, _normalize_to_float32
 from .base import BioSegDataset
 
 logger = logging.getLogger(__name__)
@@ -55,9 +54,8 @@ class BBBC038Dataset(BioSegDataset):
     """
 
     def load_image(self, path: str) -> np.ndarray:
-        """Return (H, W, 3) float32 array in [0, 1]."""
-        img = read_bio_image_as_numpy(path, target_channels=3, normalize=True)
-        return img
+        """Return raw RGB array; [0, 1] + mean/std are applied in __getitem__."""
+        return read_bio_image_as_numpy(path, target_channels=3, normalize=False)
 
     def _load_instance_map(self, mask_dir: str) -> np.ndarray:
         """
@@ -109,7 +107,7 @@ class BBBC038Dataset(BioSegDataset):
         elif img.ndim == 3 and img.shape[2] == 4:
             img = img[:, :, :3]
 
-        img = apply_preprocessing(img, mode=self.mode)
+        img = _normalize_to_float32(img)
 
         inst_map = self._load_instance_map(self.mask_paths[idx])
 
@@ -134,8 +132,10 @@ class BBBC038Dataset(BioSegDataset):
                 inst_map = np.flip(inst_map, axis=0).copy()
                 sem_map  = np.flip(sem_map,  axis=0).copy()
 
-        img_t  = torch.from_numpy(img).permute(2, 0, 1).float()
-        sem_t  = torch.from_numpy(sem_map).long()
+        img_t = torch.from_numpy(img).permute(2, 0, 1).float()
+        if self.do_normalize:
+            img_t = (img_t - self.rgb_mean) / self.rgb_std
+        sem_t = torch.from_numpy(sem_map).long()
         inst_t = torch.from_numpy(inst_map).long()
         return img_t, sem_t, inst_t
 

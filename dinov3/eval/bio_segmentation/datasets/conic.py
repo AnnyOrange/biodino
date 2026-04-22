@@ -34,6 +34,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from dinov3.eval.bio_segmentation.constants import MICRO_RGB_MEAN, MICRO_RGB_STD
+
 logger = logging.getLogger(__name__)
 
 NUM_CLASSES = 7          # 0=bg, 1-6 = cell types
@@ -60,6 +62,9 @@ class CoNICDataset(Dataset):
         indices: Optional[List[int]] = None,
         size: Tuple[int, int] = (256, 256),
         augment: bool = False,
+        rgb_mean=MICRO_RGB_MEAN,
+        rgb_std=MICRO_RGB_STD,
+        do_normalize: bool = True,
     ):
         """
         Args:
@@ -68,6 +73,7 @@ class CoNICDataset(Dataset):
             indices    : sample indices to use (None = all)
             size       : output (H, W) - images are already 256×256
             augment    : random horizontal/vertical flips
+            rgb_mean / rgb_std / do_normalize : fixed normalisation after scaling to [0, 1].
         """
         logger.info(f"Loading CoNIC arrays from {images_npy} ...")
         self.images = np.load(images_npy, mmap_mode='r')   # [N, 256, 256, 3]
@@ -76,8 +82,11 @@ class CoNICDataset(Dataset):
         if indices is None:
             indices = list(range(len(self.images)))
         self.indices = indices
-        self.size    = size
+        self.size = size
         self.augment = augment
+        self.do_normalize = do_normalize
+        self.rgb_mean = torch.tensor(rgb_mean, dtype=torch.float32).view(3, 1, 1)
+        self.rgb_std = torch.tensor(rgb_std, dtype=torch.float32).view(3, 1, 1)
 
         logger.info(f"CoNIC: {len(self.indices)} samples, size={size}")
 
@@ -111,9 +120,11 @@ class CoNICDataset(Dataset):
                 inst = np.flip(inst, axis=0).copy()
                 sem  = np.flip(sem,  axis=0).copy()
 
-        img_t  = torch.from_numpy(img).permute(2, 0, 1).float()   # [3, H, W]
-        sem_t  = torch.from_numpy(sem).long()                      # [H, W]
-        inst_t = torch.from_numpy(inst).long()                     # [H, W]
+        img_t = torch.from_numpy(img).permute(2, 0, 1).float()
+        if self.do_normalize:
+            img_t = (img_t - self.rgb_mean) / self.rgb_std
+        sem_t = torch.from_numpy(sem).long()
+        inst_t = torch.from_numpy(inst).long()
         return img_t, sem_t, inst_t
 
     def get_semantic_mask(self, idx: int) -> np.ndarray:

@@ -37,8 +37,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from dinov3.utils.bio_io import read_bio_image_as_numpy
-from dinov3.eval.bio_segmentation.preprocessing import apply_preprocessing
+from dinov3.eval.bio_segmentation.constants import MICRO_RGB_MEAN, MICRO_RGB_STD
+from dinov3.utils.bio_io import _normalize_to_float32, read_bio_image_as_numpy
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +97,11 @@ class LIVECellDataset(Dataset):
         self,
         coco_json: str,
         img_root: str,
-        size:    Optional[Tuple[int, int]] = None,
+        size: Optional[Tuple[int, int]] = None,
         augment: bool = False,
+        rgb_mean=MICRO_RGB_MEAN,
+        rgb_std=MICRO_RGB_STD,
+        do_normalize: bool = True,
     ):
         """
         Args:
@@ -106,13 +109,17 @@ class LIVECellDataset(Dataset):
             img_root  : root directory containing image files.
             size      : (H, W) to resize to, or None to keep native resolution.
             augment   : random horizontal/vertical flips.
+            rgb_mean / rgb_std / do_normalize : fixed ImageNet-style normalisation after [0,1].
         """
         with open(coco_json) as f:
             data = json.load(f)
 
         self.img_root = img_root
-        self.size     = size
-        self.augment  = augment
+        self.size = size
+        self.augment = augment
+        self.do_normalize = do_normalize
+        self.rgb_mean = torch.tensor(rgb_mean, dtype=torch.float32).view(3, 1, 1)
+        self.rgb_std = torch.tensor(rgb_std, dtype=torch.float32).view(3, 1, 1)
 
         # Index images
         self._images: Dict[int, dict] = {img['id']: img for img in data['images']}
@@ -150,8 +157,9 @@ class LIVECellDataset(Dataset):
         img_info = self._images[img_id]
         img_path = self._find_image_path(img_info['file_name'])
 
-        # Load image
-        img = read_bio_image_as_numpy(img_path, target_channels=3, normalize=True)  # [H, W, 3]
+        # Load image (raw); dtype → [0, 1] is applied below like BioSegDataset.
+        img = read_bio_image_as_numpy(img_path, target_channels=3, normalize=False)
+        img = _normalize_to_float32(img)
 
         # Build instance map at original resolution, then resize together
         orig_h, orig_w = img.shape[:2]
@@ -177,8 +185,10 @@ class LIVECellDataset(Dataset):
                 inst_map = np.flip(inst_map, axis=0).copy()
                 sem_map  = np.flip(sem_map,  axis=0).copy()
 
-        img_t  = torch.from_numpy(img).permute(2, 0, 1).float()
-        sem_t  = torch.from_numpy(sem_map).long()
+        img_t = torch.from_numpy(img).permute(2, 0, 1).float()
+        if self.do_normalize:
+            img_t = (img_t - self.rgb_mean) / self.rgb_std
+        sem_t = torch.from_numpy(sem_map).long()
         inst_t = torch.from_numpy(inst_map).long()
         return img_t, sem_t, inst_t
 
