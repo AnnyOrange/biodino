@@ -105,7 +105,7 @@ class OnlineLinearSegmenter(nn.Module):
         self,
         backbone:     nn.Module,
         num_classes:  int = 2,
-        n_layers:     int = 4,
+        n_layers:     int = 1,
         dropout:      float = 0.1,
     ):
         super().__init__()
@@ -458,7 +458,7 @@ def run_online_linear_probe(
     num_classes:  int,
     class_names:  Optional[List[str]],
     img_size:     int  = 448,
-    n_layers:     int  = 4,
+    n_layers:     int  = 1,
     epochs:       int  = 20,
     lr:           float = 1e-3,
     batch_size:   int  = 4,
@@ -606,7 +606,7 @@ def main():
         help='Training YAML (online mode); merged with ssl_default_config, must match checkpoint.',
     )
     parser.add_argument('--img-size',    type=int, default=448)
-    parser.add_argument('--n-layers',    type=int, default=4)
+    parser.add_argument('--n-layers',    type=int, default=1)
 
     args = parser.parse_args()
 

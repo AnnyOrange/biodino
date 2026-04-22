@@ -55,4 +55,4 @@ evaluation:
 
 checkpointing:
   period: 1025
-  max_to_keep: 15
+  max_to_keep: 50

@@ -47,6 +47,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
+from .constants import MICRO_RGB_MEAN, MICRO_RGB_STD
 from .model_utils import load_dinov3_backbone
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -91,7 +92,7 @@ def extract_features(
     dataset:     Dataset,
     n_layers:    Union[int, List[int]] = 4,
     batch_size:  int = 8,
-    num_workers: int = 4,
+    num_workers: int = 2,
     device:      torch.device = torch.device('cuda'),
     desc:        str = 'Extracting',
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -231,10 +232,13 @@ def load_cache(cache_path: str) -> Dict[str, object]:
 
 def _build_dataset(
     dataset_name: str,
-    data_root:    str,
-    split:        str,
-    img_size:     Optional[int],
-    augment:      bool = False,
+    data_root: str,
+    split: str,
+    img_size: Optional[int],
+    augment: bool = False,
+    rgb_mean=MICRO_RGB_MEAN,
+    rgb_std=MICRO_RGB_STD,
+    do_normalize: bool = True,
 ) -> Dataset:
     """
     Build a dataset instance from the registry.
@@ -269,25 +273,64 @@ def _build_dataset(
 
     if loader_type == 'file':
         img_paths, mask_paths = get_paths_fn(data_root, split=split)
-        return DatasetClass(img_paths, mask_paths, size=size, augment=augment)
+        return DatasetClass(
+            img_paths,
+            mask_paths,
+            size=size,
+            augment=augment,
+            rgb_mean=rgb_mean,
+            rgb_std=rgb_std,
+            do_normalize=do_normalize,
+        )
 
     elif loader_type == 'coco':
         coco_json, img_root = get_paths_fn(data_root, split=split)
-        return DatasetClass(coco_json, img_root, size=size, augment=augment)
+        return DatasetClass(
+            coco_json,
+            img_root,
+            size=size,
+            augment=augment,
+            rgb_mean=rgb_mean,
+            rgb_std=rgb_std,
+            do_normalize=do_normalize,
+        )
 
     elif loader_type == 'array':
         if dataset_name == 'conic':
             images_npy, labels_npy, indices = get_paths_fn(data_root, split=split)
-            return DatasetClass(images_npy, labels_npy, indices=indices,
-                                size=size, augment=augment)
+            return DatasetClass(
+                images_npy,
+                labels_npy,
+                indices=indices,
+                size=size,
+                augment=augment,
+                rgb_mean=rgb_mean,
+                rgb_std=rgb_std,
+                do_normalize=do_normalize,
+            )
         elif dataset_name == 'pannuke':
             fold_dirs = get_paths_fn(data_root)
             split_map = {'train': [1, 2], 'val': [3], 'test': [3]}
             folds = split_map.get(split, [1, 2, 3])
-            return DatasetClass(fold_dirs, split_folds=folds, size=size, augment=augment)
+            return DatasetClass(
+                fold_dirs,
+                split_folds=folds,
+                size=size,
+                augment=augment,
+                rgb_mean=rgb_mean,
+                rgb_std=rgb_std,
+                do_normalize=do_normalize,
+            )
         elif dataset_name == 'tissuenet':
             npz_path = get_paths_fn(data_root, split=split)
-            return DatasetClass(npz_path, size=size, augment=augment)
+            return DatasetClass(
+                npz_path,
+                size=size,
+                augment=augment,
+                rgb_mean=rgb_mean,
+                rgb_std=rgb_std,
+                do_normalize=do_normalize,
+            )
         else:
             raise ValueError(f"Unsupported array dataset: {dataset_name}")
 
@@ -333,7 +376,7 @@ def main():
                              'ViT-7B → --layers 9 19 29 39.')
     parser.add_argument('--batch-size', type=int, default=16,
                         help='Inference batch size (default: 8)')
-    parser.add_argument('--num-workers',type=int, default=8)
+    parser.add_argument('--num-workers',type=int, default=4)
     args = parser.parse_args()
 
     # -----------------------------------------------------------------------

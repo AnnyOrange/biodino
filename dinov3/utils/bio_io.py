@@ -165,16 +165,20 @@ def read_bio_image_as_numpy(
     normalize: bool = True,
 ) -> np.ndarray:
     """
-    与 read_bio_image 相同，但返回 (H, W, C) 的 numpy float32 数组。
+    与 read_bio_image 相同，但返回 (H, W, C) 的 numpy 数组。
 
-    主要用于需要传入 torchvision v2.ToImage() 等接受 numpy HWC 输入的变换管道。
+    ``normalize=True``：float32，值域 ``[0, 1]``。
+    ``normalize=False``：保留 ``_read_raw_array`` 的位深（如 uint8 / uint16），
+    便于调用方再用 ``_normalize_to_float32`` 做统一的 dtype→[0,1] 映射。
+    若磁盘上已是浮点类型，则转为 float32 但不改数值范围。
     """
     arr = _read_raw_array(file_path)
 
     if normalize:
         arr = _normalize_to_float32(arr)
     else:
-        arr = arr.astype(np.float32)
+        if np.issubdtype(arr.dtype, np.floating):
+            arr = arr.astype(np.float32, copy=False)
 
     arr = _ensure_channels(arr, target_channels)  # (H, W, C)
     return arr

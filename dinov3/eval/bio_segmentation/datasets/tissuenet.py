@@ -33,6 +33,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from dinov3.eval.bio_segmentation.constants import MICRO_RGB_MEAN, MICRO_RGB_STD
 from dinov3.eval.bio_segmentation.preprocessing import apply_preprocessing_single_channel
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,9 @@ class TissueNetDataset(Dataset):
         augment: bool = False,
         norm_mode: str = 'percentile',
         cache_preprocessed: bool = True,
+        rgb_mean=MICRO_RGB_MEAN,
+        rgb_std=MICRO_RGB_STD,
+        do_normalize: bool = True,
     ):
         """
         Args:
@@ -64,6 +68,7 @@ class TissueNetDataset(Dataset):
             augment   : random horizontal/vertical flips.
             norm_mode : per-channel normalisation – 'minmax', 'percentile', or 'hybrid'.
             cache_preprocessed : eagerly build a pseudo-RGB cache in RAM for faster training.
+            rgb_mean / rgb_std / do_normalize : fixed normalisation on tensors after pseudo-RGB.
         """
         logger.info(f"Loading TissueNet from {npz_path} ...")
         data = np.load(npz_path)
@@ -75,6 +80,9 @@ class TissueNetDataset(Dataset):
         self.augment   = augment
         self.norm_mode = norm_mode
         self.cache_preprocessed = cache_preprocessed
+        self.do_normalize = do_normalize
+        self.rgb_mean = torch.tensor(rgb_mean, dtype=torch.float32).view(3, 1, 1)
+        self.rgb_std = torch.tensor(rgb_std, dtype=torch.float32).view(3, 1, 1)
         self.rgb_cache: Optional[np.ndarray] = None
 
         if self.cache_preprocessed:
@@ -172,8 +180,10 @@ class TissueNetDataset(Dataset):
                 inst = np.flip(inst, axis=0).copy()
                 sem  = np.flip(sem,  axis=0).copy()
 
-        img_t  = torch.from_numpy(img).permute(2, 0, 1).float()
-        sem_t  = torch.from_numpy(sem).long()
+        img_t = torch.from_numpy(img).permute(2, 0, 1).float()
+        if self.do_normalize:
+            img_t = (img_t - self.rgb_mean) / self.rgb_std
+        sem_t = torch.from_numpy(sem).long()
         inst_t = torch.from_numpy(inst).long()
         return img_t, sem_t, inst_t
 
