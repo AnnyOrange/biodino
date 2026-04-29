@@ -35,3 +35,8 @@ README.md
 dinov3/data/repackage/pipeline.md
 logs
 outputs
+plot
+run_one_dataset_ckpts_b.sh
+run_one_dataset_ckpts_b1.sh
+run_one_dataset_ckpts_s.sh
+run_one_dataset_ckpts.sh
