@@ -385,6 +385,8 @@ def init_fsdp_model_from_checkpoint(
                 logger.info("Detected flat backbone checkpoint — added 'backbone.' prefix to all keys")
             else:
                 chkpt = dict(state)
+        skip_load_keys = skip_load_keys or []
+        keys_not_sharded = keys_not_sharded or []
         model_state = model.state_dict()
         converted_chkpt = {}
         for key, tensor in chkpt.items():
@@ -392,6 +394,19 @@ def init_fsdp_model_from_checkpoint(
                 converted_chkpt[key] = tensor
                 continue
             target_tensor = model_state.get(key)
+            if (
+                target_tensor is not None
+                and isinstance(tensor, torch.Tensor)
+                and isinstance(target_tensor, torch.Tensor)
+                and tuple(tensor.shape) != tuple(target_tensor.shape)
+            ):
+                logger.warning(
+                    "[CKPT] skip shape-mismatch key %s (pre-convert): ckpt %s vs model %s",
+                    key,
+                    tuple(tensor.shape),
+                    tuple(target_tensor.shape),
+                )
+                continue
             if isinstance(target_tensor, torch.distributed.tensor.DTensor):
                 converted_chkpt[key] = torch.distributed.tensor.distribute_tensor(
                     tensor,
@@ -402,12 +417,28 @@ def init_fsdp_model_from_checkpoint(
             else:
                 converted_chkpt[key] = tensor
         chkpt = converted_chkpt
-        filtered_chkpt = {
-            key: tensor
-            for key, tensor in chkpt.items()
-            if not any(skip_load_key in key for skip_load_key in skip_load_keys)
-        }
-        missing, unexpected = model.load_state_dict(filtered_chkpt, strict=False)
+        filtered_chkpt = {}
+        for key, tensor in chkpt.items():
+            if any(skip_load_key in key for skip_load_key in skip_load_keys):
+                continue
+            target_tensor = model_state.get(key)
+            if (
+                target_tensor is not None
+                and isinstance(tensor, torch.Tensor)
+                and isinstance(target_tensor, torch.Tensor)
+                and tuple(tensor.shape) != tuple(target_tensor.shape)
+            ):
+                logger.warning(
+                    "[CKPT] skip shape-mismatch key %s: ckpt %s vs model %s",
+                    key,
+                    tuple(tensor.shape),
+                    tuple(target_tensor.shape),
+                )
+                continue
+            filtered_chkpt[key] = tensor
+        incompatible = model.load_state_dict(filtered_chkpt, strict=False)
+        missing = incompatible.missing_keys
+        unexpected = incompatible.unexpected_keys
 
         # Classify missing keys: backbone core vs heads/centers (expected to be missing for backbone-only ckpt)
         backbone_missing = [

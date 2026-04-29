@@ -205,6 +205,8 @@ class DinoVisionTransformer(nn.Module):
         nn.init.normal_(self.cls_token, std=0.02)
         if self.n_storage_tokens > 0:
             nn.init.normal_(self.storage_tokens, std=0.02)
+        if self.enable_channelvit and self.channel_embed is not None:
+            nn.init.trunc_normal_(self.channel_embed, std=0.02)
         nn.init.zeros_(self.mask_token)
         named_apply(init_weights_vit, self)
 
