@@ -1,0 +1,71 @@
+# ViT-B/16：不接 ChannelViT，3 通道；有效全局 batch 1024（32/GPU×8×accum 4）。
+
+train:
+  dataset_path: "packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000999}.tar"
+  batch_size_per_gpu: 32
+  num_workers: 10
+  OFFICIAL_EPOCH_LENGTH: 1025
+  output_dir: ./outputs/bio_continue_vitb16
+  compile: false
+
+student:
+  arch: vit_base
+  patch_size: 16
+  ffn_layer: mlp
+  ffn_ratio: 4.0
+  drop_path_rate: 0.3
+  in_chans: 3
+  enable_channelvit: false
+  n_storage_tokens: 4
+  mask_k_bias: true
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth"
+
+teacher:
+  in_chans: 3
+  enable_channelvit: false
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+
+optim:
+  epochs: 15
+  optimizer: adamw
+  lr: 1.5e-4
+  min_lr: 1.0e-6
+  warmup_epochs: 3
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 4
+
+crops:
+  rgb_mean:
+    - 0.511375
+    - 0.598449
+    - 0.683452
+    - 0.119112
+    - 0.105159
+    # - 0.082019
+    # - 0.419583
+    # - 0.307523
+
+  rgb_std:
+    - 0.340017
+    - 0.306132
+    - 0.284308
+    - 0.187627
+    - 0.161061
+    # - 0.151326
+    # - 0.157172
+    # - 0.025357
+
+
+
+evaluation:
+  eval_period_iterations: 2050
+
+checkpointing:
+  period: 1025
+  max_to_keep: 50
