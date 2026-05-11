@@ -86,6 +86,78 @@ logger = logging.getLogger('feature_extractor')
 # Feature extraction
 # ============================================================================
 
+def _align_input_channels(imgs: torch.Tensor, backbone: nn.Module) -> torch.Tensor:
+    """Pad/trim eval images to the channel count expected by the backbone."""
+    expected = int(getattr(backbone, "in_chans", imgs.shape[1]))
+    current = int(imgs.shape[1])
+    if current == expected:
+        return imgs
+
+    if not getattr(backbone, "_bioseg_channel_align_logged", False):
+        logger.info(
+            "Aligning eval input channels from %s to backbone.in_chans=%s.",
+            current,
+            expected,
+        )
+        setattr(backbone, "_bioseg_channel_align_logged", True)
+
+    if current < expected:
+        pad_shape = (imgs.shape[0], expected - current, imgs.shape[2], imgs.shape[3])
+        padding = imgs.new_zeros(pad_shape)
+        return torch.cat([imgs, padding], dim=1)
+
+    return imgs[:, :expected]
+
+
+def _channelvit_spatial_features(
+    backbone: nn.Module,
+    imgs: torch.Tensor,
+    n_layers: Union[int, List[int]],
+    channel_aggregation: str = "mean",
+) -> Tuple[torch.Tensor, ...]:
+    """
+    Convert ChannelViT's C*H*W token sequence into dense H*W features.
+
+    ChannelViT emits one token per input channel and spatial patch.  For a
+    segmentation probe we need one feature vector per spatial patch, so the
+    channel axis is folded back explicitly instead of using the standard ViT
+    reshape path.
+    """
+    token_outputs = backbone.get_intermediate_layers(
+        imgs,
+        n=n_layers,
+        reshape=False,
+        return_class_token=False,
+    )
+    patch_size = int(getattr(backbone, "patch_size", 16))
+    h_patch = imgs.shape[2] // patch_size
+    w_patch = imgs.shape[3] // patch_size
+    spatial_tokens = h_patch * w_patch
+
+    features: List[torch.Tensor] = []
+    for tokens in token_outputs:
+        bsz, n_tokens, dim = tokens.shape
+        if n_tokens % spatial_tokens != 0:
+            raise RuntimeError(
+                "Cannot reshape ChannelViT tokens: "
+                f"tokens={n_tokens}, spatial={spatial_tokens}."
+            )
+
+        n_channels = n_tokens // spatial_tokens
+        tokens = tokens.reshape(bsz, n_channels, h_patch, w_patch, dim)
+        if channel_aggregation == "mean":
+            feat = tokens.mean(dim=1).permute(0, 3, 1, 2).contiguous()
+        elif channel_aggregation == "concat":
+            feat = tokens.permute(0, 1, 4, 2, 3).reshape(
+                bsz, n_channels * dim, h_patch, w_patch
+            ).contiguous()
+        else:
+            raise ValueError(f"Unknown channel_aggregation={channel_aggregation!r}")
+        features.append(feat)
+
+    return tuple(features)
+
+
 @torch.inference_mode()
 def extract_features(
     backbone:    nn.Module,
@@ -149,7 +221,8 @@ def extract_features(
             # instance IDs; sem becomes a derived binary mask.
             inst = torch.zeros_like(sem)
 
-        imgs = imgs.to(device)   # [B, 3, H, W]
+        imgs = imgs.to(device)   # [B, C, H, W]
+        imgs = _align_input_channels(imgs, backbone)
 
         # -------------------------------------------------------------------
         # Backbone forward: extract intermediate spatial patch features.
@@ -158,12 +231,15 @@ def extract_features(
         # and return_class_token=False.
         # -------------------------------------------------------------------
         with torch.autocast(device_type='cuda', enabled=True, dtype=torch.float16):
-            feats_list = backbone.get_intermediate_layers(
-                imgs,
-                n=n_layers,
-                reshape=True,
-                return_class_token=False,
-            )
+            if getattr(backbone, "enable_channelvit", False):
+                feats_list = _channelvit_spatial_features(backbone, imgs, n_layers)
+            else:
+                feats_list = backbone.get_intermediate_layers(
+                    imgs,
+                    n=n_layers,
+                    reshape=True,
+                    return_class_token=False,
+                )
             # Each element: [B, C, H_p, W_p] – concatenate along channel axis
             feats = torch.cat(feats_list, dim=1).float()  # [B, D, H_p, W_p]
 

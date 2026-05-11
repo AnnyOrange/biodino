@@ -1,0 +1,5 @@
+# Placeholder config used only for naming ChAda-ViT bio-segmentation eval runs.
+model_type: chadavit
+embed_dim: 192
+patch_size: 16
+max_number_channels: 10
