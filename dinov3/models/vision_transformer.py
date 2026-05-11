@@ -394,11 +394,21 @@ class DinoVisionTransformer(nn.Module):
         extra_tokens = [out[:, 1 : self.n_storage_tokens + 1] for out in outputs]
         outputs = [out[:, self.n_storage_tokens + 1 :] for out in outputs]
         if reshape:
-            B, _, h, w = x.shape
-            outputs = [
-                out.reshape(B, h // self.patch_size, w // self.patch_size, -1).permute(0, 3, 1, 2).contiguous()
-                for out in outputs
-            ]
+            B, C, h, w = x.shape
+            h_patch = h // self.patch_size
+            w_patch = w // self.patch_size
+            if self.enable_channelvit:
+                # ChannelViT patch tokens are ordered as C x H x W.  Collapse
+                # channels so dense evaluators receive one feature per patch.
+                outputs = [
+                    out.reshape(B, C, h_patch, w_patch, -1).mean(dim=1).permute(0, 3, 1, 2).contiguous()
+                    for out in outputs
+                ]
+            else:
+                outputs = [
+                    out.reshape(B, h_patch, w_patch, -1).permute(0, 3, 1, 2).contiguous()
+                    for out in outputs
+                ]
         if not return_class_token and not return_extra_tokens:
             return tuple(outputs)
         elif return_class_token and not return_extra_tokens:

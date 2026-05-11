@@ -3,7 +3,7 @@
 train:
   dataset_path: "packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000999}.tar"
   batch_size_per_gpu: 32
-  num_workers: 10
+  num_workers: 6
   OFFICIAL_EPOCH_LENGTH: 1025
   output_dir: ./outputs/bio_continue_vitb16
   compile: false
@@ -45,8 +45,8 @@ crops:
     - 0.511375
     - 0.598449
     - 0.683452
-    - 0.119112
-    - 0.105159
+    # - 0.119112
+    # - 0.105159
     # - 0.082019
     # - 0.419583
     # - 0.307523
@@ -55,8 +55,8 @@ crops:
     - 0.340017
     - 0.306132
     - 0.284308
-    - 0.187627
-    - 0.161061
+    # - 0.187627
+    # - 0.161061
     # - 0.151326
     # - 0.157172
     # - 0.025357

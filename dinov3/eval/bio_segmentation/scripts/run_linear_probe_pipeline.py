@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -66,6 +67,14 @@ def _discover_checkpoints(checkpoints_dir: Path) -> Dict[int, Path]:
         if ckpt_file.is_file():
             found[int(child.name)] = ckpt_file
     return dict(sorted(found.items()))
+
+
+def _infer_checkpoint_id(checkpoint_file: Path) -> int:
+    match = re.search(r"ep[=-]?(\d+)", checkpoint_file.stem, flags=re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    matches = re.findall(r"\d+", checkpoint_file.stem)
+    return int(matches[-1]) if matches else 0
 
 
 def _select_checkpoint_iters(
@@ -146,8 +155,19 @@ def main() -> None:
     )
     parser.add_argument(
         "--checkpoints-dir",
-        required=True,
+        default=None,
         help="Checkpoint root, expected layout: <dir>/<iter>/checkpoint.pth",
+    )
+    parser.add_argument(
+        "--checkpoint-file",
+        default=None,
+        help="Single checkpoint file to run, e.g. a .ckpt/.pth ChAda-ViT checkpoint.",
+    )
+    parser.add_argument(
+        "--checkpoint-id",
+        type=int,
+        default=None,
+        help="Numeric output/cache id for --checkpoint-file (default: infer from filename, or 0).",
     )
     parser.add_argument(
         "--checkpoint-iters",
@@ -208,9 +228,8 @@ def main() -> None:
 
     _check_datasets(args.datasets)
 
-    checkpoints_dir = Path(args.checkpoints_dir).expanduser().resolve()
-    if not checkpoints_dir.is_dir():
-        parser.error(f"--checkpoints-dir is not a directory: {checkpoints_dir}")
+    if bool(args.checkpoints_dir) == bool(args.checkpoint_file):
+        parser.error("Set exactly one of --checkpoints-dir or --checkpoint-file.")
 
     train_config = Path(args.train_config).expanduser().resolve()
     if not train_config.is_file():
@@ -219,11 +238,26 @@ def main() -> None:
     run_name = args.run_name or cfg_stem
     layers_tag = _resolve_layers_tag(args.layers)
 
-    discovered = _discover_checkpoints(checkpoints_dir)
-    try:
-        selected_iters = _select_checkpoint_iters(args.checkpoint_iters, discovered)
-    except ValueError as err:
-        parser.error(str(err))
+    if args.checkpoint_file:
+        checkpoint_file = Path(args.checkpoint_file).expanduser().resolve()
+        if not checkpoint_file.is_file():
+            parser.error(f"--checkpoint-file not found: {checkpoint_file}")
+        checkpoint_id = args.checkpoint_id
+        if checkpoint_id is None:
+            checkpoint_id = _infer_checkpoint_id(checkpoint_file)
+        discovered = {checkpoint_id: checkpoint_file}
+        selected_iters = [checkpoint_id]
+        checkpoints_label = str(checkpoint_file)
+    else:
+        checkpoints_dir = Path(args.checkpoints_dir).expanduser().resolve()
+        if not checkpoints_dir.is_dir():
+            parser.error(f"--checkpoints-dir is not a directory: {checkpoints_dir}")
+        discovered = _discover_checkpoints(checkpoints_dir)
+        try:
+            selected_iters = _select_checkpoint_iters(args.checkpoint_iters, discovered)
+        except ValueError as err:
+            parser.error(str(err))
+        checkpoints_label = str(checkpoints_dir)
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
@@ -231,7 +265,7 @@ def main() -> None:
         env["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
 
     logger.info("Datasets: %s", args.datasets)
-    logger.info("Checkpoints dir: %s", checkpoints_dir)
+    logger.info("Checkpoint source: %s", checkpoints_label)
     logger.info("Selected ckpt iters: %s", selected_iters)
     logger.info("Train config: %s", train_config)
     logger.info("run_name=%s layers_tag=%s", run_name, layers_tag)
