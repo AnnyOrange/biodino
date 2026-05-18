@@ -374,6 +374,46 @@ class SSLMetaArch(nn.Module):
                 self.teacher.ibot_head.init_weights()
             logger.info(f"Performing distillation from: {self.teacher}")
 
+    @staticmethod
+    def _is_channelvit_backbone(backbone: nn.Module) -> bool:
+        return bool(getattr(backbone, "enable_channelvit", False))
+
+    @staticmethod
+    def _expand_channelvit_masks(
+        masks: Tensor,
+        n_channels: int,
+        channel_valid_mask: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Expand spatial iBOT masks to ChannelViT's C * H * W token layout."""
+        if masks.ndim != 2:
+            raise ValueError(f"Expected masks to be 2D, got shape={tuple(masks.shape)}")
+        if n_channels <= 0:
+            raise ValueError(f"Expected a positive channel count, got {n_channels}")
+
+        expanded_masks = masks.unsqueeze(1).expand(-1, n_channels, -1)
+        if channel_valid_mask is not None:
+            channel_valid_mask = channel_valid_mask.to(device=masks.device, dtype=torch.bool)
+            if channel_valid_mask.shape != (masks.shape[0], n_channels):
+                raise ValueError(
+                    "channel_valid_mask must have shape "
+                    f"{(masks.shape[0], n_channels)}, got {tuple(channel_valid_mask.shape)}"
+                )
+            expanded_masks = expanded_masks & channel_valid_mask.unsqueeze(-1)
+        expanded_masks = expanded_masks.reshape(masks.shape[0], -1)
+        mask_indices_list = expanded_masks.flatten().nonzero().flatten()
+        masks_weight = (
+            (1 / expanded_masks.sum(-1).clamp(min=1.0))
+            .unsqueeze(-1)
+            .expand_as(expanded_masks)[expanded_masks]
+        )
+        n_masked_patches = torch.full(
+            (1,),
+            fill_value=mask_indices_list.shape[0],
+            dtype=torch.long,
+            device=expanded_masks.device,
+        )
+        return expanded_masks, mask_indices_list, masks_weight, n_masked_patches
+
     def forward_backward(
         self,
         data,
@@ -396,22 +436,57 @@ class SSLMetaArch(nn.Module):
 
         global_crops = data["collated_global_crops"].cuda(non_blocking=True)
         local_crops = data["collated_local_crops"].cuda(non_blocking=True)
+        global_channel_ids = data.get("collated_global_channel_ids")
+        local_channel_ids = data.get("collated_local_channel_ids")
+        global_channel_valid_mask = data.get("collated_global_channel_valid_mask")
+        local_channel_valid_mask = data.get("collated_local_channel_valid_mask")
+        if global_channel_ids is not None:
+            global_channel_ids = global_channel_ids.cuda(non_blocking=True)
+        if local_channel_ids is not None:
+            local_channel_ids = local_channel_ids.cuda(non_blocking=True)
+        if global_channel_valid_mask is not None:
+            global_channel_valid_mask = global_channel_valid_mask.cuda(non_blocking=True)
+        if local_channel_valid_mask is not None:
+            local_channel_valid_mask = local_channel_valid_mask.cuda(non_blocking=True)
         masks = data["collated_masks"].cuda(non_blocking=True)
         mask_indices_list = data["mask_indices_list"].cuda(non_blocking=True)
         masks_weight = data["masks_weight"].cuda(non_blocking=True)
         n_masked_patches_tensor = data["n_masked_patches"].cuda(non_blocking=True)
+
+        if bool(getattr(self.cfg.student, "enable_channelvit", False)) or self._is_channelvit_backbone(
+            self.student.backbone
+        ):
+            masks, mask_indices_list, masks_weight, n_masked_patches_tensor = self._expand_channelvit_masks(
+                masks,
+                n_channels=global_crops.shape[1],
+                channel_valid_mask=global_channel_valid_mask,
+            )
 
         if self.has_gram_teacher:
             assert "collated_gram_teacher_crops" in data, (
                 "no gram teacher crops in the data, have you set cfg.crops.gram_teacher_crops_size?"
             )
             gram_teacher_crops = data["collated_gram_teacher_crops"].cuda(non_blocking=True)
+            gram_teacher_channel_ids = data.get("collated_gram_teacher_channel_ids")
+            gram_teacher_channel_valid_mask = data.get("collated_gram_teacher_channel_valid_mask")
+            if gram_teacher_channel_ids is not None:
+                gram_teacher_channel_ids = gram_teacher_channel_ids.cuda(non_blocking=True)
+            if gram_teacher_channel_valid_mask is not None:
+                gram_teacher_channel_valid_mask = gram_teacher_channel_valid_mask.cuda(non_blocking=True)
         else:
             gram_teacher_crops = None
+            gram_teacher_channel_ids = None
+            gram_teacher_channel_valid_mask = None
 
         # Teacher output (will trigger an all-gather to unshard)
         teacher_global = self.get_teacher_output(
             global_crops.unflatten(0, (n_global_crops, B)),
+            channel_ids=global_channel_ids.unflatten(0, (n_global_crops, B))
+            if global_channel_ids is not None
+            else None,
+            channel_valid_mask=global_channel_valid_mask.unflatten(0, (n_global_crops, B))
+            if global_channel_valid_mask is not None
+            else None,
             teacher_temp=teacher_temp,
             n_masked_patches_tensor=n_masked_patches_tensor,
             mask_indices_list=mask_indices_list,
@@ -422,6 +497,18 @@ class SSLMetaArch(nn.Module):
         student_global, student_local = self.get_student_output(
             global_crops=global_crops.unflatten(0, (n_global_crops, B)),
             local_crops=local_crops.unflatten(0, (n_local_crops, B)),
+            global_channel_ids=global_channel_ids.unflatten(0, (n_global_crops, B))
+            if global_channel_ids is not None
+            else None,
+            local_channel_ids=local_channel_ids.unflatten(0, (n_local_crops, B))
+            if local_channel_ids is not None
+            else None,
+            global_channel_valid_mask=global_channel_valid_mask.unflatten(0, (n_global_crops, B))
+            if global_channel_valid_mask is not None
+            else None,
+            local_channel_valid_mask=local_channel_valid_mask.unflatten(0, (n_local_crops, B))
+            if local_channel_valid_mask is not None
+            else None,
             upperbound=data["upperbound"],
             masks=masks,
             mask_indices_list=mask_indices_list,
@@ -431,6 +518,12 @@ class SSLMetaArch(nn.Module):
         if self.gram_use_loss:
             gram_global = self.get_gram_teacher_output(
                 gram_teacher_crops.unflatten(0, (n_global_crops, B)) if gram_teacher_crops is not None else None,
+                channel_ids=gram_teacher_channel_ids.unflatten(0, (n_global_crops, B))
+                if gram_teacher_channel_ids is not None
+                else None,
+                channel_valid_mask=gram_teacher_channel_valid_mask.unflatten(0, (n_global_crops, B))
+                if gram_teacher_channel_valid_mask is not None
+                else None,
                 masks=masks,
                 teacher_global=teacher_global,
                 student_global=student_global,
@@ -478,11 +571,22 @@ class SSLMetaArch(nn.Module):
         mask_indices_list,
         teacher_temp,
         n_masked_patches_tensor,
+        channel_ids=None,
+        channel_valid_mask=None,
     ):
         n_crops, B, rgb, H, W = images.shape
         images = images.flatten(0, 1)
+        if channel_ids is not None:
+            channel_ids = channel_ids.flatten(0, 1)
+        if channel_valid_mask is not None:
+            channel_valid_mask = channel_valid_mask.flatten(0, 1)
 
-        backbone_out = self.teacher.backbone(images, is_training=True)
+        backbone_out = self.teacher.backbone(
+            images,
+            channel_ids=channel_ids,
+            channel_valid_mask=channel_valid_mask,
+            is_training=True,
+        )
         cls = backbone_out["x_norm_clstoken"]  # [n_crops * B, D]
         reg = backbone_out["x_storage_tokens"]  # [n_crops * B, R, D]
         ibot_patch = backbone_out["x_norm_patchtokens"]  # [n_crops * B, P, D]
@@ -514,7 +618,17 @@ class SSLMetaArch(nn.Module):
             "masked_patch_centered": masked_patch_centered,  # [n_masked_patches, K]
         }
 
-    def get_gram_teacher_output(self, images, *, masks, teacher_global, student_global, student_global_crops_size):
+    def get_gram_teacher_output(
+        self,
+        images,
+        *,
+        masks,
+        teacher_global,
+        student_global,
+        student_global_crops_size,
+        channel_ids=None,
+        channel_valid_mask=None,
+    ):
         # Get student patch features
         student_patches = student_global["patch_pre_head"].flatten(0, 1)  # [n_crops * B, P, D]
 
@@ -526,9 +640,18 @@ class SSLMetaArch(nn.Module):
                 raise ValueError("Gram teacher has not been initialized. Load a checkpoint or from the EMA teacher.")
             n_crops, B, rgb, H, W = images.shape
             images = images.flatten(0, 1)  # [n_crops * B, rgb, H, W]
+            if channel_ids is not None:
+                channel_ids = channel_ids.flatten(0, 1)
+            if channel_valid_mask is not None:
+                channel_valid_mask = channel_valid_mask.flatten(0, 1)
 
             with torch.no_grad():
-                backbone_out = self.gram_teacher.backbone(images, is_training=True)
+                backbone_out = self.gram_teacher.backbone(
+                    images,
+                    channel_ids=channel_ids,
+                    channel_valid_mask=channel_valid_mask,
+                    is_training=True,
+                )
             teacher_patches = backbone_out["x_norm_patchtokens"]  # [n_crops * B, P_T, D]
 
             # Downsample Gram teacher features if needed
@@ -568,16 +691,38 @@ class SSLMetaArch(nn.Module):
             "orig_teacher_patches": orig_teacher_patches,  # [n_crops * B, P, D]
         }
 
-    def get_student_output(self, *, global_crops, local_crops, upperbound, masks, mask_indices_list):
+    def get_student_output(
+        self,
+        *,
+        global_crops,
+        local_crops,
+        upperbound,
+        masks,
+        mask_indices_list,
+        global_channel_ids=None,
+        local_channel_ids=None,
+        global_channel_valid_mask=None,
+        local_channel_valid_mask=None,
+    ):
         n_global_crops, B, rgb, H, W = global_crops.shape
         n_local_crops, B, rgb, H, W = local_crops.shape
 
         global_crops = global_crops.flatten(0, 1)
+        if global_channel_ids is not None:
+            global_channel_ids = global_channel_ids.flatten(0, 1)
+        if local_channel_ids is not None:
+            local_channel_ids = local_channel_ids.flatten(0, 1)
+        if global_channel_valid_mask is not None:
+            global_channel_valid_mask = global_channel_valid_mask.flatten(0, 1)
+        if local_channel_valid_mask is not None:
+            local_channel_valid_mask = local_channel_valid_mask.flatten(0, 1)
 
         # Forward global and local crops through the student backbone jointly
         global_out, local_out = self.student.backbone(
             [global_crops, local_crops.flatten(0, 1)],
             masks=[masks if not self.is_distillation_enabled else None, None],
+            channel_ids=[global_channel_ids, local_channel_ids],
+            channel_valid_mask=[global_channel_valid_mask, local_channel_valid_mask],
             is_training=True,
         )
         g_cls, g_reg, g_patch = (

@@ -55,7 +55,7 @@ class TissueNetDataset(Dataset):
         size: Tuple[int, int] = (448, 448),
         augment: bool = False,
         norm_mode: str = 'percentile',
-        cache_preprocessed: bool = True,
+        cache_preprocessed: bool = False,
         rgb_mean=MICRO_RGB_MEAN,
         rgb_std=MICRO_RGB_STD,
         do_normalize: bool = True,
@@ -71,7 +71,7 @@ class TissueNetDataset(Dataset):
             rgb_mean / rgb_std / do_normalize : fixed normalisation on tensors after pseudo-RGB.
         """
         logger.info(f"Loading TissueNet from {npz_path} ...")
-        data = np.load(npz_path)
+        data = np.load(npz_path, mmap_mode='r')
         self.X = data['X']    # [N, H, W, 2]
         self.y = data['y']    # [N, H, W, 2]
 

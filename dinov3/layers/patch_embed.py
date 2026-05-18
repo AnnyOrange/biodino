@@ -168,7 +168,7 @@ class PatchEmbedPerChannel(nn.Module):
 
     def reset_parameters(self):
         """Initialize Conv3d weights using Kaiming uniform initialization."""
-        k = 1 / (self.in_chans * (self.patch_size[0] ** 2))
+        k = 1 / (self.patch_size[0] * self.patch_size[1])
         nn.init.uniform_(self.proj.weight, -math.sqrt(k), math.sqrt(k))
         if self.proj.bias is not None:
             nn.init.uniform_(self.proj.bias, -math.sqrt(k), math.sqrt(k))

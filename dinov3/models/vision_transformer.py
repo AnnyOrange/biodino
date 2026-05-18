@@ -114,8 +114,10 @@ class DinoVisionTransformer(nn.Module):
                 embed_dim=embed_dim,
                 flatten_embedding=False,  # We handle flattening in prepare_tokens_with_masks
             )
-            # Initialize Channel Embedding (ChannelViT specific)
-            # Shape: (1, in_chans, embed_dim) for broadcasting
+            # Initialize Channel Embedding (ChannelViT specific).
+            # RGB callers do not need to pass channel ids; they default to
+            # [0, 1, 2].  Multi-channel callers can pass explicit channel ids
+            # and gather from this table without changing the RGB data path.
             self.channel_embed = nn.Parameter(torch.empty(1, in_chans, embed_dim, device=device))
             torch.nn.init.trunc_normal_(self.channel_embed, std=0.02)
             logger.info(f"ChannelViT enabled with {in_chans} channels")
@@ -210,7 +212,52 @@ class DinoVisionTransformer(nn.Module):
         nn.init.zeros_(self.mask_token)
         named_apply(init_weights_vit, self)
 
-    def prepare_tokens_with_masks(self, x: Tensor, masks=None) -> Tuple[Tensor, Tuple[int]]:
+    def _channel_embeddings(
+        self,
+        *,
+        channel_ids: Tensor | None,
+        batch_size: int,
+        n_channels: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> Tensor:
+        if self.channel_embed is None:
+            raise RuntimeError("Channel embeddings requested when ChannelViT is disabled")
+
+        if channel_ids is None:
+            channel_ids = torch.arange(n_channels, device=device, dtype=torch.long)
+        else:
+            channel_ids = channel_ids.to(device=device, dtype=torch.long)
+
+        if channel_ids.numel() == 0:
+            raise ValueError("channel_ids must not be empty")
+
+        if channel_ids.ndim == 1:
+            if channel_ids.shape[0] != n_channels:
+                raise ValueError(
+                    f"channel_ids length ({channel_ids.shape[0]}) must match input channels ({n_channels})"
+                )
+            embed = self.channel_embed[:, channel_ids, :].to(dtype=dtype)
+            return embed.unsqueeze(2).unsqueeze(3)
+
+        if channel_ids.ndim == 2:
+            if channel_ids.shape != (batch_size, n_channels):
+                raise ValueError(
+                    "batched channel_ids must have shape "
+                    f"({batch_size}, {n_channels}), got {tuple(channel_ids.shape)}"
+                )
+            embed = self.channel_embed[0, channel_ids, :].to(dtype=dtype)
+            return embed.unsqueeze(2).unsqueeze(3)
+
+        raise ValueError(f"channel_ids must be 1D or 2D, got shape={tuple(channel_ids.shape)}")
+
+    def prepare_tokens_with_masks(
+        self,
+        x: Tensor,
+        masks=None,
+        channel_ids: Tensor | None = None,
+        channel_valid_mask: Tensor | None = None,
+    ) -> Tuple[Tensor, Tuple[int], Tensor | None]:
         B, C, H, W = x.shape
         
         # Patch embedding
@@ -223,8 +270,14 @@ class DinoVisionTransformer(nn.Module):
             x = x.permute(0, 2, 3, 4, 1)  # (B, C, H', W', embed_dim)
             
             # Add Channel Embedding
-            # self.channel_embed: (1, C, embed_dim) -> (1, C, 1, 1, embed_dim)
-            chan_embed = self.channel_embed.unsqueeze(2).unsqueeze(3)
+            # self.channel_embed: gather to (1 or B, C, 1, 1, embed_dim)
+            chan_embed = self._channel_embeddings(
+                channel_ids=channel_ids,
+                batch_size=B,
+                n_channels=C,
+                device=x.device,
+                dtype=x.dtype,
+            )
             x = x + chan_embed  # Broadcast addition
             
             # Flatten: (B, C, H', W', embed_dim) -> (B, C*H'*W', embed_dim)
@@ -232,15 +285,31 @@ class DinoVisionTransformer(nn.Module):
             
             # Record spatial dimensions for RoPE (single channel size)
             H_patch, W_patch = H // self.patch_size, W // self.patch_size
+            if channel_valid_mask is None:
+                channel_valid_mask = torch.ones(B, C, dtype=torch.bool, device=x.device)
+            else:
+                channel_valid_mask = channel_valid_mask.to(device=x.device, dtype=torch.bool)
+                if channel_valid_mask.shape != (B, C):
+                    raise ValueError(
+                        f"channel_valid_mask must have shape {(B, C)}, got {tuple(channel_valid_mask.shape)}"
+                    )
+            patch_valid_mask = (
+                channel_valid_mask.unsqueeze(-1)
+                .expand(-1, -1, H_patch * W_patch)
+                .reshape(B, C * H_patch * W_patch)
+            )
         else:
             # === Standard DINOv3 logic ===
             # x: (B, H', W', embed_dim)
             H_patch, W_patch = x.shape[1], x.shape[2]
             x = x.flatten(1, 2)  # (B, H'*W', embed_dim)
+            patch_valid_mask = None
         if masks is not None:
             if self.enable_channelvit and masks.shape[1] != x.shape[1]:
                 # masks: (B, H'*W') → (B, C*H'*W') to match ChannelViT token count
                 masks = masks.unsqueeze(1).expand(-1, C, -1).reshape(B, -1)
+            if self.enable_channelvit and patch_valid_mask is not None:
+                masks = masks & patch_valid_mask
             x = torch.where(masks.unsqueeze(-1), self.mask_token.to(x.dtype).unsqueeze(0), x)
             cls_token = self.cls_token
         else:
@@ -264,16 +333,48 @@ class DinoVisionTransformer(nn.Module):
             ],
             dim=1,
         )
+        token_valid_mask = None
+        if patch_valid_mask is not None:
+            extra_valid = torch.ones(
+                B,
+                self.n_storage_tokens + 1,
+                dtype=torch.bool,
+                device=x.device,
+            )
+            token_valid_mask = torch.cat([extra_valid, patch_valid_mask], dim=1)
+            x = x.masked_fill(~token_valid_mask.unsqueeze(-1), 0)
 
-        return x, (H_patch, W_patch)
+        return x, (H_patch, W_patch), token_valid_mask
 
-    def forward_features_list(self, x_list: List[Tensor], masks_list: List[Tensor]) -> List[Dict[str, Tensor]]:
+    def forward_features_list(
+        self,
+        x_list: List[Tensor],
+        masks_list: List[Tensor],
+        channel_ids_list: List[Tensor | None] | None = None,
+        channel_valid_masks_list: List[Tensor | None] | None = None,
+    ) -> List[Dict[str, Tensor]]:
+        if channel_ids_list is None:
+            channel_ids_list = [None for _ in x_list]
+        if channel_valid_masks_list is None:
+            channel_valid_masks_list = [None for _ in x_list]
         x = []
         rope = []
-        for t_x, t_masks in zip(x_list, masks_list):
-            t2_x, hw_tuple = self.prepare_tokens_with_masks(t_x, t_masks)
+        token_valid_masks = []
+        for t_x, t_masks, t_channel_ids, t_channel_valid_mask in zip(
+            x_list,
+            masks_list,
+            channel_ids_list,
+            channel_valid_masks_list,
+        ):
+            t2_x, hw_tuple, token_valid_mask = self.prepare_tokens_with_masks(
+                t_x,
+                t_masks,
+                channel_ids=t_channel_ids,
+                channel_valid_mask=t_channel_valid_mask,
+            )
             x.append(t2_x)
             rope.append(hw_tuple)
+            token_valid_masks.append(token_valid_mask)
         for _, blk in enumerate(self.blocks):
             if self.rope_embed is not None:
                 # Generate base RoPE for single channel spatial dimensions
@@ -302,7 +403,13 @@ class DinoVisionTransformer(nn.Module):
                     rope_sincos = rope_sincos_list
             else:
                 rope_sincos = [None for r in rope]
-            x = blk(x, rope_sincos)
+            x = blk(x, rope_sincos, token_valid_masks)
+            x = [
+                t_x.masked_fill(~token_valid_mask.unsqueeze(-1), 0)
+                if token_valid_mask is not None
+                else t_x
+                for t_x, token_valid_mask in zip(x, token_valid_masks)
+            ]
         all_x = x
         output = []
         for idx, (x, masks) in enumerate(zip(all_x, masks_list)):
@@ -331,14 +438,36 @@ class DinoVisionTransformer(nn.Module):
             )
         return output
 
-    def forward_features(self, x: Tensor | List[Tensor], masks: Optional[Tensor] = None) -> List[Dict[str, Tensor]]:
+    def forward_features(
+        self,
+        x: Tensor | List[Tensor],
+        masks: Optional[Tensor] = None,
+        channel_ids: Optional[Tensor | List[Tensor | None]] = None,
+        channel_valid_mask: Optional[Tensor | List[Tensor | None]] = None,
+    ) -> List[Dict[str, Tensor]]:
         if isinstance(x, torch.Tensor):
-            return self.forward_features_list([x], [masks])[0]
+            return self.forward_features_list([x], [masks], [channel_ids], [channel_valid_mask])[0]
         else:
-            return self.forward_features_list(x, masks)
+            if masks is None:
+                masks = [None for _ in x]
+            if channel_ids is None:
+                channel_ids = [None for _ in x]
+            if channel_valid_mask is None:
+                channel_valid_mask = [None for _ in x]
+            return self.forward_features_list(x, masks, channel_ids, channel_valid_mask)
 
-    def _get_intermediate_layers_not_chunked(self, x: Tensor, n: int = 1) -> List[Tensor]:
-        x, (H_patch, W_patch) = self.prepare_tokens_with_masks(x)
+    def _get_intermediate_layers_not_chunked(
+        self,
+        x: Tensor,
+        n: int = 1,
+        channel_ids: Tensor | None = None,
+        channel_valid_mask: Tensor | None = None,
+    ) -> List[Tensor]:
+        x, (H_patch, W_patch), token_valid_mask = self.prepare_tokens_with_masks(
+            x,
+            channel_ids=channel_ids,
+            channel_valid_mask=channel_valid_mask,
+        )
         # If n is an int, take the n last blocks. If it's a list, take them
         output, total_block_len = [], len(self.blocks)
         blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
@@ -363,7 +492,9 @@ class DinoVisionTransformer(nn.Module):
                     rope_sincos = rope_sincos_base
             else:
                 rope_sincos = None
-            x = blk(x, rope_sincos)
+            x = blk(x, rope_sincos, token_valid_mask)
+            if token_valid_mask is not None:
+                x = x.masked_fill(~token_valid_mask.unsqueeze(-1), 0)
             if i in blocks_to_take:
                 output.append(x)
         assert len(output) == len(blocks_to_take), f"only {len(output)} / {len(blocks_to_take)} blocks found"
@@ -378,8 +509,15 @@ class DinoVisionTransformer(nn.Module):
         return_class_token: bool = False,
         return_extra_tokens: bool = False,
         norm: bool = True,
+        channel_ids: Tensor | None = None,
+        channel_valid_mask: Tensor | None = None,
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor, ...]]]:
-        outputs = self._get_intermediate_layers_not_chunked(x, n)
+        outputs = self._get_intermediate_layers_not_chunked(
+            x,
+            n,
+            channel_ids=channel_ids,
+            channel_valid_mask=channel_valid_mask,
+        )
         if norm:
             outputs_normed = []
             for out in outputs:
@@ -400,10 +538,23 @@ class DinoVisionTransformer(nn.Module):
             if self.enable_channelvit:
                 # ChannelViT patch tokens are ordered as C x H x W.  Collapse
                 # channels so dense evaluators receive one feature per patch.
-                outputs = [
-                    out.reshape(B, C, h_patch, w_patch, -1).mean(dim=1).permute(0, 3, 1, 2).contiguous()
-                    for out in outputs
-                ]
+                if channel_valid_mask is not None:
+                    valid = channel_valid_mask.to(device=x.device, dtype=torch.bool)
+                    if valid.shape != (B, C):
+                        raise ValueError(f"channel_valid_mask must have shape {(B, C)}, got {tuple(valid.shape)}")
+                    valid = valid[:, :, None, None, None].to(dtype=outputs[0].dtype)
+                    denom = valid.sum(dim=1).clamp_min(1)
+                    outputs = [
+                        ((out.reshape(B, C, h_patch, w_patch, -1) * valid).sum(dim=1) / denom)
+                        .permute(0, 3, 1, 2)
+                        .contiguous()
+                        for out in outputs
+                    ]
+                else:
+                    outputs = [
+                        out.reshape(B, C, h_patch, w_patch, -1).mean(dim=1).permute(0, 3, 1, 2).contiguous()
+                        for out in outputs
+                    ]
             else:
                 outputs = [
                     out.reshape(B, h_patch, w_patch, -1).permute(0, 3, 1, 2).contiguous()

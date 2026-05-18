@@ -81,7 +81,7 @@ class SelfAttentionBlock(nn.Module):
             # No batch dimension, do not index
             return sin, cos  # [heads, patches, embed_dim] or [patches, embed_dim]
 
-    def _forward(self, x: Tensor, rope=None) -> Tensor:
+    def _forward(self, x: Tensor, rope=None, token_mask=None) -> Tensor:
         """
         This is the reference implementation for a single tensor, matching what is done below for a list.
         We call the list op on [x] instead of this function.
@@ -95,7 +95,8 @@ class SelfAttentionBlock(nn.Module):
 
             x_subset_1 = x[indices_1]
             rope_subset = self._maybe_index_rope(rope, indices_1)
-            residual_1 = self.attn(self.norm1(x_subset_1), rope=rope_subset)
+            token_mask_subset = token_mask[indices_1] if token_mask is not None else None
+            residual_1 = self.attn(self.norm1(x_subset_1), rope=rope_subset, token_mask=token_mask_subset)
 
             x_attn = torch.index_add(
                 x,
@@ -118,18 +119,20 @@ class SelfAttentionBlock(nn.Module):
                 alpha=residual_scale_factor,
             )
         else:
-            x_attn = x + self.ls1(self.attn(self.norm1(x), rope=rope))
+            x_attn = x + self.ls1(self.attn(self.norm1(x), rope=rope, token_mask=token_mask))
             x_ffn = x_attn + self.ls2(self.mlp(self.norm2(x_attn)))
 
         return x_ffn
 
-    def _forward_list(self, x_list: List[Tensor], rope_list=None) -> List[Tensor]:
+    def _forward_list(self, x_list: List[Tensor], rope_list=None, token_mask_list=None) -> List[Tensor]:
         """
         This list operator concatenates the tokens from the list of inputs together to save
         on the elementwise operations. Torch-compile memory-planning allows hiding the overhead
         related to concat ops.
         """
         b_list = [x.shape[0] for x in x_list]
+        if token_mask_list is None:
+            token_mask_list = [None for _ in x_list]
         sample_subset_sizes = [max(int(b * (1 - self.sample_drop_ratio)), 1) for b in b_list]
         residual_scale_factors = [b / sample_subset_size for b, sample_subset_size in zip(b_list, sample_subset_sizes)]
 
@@ -146,10 +149,18 @@ class SelfAttentionBlock(nn.Module):
                 ]
             else:
                 rope_subset_list = rope_list
+            token_mask_subset_list = [
+                token_mask[indices_1] if token_mask is not None else None
+                for token_mask, indices_1 in zip(token_mask_list, indices_1_list)
+            ]
 
             flattened, shapes, num_tokens = cat_keep_shapes(x_subset_1_list)
             norm1 = uncat_with_shapes(self.norm1(flattened), shapes, num_tokens)
-            residual_1_list = self.attn.forward_list(norm1, rope_list=rope_subset_list)
+            residual_1_list = self.attn.forward_list(
+                norm1,
+                rope_list=rope_subset_list,
+                token_mask_list=token_mask_subset_list,
+            )
 
             x_attn_list = [
                 torch.index_add(
@@ -189,25 +200,35 @@ class SelfAttentionBlock(nn.Module):
             ]
         else:
             x_out = []
-            for x, rope in zip(x_list, rope_list):
-                x_attn = x + self.ls1(self.attn(self.norm1(x), rope=rope))
+            for x, rope, token_mask in zip(x_list, rope_list, token_mask_list):
+                x_attn = x + self.ls1(self.attn(self.norm1(x), rope=rope, token_mask=token_mask))
                 x_ffn = x_attn + self.ls2(self.mlp(self.norm2(x_attn)))
                 x_out.append(x_ffn)
             x_ffn = x_out
 
         return x_ffn
 
-    def forward(self, x_or_x_list, rope_or_rope_list=None) -> List[Tensor]:
+    def forward(self, x_or_x_list, rope_or_rope_list=None, token_mask_or_token_mask_list=None) -> List[Tensor]:
         if isinstance(x_or_x_list, Tensor):
             # for reference:
             # return self._forward(x_or_x_list, rope=rope_or_rope_list)
             # in order to match implementations we call the list op:
-            return self._forward_list([x_or_x_list], rope_list=[rope_or_rope_list])[0]
+            return self._forward_list(
+                [x_or_x_list],
+                rope_list=[rope_or_rope_list],
+                token_mask_list=[token_mask_or_token_mask_list],
+            )[0]
         elif isinstance(x_or_x_list, list):
             if rope_or_rope_list is None:
                 rope_or_rope_list = [None for x in x_or_x_list]
+            if token_mask_or_token_mask_list is None:
+                token_mask_or_token_mask_list = [None for x in x_or_x_list]
             # return [self._forward(x, rope=rope) for x, rope in zip(x_or_x_list, rope_or_rope_list)]
-            return self._forward_list(x_or_x_list, rope_list=rope_or_rope_list)
+            return self._forward_list(
+                x_or_x_list,
+                rope_list=rope_or_rope_list,
+                token_mask_list=token_mask_or_token_mask_list,
+            )
         else:
             raise AssertionError
 

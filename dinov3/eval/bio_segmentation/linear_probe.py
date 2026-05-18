@@ -47,7 +47,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from scipy.ndimage import label as scipy_label
 from skimage.measure import label as sk_label
-from torch.utils.data import DataLoader, Dataset, TensorDataset
+from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset
 from tqdm import tqdm
 
 from .metrics import (
@@ -172,19 +172,45 @@ class CachedFeatureDataset(Dataset):
         sem_masks:  np.ndarray,   # [N, H, W]
         inst_maps:  Optional[np.ndarray] = None,  # [N, H, W]
     ):
-        assert len(features) == len(sem_masks)
+        if isinstance(features, list):
+            assert isinstance(sem_masks, list)
+            assert inst_maps is None or isinstance(inst_maps, list)
+            assert sum(len(x) for x in features) == sum(len(x) for x in sem_masks)
+            self._chunked = True
+            self._cum_lengths = np.cumsum([len(x) for x in features])
+        else:
+            assert len(features) == len(sem_masks)
+            self._chunked = False
+            self._cum_lengths = None
         self.features  = features
         self.sem_masks = sem_masks
         self.inst_maps = inst_maps
 
     def __len__(self) -> int:
+        if self._chunked:
+            return int(self._cum_lengths[-1])
         return len(self.features)
 
     def __getitem__(self, idx: int):
-        feat = torch.from_numpy(self.features[idx].astype(np.float32))
-        sem  = torch.from_numpy(self.sem_masks[idx].astype(np.int64))
+        if self._chunked:
+            chunk_idx = int(np.searchsorted(self._cum_lengths, idx, side='right'))
+            prev = 0 if chunk_idx == 0 else int(self._cum_lengths[chunk_idx - 1])
+            local_idx = idx - prev
+            feat_np = self.features[chunk_idx][local_idx]
+            sem_np = self.sem_masks[chunk_idx][local_idx]
+            inst_np = None if self.inst_maps is None else self.inst_maps[chunk_idx][local_idx]
+        else:
+            feat_np = self.features[idx]
+            sem_np = self.sem_masks[idx]
+            inst_np = None if self.inst_maps is None else self.inst_maps[idx]
+
+        # Keep cached fp16/int16 tensors on CPU.  Casting every sample to
+        # fp32/int64 here is surprisingly expensive for PanNuke/TissueNet and
+        # is repeated every epoch; move/cast happens once per batch on GPU.
+        feat = torch.from_numpy(feat_np)
+        sem  = torch.from_numpy(sem_np)
         if self.inst_maps is not None:
-            inst = torch.from_numpy(self.inst_maps[idx].astype(np.int64))
+            inst = torch.from_numpy(inst_np)
             return feat, sem, inst
         return feat, sem
 
@@ -208,8 +234,8 @@ def train_one_epoch_cached(
     n = 0
     pbar = tqdm(loader, desc=f'Epoch {epoch}', leave=False)
     for batch in pbar:
-        feat = batch[0].to(device)
-        sem  = batch[1].to(device)
+        feat = batch[0].to(device=device, dtype=torch.float32, non_blocking=True)
+        sem  = batch[1].to(device=device, dtype=torch.long, non_blocking=True)
 
         logits = head(feat, out_size=orig_size)  # [B, C, H, W]
         loss   = criterion(logits, sem)
@@ -265,6 +291,7 @@ def evaluate_cached(
     orig_size:     Tuple[int, int],
     device:        torch.device,
     class_names:   Optional[List[str]] = None,
+    semantic_only: bool = False,
 ) -> Dict[str, float]:
     """Evaluate on cached features; returns full metric dict."""
     head.eval()
@@ -275,7 +302,7 @@ def evaluate_cached(
     has_inst = False
 
     for batch in tqdm(loader, desc='Eval', leave=False):
-        feat = batch[0].to(device)
+        feat = batch[0].to(device=device, dtype=torch.float32, non_blocking=True)
         sem  = batch[1]
         if len(batch) == 3:
             inst_gt = batch[2].numpy()
@@ -289,6 +316,8 @@ def evaluate_cached(
         for i in range(len(pred_sem)):
             all_pred_sem.append(pred_sem[i])
             all_gt_sem.append(sem[i].numpy())
+            if semantic_only:
+                continue
             pred_inst = semantic_to_instance(pred_sem[i])
             all_pred_inst.append(pred_inst)
             if has_inst and inst_gt is not None:
@@ -300,9 +329,11 @@ def evaluate_cached(
     sem_metrics = accumulate_semantic_metrics(
         all_pred_sem, all_gt_sem, num_classes=num_classes, class_names=class_names
     )
+    if semantic_only:
+        return sem_metrics
+
     # Instance metrics
     inst_metrics = accumulate_instance_metrics(all_pred_inst, all_gt_inst)
-
     return {**sem_metrics, **inst_metrics}
 
 
@@ -360,6 +391,13 @@ def run_cached_linear_probe(
     weight_decay: float = 1e-4,
     dropout:      float = 0.1,
     ignore_index: int   = 255,
+    num_workers:  int   = 4,
+    eval_every:   int   = 5,
+    skip_test_eval: bool = False,
+    semantic_only: bool = False,
+    train_samples: Optional[int] = None,
+    train_fraction: Optional[float] = None,
+    seed: int = 0,
 ) -> Dict[str, float]:
     """Full cached linear probe training pipeline."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -367,19 +405,31 @@ def run_cached_linear_probe(
     # ------------------------------------------------------------------
     # Load caches
     # ------------------------------------------------------------------
-    def _load(path):
+    def _load(path, load_inst: bool = True):
         d = np.load(path)
-        has_inst = d['inst_maps'].any()
-        inst = d['inst_maps'] if has_inst else None
-        return d['features'], d['sem_masks'].astype(np.int64), inst, \
-               (int(d['orig_H']), int(d['orig_W']))
+        if 'features' in d:
+            has_inst = load_inst and d['inst_maps'].any()
+            inst = d['inst_maps'] if has_inst else None
+            return d['features'], d['sem_masks'], inst, \
+                   (int(d['orig_H']), int(d['orig_W']))
+
+        num_chunks = int(d['num_chunks'])
+        features = [d[f'features_{i:04d}'] for i in range(num_chunks)]
+        sem_masks = [d[f'sem_masks_{i:04d}'] for i in range(num_chunks)]
+        if load_inst:
+            inst_chunks = [d[f'inst_maps_{i:04d}'] for i in range(num_chunks)]
+            has_inst = any(chunk.any() for chunk in inst_chunks)
+            inst = inst_chunks if has_inst else None
+        else:
+            inst = None
+        return features, sem_masks, inst, (int(d['orig_H']), int(d['orig_W']))
 
     logger.info("Loading train cache ...")
-    tr_feat, tr_sem, tr_inst, orig_size = _load(train_cache)
-    D = tr_feat.shape[1]
+    tr_feat, tr_sem, tr_inst, orig_size = _load(train_cache, load_inst=False)
+    D = tr_feat[0].shape[1] if isinstance(tr_feat, list) else tr_feat.shape[1]
 
     logger.info("Loading val cache ...")
-    val_feat, val_sem, val_inst, _ = _load(val_cache)
+    val_feat, val_sem, val_inst, _ = _load(val_cache, load_inst=not semantic_only)
 
     # ------------------------------------------------------------------
     # Build model
@@ -391,9 +441,27 @@ def run_cached_linear_probe(
 
     # DataLoaders
     tr_ds  = CachedFeatureDataset(tr_feat,  tr_sem,  tr_inst)
+    full_train_len = len(tr_ds)
+    if train_samples is not None and train_fraction is not None:
+        raise ValueError("Use only one of train_samples or train_fraction.")
+    if train_fraction is not None:
+        if not (0.0 < train_fraction <= 1.0):
+            raise ValueError(f"train_fraction must be in (0, 1], got {train_fraction}.")
+        train_samples = max(1, int(round(full_train_len * train_fraction)))
+    if train_samples is not None:
+        train_samples = max(1, min(int(train_samples), full_train_len))
+        rng = np.random.default_rng(seed)
+        subset_idx = np.sort(rng.choice(full_train_len, size=train_samples, replace=False))
+        tr_ds = Subset(tr_ds, subset_idx.tolist())
+        logger.info(
+            "Using deterministic train subset: %d/%d samples (seed=%d).",
+            train_samples,
+            full_train_len,
+            seed,
+        )
     val_ds = CachedFeatureDataset(val_feat, val_sem, val_inst)
-    tr_loader  = DataLoader(tr_ds,  batch_size=batch_size, shuffle=True,  num_workers=2)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2)
+    tr_loader  = DataLoader(tr_ds,  batch_size=batch_size, shuffle=True,  num_workers=num_workers)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     # ------------------------------------------------------------------
     # Training
@@ -401,21 +469,28 @@ def run_cached_linear_probe(
     best_val_miou  = -1.0
     best_ckpt_path = os.path.join(output_dir, 'best_head.pth')
     os.makedirs(output_dir, exist_ok=True)
+    eval_every = max(1, int(eval_every))
 
     for epoch in range(1, epochs + 1):
         loss = train_one_epoch_cached(head, tr_loader, optimizer, criterion, device, epoch, orig_size)
         scheduler.step()
 
-        if epoch % 5 == 0 or epoch == epochs:
+        if epoch % eval_every == 0 or epoch == epochs:
             val_metrics = evaluate_cached(
-                head, val_loader, num_classes, orig_size, device, class_names
+                head, val_loader, num_classes, orig_size, device, class_names,
+                # Validation during training only needs mIoU/mDice to select the
+                # best head. Instance metrics are computed once for the final
+                # reported val/test results, avoiding repeated slow AJI/AP passes.
+                semantic_only=True,
             )
             miou = val_metrics['mIoU']
-            logger.info(
+            msg = (
                 f"Epoch {epoch:3d}/{epochs}  loss={loss:.4f}  "
-                f"val_mIoU={miou:.4f}  val_mDice={val_metrics['mDice']:.4f}  "
-                f"val_AJI={val_metrics['AJI']:.4f}  val_AP50={val_metrics['AP50']:.4f}"
+                f"val_mIoU={miou:.4f}  val_mDice={val_metrics['mDice']:.4f}"
             )
+            if "AJI" in val_metrics and "AP50" in val_metrics:
+                msg += f"  val_AJI={val_metrics['AJI']:.4f}  val_AP50={val_metrics['AP50']:.4f}"
+            logger.info(msg)
             if miou > best_val_miou:
                 best_val_miou = miou
                 torch.save(head.state_dict(), best_ckpt_path)
@@ -424,15 +499,27 @@ def run_cached_linear_probe(
     # Test evaluation
     # ------------------------------------------------------------------
     head.load_state_dict(torch.load(best_ckpt_path, map_location=device))
-    results = {'val': evaluate_cached(head, val_loader, num_classes, orig_size, device, class_names)}
+    results = {
+        'val': evaluate_cached(
+            head, val_loader, num_classes, orig_size, device, class_names,
+            semantic_only=semantic_only,
+        ),
+        '_meta': {
+            'full_train_samples': full_train_len,
+            'used_train_samples': len(tr_ds),
+            'train_fraction': None if train_fraction is None else float(train_fraction),
+            'seed': int(seed),
+        },
+    }
 
-    if test_cache is not None and os.path.exists(test_cache):
+    if (not skip_test_eval) and test_cache is not None and os.path.exists(test_cache):
         logger.info("Loading test cache ...")
-        te_feat, te_sem, te_inst, _ = _load(test_cache)
+        te_feat, te_sem, te_inst, _ = _load(test_cache, load_inst=not semantic_only)
         te_ds     = CachedFeatureDataset(te_feat, te_sem, te_inst)
-        te_loader = DataLoader(te_ds, batch_size=batch_size, shuffle=False, num_workers=2)
+        te_loader = DataLoader(te_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
         results['test'] = evaluate_cached(
-            head, te_loader, num_classes, orig_size, device, class_names
+            head, te_loader, num_classes, orig_size, device, class_names,
+            semantic_only=semantic_only,
         )
 
     # Save results
@@ -584,6 +671,18 @@ def main():
     parser.add_argument('--dropout',     type=float, default=0.1)
     parser.add_argument('--ignore-index',type=int,   default=255)
     parser.add_argument('--num-workers', type=int,   default=4)
+    parser.add_argument('--eval-every',  type=int,   default=5,
+                        help='Validate every N epochs in cached mode.')
+    parser.add_argument('--skip-test-eval', action='store_true',
+                        help='Skip final test-set evaluation; useful for fast screening.')
+    parser.add_argument('--semantic-only', action='store_true',
+                        help='Fast screening: compute semantic metrics only and do not load instance maps.')
+    parser.add_argument('--train-samples', type=int, default=None,
+                        help='Cached mode only: train on a deterministic subset of N images.')
+    parser.add_argument('--train-fraction', type=float, default=None,
+                        help='Cached mode only: train on a deterministic fraction of train images.')
+    parser.add_argument('--seed', type=int, default=0,
+                        help='Random seed for deterministic cached train subsets.')
 
     # Cached mode
     parser.add_argument('--use-cached-features', action='store_true',
@@ -632,6 +731,13 @@ def main():
             weight_decay = args.weight_decay,
             dropout      = args.dropout,
             ignore_index = args.ignore_index,
+            num_workers  = args.num_workers,
+            eval_every   = args.eval_every,
+            skip_test_eval = args.skip_test_eval,
+            semantic_only = args.semantic_only,
+            train_samples = args.train_samples,
+            train_fraction = args.train_fraction,
+            seed = args.seed,
         )
     else:
         if args.data_root is None or args.checkpoint is None:

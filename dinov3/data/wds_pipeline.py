@@ -303,6 +303,65 @@ def build_packed_wds_pipeline(
     return pipeline
 
 
+def build_packed_channelvit_wds_pipeline(
+    config: WdsConfig,
+    transform: Optional[Callable] = None,
+    sample_channels: Optional[int] = None,
+) -> torch.utils.data.IterableDataset:
+    """Build packed WebDataset pipeline for true ChannelViT inputs.
+
+    Each sample returns a fixed-size random subset of channels that are actually
+    present in the tar entry plus their 0-based channel ids.  Missing channels
+    are not padded, so absent channels do not become tokens.
+    """
+    try:
+        import webdataset as wds
+    except ImportError:
+        logger.error("webdataset not installed — run: pip install webdataset")
+        raise
+
+    from .wds_decoder import decode_packed_channelvit_sample
+
+    max_ch = config.target_channels or 8
+    sample_ch = sample_channels
+
+    def decode_sample(sample: dict) -> Optional[dict]:
+        decoded = decode_packed_channelvit_sample(
+            sample,
+            max_channels=max_ch,
+            sample_channels=sample_ch,
+        )
+        if decoded is None:
+            return None
+        decoded["__key__"] = sample.get("__key__", "")
+        return decoded
+
+    stages = [
+        _make_shard_source(wds, config.shard_urls),
+        wds.tarfile_to_samples(),
+        wds.shuffle(config.shuffle_buffer),
+        wds.map(decode_sample),
+        wds.select(lambda x: x is not None),
+    ]
+
+    if transform is not None:
+        def apply_transform(sample: dict) -> tuple:
+            transformed = transform(sample["image"], channel_ids=sample["channel_ids"])
+            transformed["channel_ids"] = sample["channel_ids"]
+            return transformed, ()
+
+        stages.append(wds.map(apply_transform))
+
+    pipeline = wds.DataPipeline(*stages)
+    logger.info(
+        "Packed ChannelViT WebDataset pipeline built: max_channels=%d sample_channels=%s urls=%s",
+        max_ch,
+        sample_ch if sample_ch is not None else "all-present",
+        config.shard_urls,
+    )
+    return pipeline
+
+
 def is_webdataset(dataset) -> bool:
     """Return True if dataset is a WebDataset IterableDataset."""
     return isinstance(dataset, torch.utils.data.IterableDataset)
