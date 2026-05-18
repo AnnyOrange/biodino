@@ -43,6 +43,7 @@ def build_model(args, only_teacher=False, img_size=224, device=None):
             pos_embed_rope_shift_coords=args.pos_embed_rope_shift_coords,
             pos_embed_rope_jitter_coords=args.pos_embed_rope_jitter_coords,
             pos_embed_rope_rescale_coords=args.pos_embed_rope_rescale_coords,
+            pos_embed_rope_dtype=args.pos_embed_rope_dtype,
             qkv_bias=args.qkv_bias,
             layerscale_init=args.layerscale,
             norm_layer=args.norm_layer,

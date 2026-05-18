@@ -51,6 +51,75 @@ def _torch_load_trusted(path: str | Path, *, map_location="cpu"):
         return torch.load(path, map_location=map_location)
 
 
+def _checkpoint_tensor_shape(tensor) -> tuple[int, ...] | None:
+    if tensor is None or not hasattr(tensor, "shape"):
+        return None
+    return tuple(int(x) for x in tensor.shape)
+
+
+def _adapt_checkpoint_tensor_for_model(
+    key: str,
+    tensor: torch.Tensor,
+    target_tensor,
+) -> tuple[torch.Tensor, bool]:
+    """Adapt known-compatible checkpoint tensors whose layouts changed locally.
+
+    The important case is bootstrapping ChannelViT from official RGB DINOv3
+    weights: standard PatchEmbed stores Conv2d weights as [D, 3, P, P], while
+    PatchEmbedPerChannel stores a shared per-channel Conv3d as [D, 1, 1, P, P].
+    We initialize that shared filter with the mean RGB filter instead of leaving
+    the whole patch projection random.
+    """
+    target_shape = _checkpoint_tensor_shape(target_tensor)
+    if target_shape is None or tuple(tensor.shape) == target_shape:
+        return tensor, False
+
+    normalized_key = key.removeprefix("backbone.")
+    if (
+        normalized_key == "patch_embed.proj.weight"
+        and tensor.ndim == 4
+        and len(target_shape) == 5
+    ):
+        out_ch, _in_ch, patch_h, patch_w = tuple(tensor.shape)
+        tgt_out, tgt_in, tgt_depth, tgt_h, tgt_w = target_shape
+        if (
+            out_ch == tgt_out
+            and tgt_in == 1
+            and tgt_depth == 1
+            and patch_h == tgt_h
+            and patch_w == tgt_w
+        ):
+            adapted = tensor.float().mean(dim=1, keepdim=True).unsqueeze(2)
+            adapted = adapted.to(dtype=tensor.dtype)
+            logger.info(
+                "[CKPT] adapted RGB PatchEmbed Conv2d -> ChannelViT Conv3d for %s: %s -> %s",
+                key,
+                tuple(tensor.shape),
+                target_shape,
+            )
+            return adapted, True
+
+    return tensor, False
+
+
+def _add_zero_channel_embed_if_missing(chkpt: dict, model_state: dict) -> None:
+    """Zero-init ChannelViT channel embeddings when loading RGB-only weights."""
+    for key, target_tensor in model_state.items():
+        normalized_key = key.removeprefix("backbone.")
+        if normalized_key != "channel_embed" or key in chkpt:
+            continue
+        target_shape = _checkpoint_tensor_shape(target_tensor)
+        if target_shape is None:
+            continue
+        dtype = getattr(target_tensor, "dtype", torch.float32)
+        chkpt[key] = torch.zeros(target_shape, dtype=dtype)
+        logger.info(
+            "[CKPT] initialized missing ChannelViT channel_embed with zeros: %s %s",
+            key,
+            target_shape,
+        )
+
+
 class CheckpointRetentionPolicy(Enum):
     ALL = "all"  # keep all checkpoints
     BEST = "best"
@@ -388,12 +457,15 @@ def init_fsdp_model_from_checkpoint(
         skip_load_keys = skip_load_keys or []
         keys_not_sharded = keys_not_sharded or []
         model_state = model.state_dict()
+        _add_zero_channel_embed_if_missing(chkpt, model_state)
         converted_chkpt = {}
         for key, tensor in chkpt.items():
             if any(key_not_sharded in key for key_not_sharded in keys_not_sharded):
                 converted_chkpt[key] = tensor
                 continue
             target_tensor = model_state.get(key)
+            if target_tensor is not None and isinstance(tensor, torch.Tensor):
+                tensor, _ = _adapt_checkpoint_tensor_for_model(key, tensor, target_tensor)
             if (
                 target_tensor is not None
                 and isinstance(tensor, torch.Tensor)
@@ -422,6 +494,8 @@ def init_fsdp_model_from_checkpoint(
             if any(skip_load_key in key for skip_load_key in skip_load_keys):
                 continue
             target_tensor = model_state.get(key)
+            if target_tensor is not None and isinstance(tensor, torch.Tensor):
+                tensor, _ = _adapt_checkpoint_tensor_for_model(key, tensor, target_tensor)
             if (
                 target_tensor is not None
                 and isinstance(tensor, torch.Tensor)
@@ -490,7 +564,28 @@ def init_model_from_checkpoint_for_evals(
             k[len("backbone.") :]: v for k, v in state_dict.items() if k.startswith("backbone.")
         }
 
-    msg = model.load_state_dict(state_dict, strict=False)
+    model_state = model.state_dict()
+    _add_zero_channel_embed_if_missing(state_dict, model_state)
+    filtered_state_dict = {}
+    for key, tensor in state_dict.items():
+        target_tensor = model_state.get(key)
+        if target_tensor is None:
+            filtered_state_dict[key] = tensor
+            continue
+        if isinstance(tensor, torch.Tensor):
+            tensor, _ = _adapt_checkpoint_tensor_for_model(key, tensor, target_tensor)
+            target_shape = _checkpoint_tensor_shape(target_tensor)
+            if target_shape is not None and tuple(tensor.shape) != target_shape:
+                logger.warning(
+                    "[CKPT] skip eval shape-mismatch key %s: ckpt %s vs model %s",
+                    key,
+                    tuple(tensor.shape),
+                    target_shape,
+                )
+                continue
+        filtered_state_dict[key] = tensor
+
+    msg = model.load_state_dict(filtered_state_dict, strict=False)
     logger.info("Pretrained weights at %s loaded with msg: %s", pretrained_weights, msg)
 
 

@@ -105,6 +105,11 @@ def make_dataset(
                                to match ``student.in_chans`` in the YAML.
                                Example:
                                ``packwds:/data/packed/filtered_mixed_train_w*-{000000..000999}.tar``
+        - ``packwds_chvit:`` → packed ChannelViT shards.  Samples a fixed-size
+                               subset from actually present channels and returns
+                               channel ids; no dataset-level zero padding/copying.
+                               Optional suffix: ``::sample_channels=K`` caps
+                               the number of sampled channels per sample.
         - ``multiwds:``      → multi-channel WebDataset: parallel streams from
                                multiple channel directories are zipped into a
                                single N-channel tensor per sample.  Pattern
@@ -128,6 +133,13 @@ def make_dataset(
         The created dataset.
     """
     logger.info(f'using dataset: "{dataset_str}"')
+
+    if dataset_str.startswith("packwds_chvit:"):
+        return _make_packed_channelvit_webdataset(
+            dataset_str[len("packwds_chvit:") :],
+            transform,
+            target_channels=target_channels,
+        )
 
     if dataset_str.startswith("packwds:"):
         return _make_packed_webdataset(
@@ -232,6 +244,63 @@ def _make_packed_webdataset(
     pipeline = build_packed_wds_pipeline(config, transform=transform)
     logger.info(
         "Packed WebDataset pipeline created (target_channels=%d)", effective_channels
+    )
+    return pipeline
+
+
+def _make_packed_channelvit_webdataset(
+    shard_spec: str,
+    transform: Optional[Callable] = None,
+    target_channels: Optional[int] = None,
+):
+    """Create a true ChannelViT pipeline for packed multi-channel shards.
+
+    ``target_channels`` is interpreted as the channel embedding table capacity
+    / maximum accepted channel id count.  ``sample_channels`` optionally caps
+    the number of real channels sampled per sample.  Samples with fewer
+    channels are kept with their actual channel count.
+    """
+    from .wds_pipeline import WdsConfig, build_packed_channelvit_wds_pipeline
+
+    sample_channels = None
+    if "::" in shard_spec:
+        shard_spec, opts_str = shard_spec.rsplit("::", 1)
+        for opt in [o.strip() for o in opts_str.split(",") if o.strip()]:
+            key, value = opt.split("=", 1)
+            if key == "sample_channels":
+                sample_channels = int(value)
+            else:
+                raise ValueError(f"Unknown packwds_chvit option: {key}")
+
+    raw_patterns = [s.strip() for s in shard_spec.split(";") if s.strip()]
+    shard_urls: List[str] = _expand_shard_patterns(raw_patterns)
+    if not shard_urls:
+        raise FileNotFoundError(
+            f"packwds_chvit: no tar shards found matching: {shard_spec}\n"
+            "Check that the output directory exists and the pattern is correct."
+        )
+
+    max_channels = target_channels or 8
+    if sample_channels is not None and sample_channels > max_channels:
+        raise ValueError(
+            f"packwds_chvit sample_channels ({sample_channels}) must be <= "
+            f"target_channels/student.in_chans ({max_channels})"
+        )
+
+    config = WdsConfig(
+        shard_urls=shard_urls,
+        shuffle_buffer=1000,
+        target_channels=max_channels,
+    )
+    pipeline = build_packed_channelvit_wds_pipeline(
+        config,
+        transform=transform,
+        sample_channels=sample_channels,
+    )
+    logger.info(
+        "Packed ChannelViT WebDataset pipeline created (max_channels=%d, sample_channels=%s)",
+        max_channels,
+        sample_channels if sample_channels is not None else "all-present",
     )
     return pipeline
 

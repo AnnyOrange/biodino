@@ -27,6 +27,7 @@ Usage:
     dataset = PanNukeDataset(fold_dirs, split_folds=[1,2], size=(256,256))
 """
 
+import bisect
 import logging
 import os
 from glob import glob
@@ -46,7 +47,21 @@ NUM_CLASSES = 6   # 0=bg, 1-5 = Neoplastic/Inflammatory/Connective/Dead/Epitheli
 CLASS_NAMES = ['background', 'neoplastic', 'inflammatory', 'connective', 'dead', 'epithelial']
 
 
-def _load_fold(fold_dir: str) -> Tuple[np.ndarray, np.ndarray]:
+def _find_fold_arrays(fold_dir: str) -> Tuple[str, str]:
+    """Return the images.npy and masks.npy paths under one PanNuke fold."""
+    import glob as _glob
+
+    img_npy = _glob.glob(os.path.join(fold_dir, '**', 'images.npy'), recursive=True)
+    mask_npy = _glob.glob(os.path.join(fold_dir, '**', 'masks.npy'), recursive=True)
+
+    if not img_npy:
+        raise FileNotFoundError(f"images.npy not found under {fold_dir}")
+    if not mask_npy:
+        raise FileNotFoundError(f"masks.npy not found under {fold_dir}")
+    return img_npy[0], mask_npy[0]
+
+
+def _load_fold(fold_dir: str, mmap: bool = True) -> Tuple[np.ndarray, np.ndarray]:
     """
     Load images.npy and masks.npy from a single fold directory.
 
@@ -55,18 +70,16 @@ def _load_fold(fold_dir: str) -> Tuple[np.ndarray, np.ndarray]:
         images : [N, 256, 256, 3] float32 in [0, 1]
         masks  : [N, 256, 256, 6] float32 (raw instance id arrays)
     """
-    import glob as _glob
+    img_path, mask_path = _find_fold_arrays(fold_dir)
+    mmap_mode = 'r' if mmap else None
+    images = np.load(img_path, mmap_mode=mmap_mode)  # [N, 256, 256, 3]
+    masks = np.load(mask_path, mmap_mode=mmap_mode)  # [N, 256, 256, 6]
 
-    img_npy  = _glob.glob(os.path.join(fold_dir, '**', 'images.npy'), recursive=True)
-    mask_npy = _glob.glob(os.path.join(fold_dir, '**', 'masks.npy'),  recursive=True)
+    if mmap:
+        return images, masks
 
-    if not img_npy:
-        raise FileNotFoundError(f"images.npy not found under {fold_dir}")
-    if not mask_npy:
-        raise FileNotFoundError(f"masks.npy not found under {fold_dir}")
-
-    images = np.load(img_npy[0]).astype(np.float32)  # [N, 256, 256, 3]
-    masks  = np.load(mask_npy[0]).astype(np.float32) # [N, 256, 256, 6]
+    images = images.astype(np.float32, copy=False)
+    masks = masks.astype(np.float32, copy=False)
 
     # Normalise images to [0, 1] if they appear to be in [0, 255]
     if images.max() > 1.5:
@@ -106,26 +119,38 @@ class PanNukeDataset(Dataset):
         if split_folds is None:
             split_folds = list(fold_dirs.keys())
 
-        all_images, all_masks = [], []
+        self._folds: List[Tuple[np.ndarray, np.ndarray]] = []
+        self._cum_lengths: List[int] = []
+        total = 0
         for fold_k in sorted(split_folds):
             if fold_k not in fold_dirs:
                 raise ValueError(f"Fold {fold_k} not in fold_dirs")
-            imgs, msks = _load_fold(fold_dirs[fold_k])
-            all_images.append(imgs)
-            all_masks.append(msks)
+            imgs, msks = _load_fold(fold_dirs[fold_k], mmap=True)
+            self._folds.append((imgs, msks))
+            total += len(imgs)
+            self._cum_lengths.append(total)
             logger.info(f"[PanNuke] Loaded fold {fold_k}: {len(imgs)} samples")
 
-        self.images = np.concatenate(all_images, axis=0)  # [N_total, 256, 256, 3]
-        self.masks = np.concatenate(all_masks, axis=0)  # [N_total, 256, 256, 6]
         self.size = size
         self.augment = augment
         self.do_normalize = do_normalize
         self.rgb_mean = torch.tensor(rgb_mean, dtype=torch.float32).view(3, 1, 1)
         self.rgb_std = torch.tensor(rgb_std, dtype=torch.float32).view(3, 1, 1)
-        logger.info(f"[PanNuke] Total samples: {len(self.images)}")
+        logger.info(f"[PanNuke] Total samples: {total} (memmap, no eager concat)")
 
     def __len__(self) -> int:
-        return len(self.images)
+        return self._cum_lengths[-1] if self._cum_lengths else 0
+
+    def _resolve_index(self, idx: int) -> Tuple[np.ndarray, np.ndarray, int]:
+        if idx < 0:
+            idx += len(self)
+        if idx < 0 or idx >= len(self):
+            raise IndexError(idx)
+        fold_idx = bisect.bisect_right(self._cum_lengths, idx)
+        prev = 0 if fold_idx == 0 else self._cum_lengths[fold_idx - 1]
+        local_idx = idx - prev
+        images, masks = self._folds[fold_idx]
+        return images, masks, local_idx
 
     def _masks_to_semantic_instance(self, mask6: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -155,8 +180,9 @@ class PanNukeDataset(Dataset):
         return semantic, instance
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        img = self.images[idx].copy().astype(np.float32, copy=False)
-        mask6 = self.masks[idx].copy()
+        images, masks, local_idx = self._resolve_index(idx)
+        img = np.asarray(images[local_idx]).astype(np.float32, copy=False)
+        mask6 = np.asarray(masks[local_idx])
         # Same contract as _load_fold: float storage may still be 0–255 scaled.
         if img.max() > 1.5:
             img = img / 255.0
@@ -194,12 +220,14 @@ class PanNukeDataset(Dataset):
 
     def get_instance_map(self, idx: int) -> np.ndarray:
         """Return unified instance map at native resolution."""
-        _, inst = self._masks_to_semantic_instance(self.masks[idx])
+        _, masks, local_idx = self._resolve_index(idx)
+        _, inst = self._masks_to_semantic_instance(np.asarray(masks[local_idx]))
         return inst
 
     def get_semantic_mask(self, idx: int) -> np.ndarray:
         """Return semantic class map at native resolution."""
-        sem, _ = self._masks_to_semantic_instance(self.masks[idx])
+        _, masks, local_idx = self._resolve_index(idx)
+        sem, _ = self._masks_to_semantic_instance(np.asarray(masks[local_idx]))
         return sem
 
 

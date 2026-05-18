@@ -36,14 +36,17 @@ Usage:
 """
 
 import argparse
+import gc
 import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
+import zipfile
 
 import numpy as np
 import torch
 import torch.nn as nn
+from numpy.lib import format as npy_format
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
@@ -86,10 +89,34 @@ logger = logging.getLogger('feature_extractor')
 # Feature extraction
 # ============================================================================
 
-def _align_input_channels(imgs: torch.Tensor, backbone: nn.Module) -> torch.Tensor:
-    """Pad/trim eval images to the channel count expected by the backbone."""
+def _prepare_input_channels(imgs: torch.Tensor, backbone: nn.Module) -> torch.Tensor:
+    """Match eval image channels to the backbone without padding ChannelViT inputs."""
     expected = int(getattr(backbone, "in_chans", imgs.shape[1]))
     current = int(imgs.shape[1])
+
+    if getattr(backbone, "enable_channelvit", False):
+        if not getattr(backbone, "_bioseg_channel_align_logged", False):
+            if current <= expected:
+                logger.info(
+                    "ChannelViT eval uses %s real input channel(s) with channel_embed capacity=%s; "
+                    "not padding missing channels.",
+                    current,
+                    expected,
+                )
+            else:
+                logger.info(
+                    "ChannelViT eval input has %s channel(s), exceeding channel_embed capacity=%s; "
+                    "trimming to the first %s channel(s).",
+                    current,
+                    expected,
+                    expected,
+                )
+            setattr(backbone, "_bioseg_channel_align_logged", True)
+
+        if current > expected:
+            return imgs[:, :expected]
+        return imgs
+
     if current == expected:
         return imgs
 
@@ -167,6 +194,7 @@ def extract_features(
     num_workers: int = 2,
     device:      torch.device = torch.device('cuda'),
     desc:        str = 'Extracting',
+    return_chunks: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Run the backbone over every sample in *dataset* and collect:
@@ -222,7 +250,7 @@ def extract_features(
             inst = torch.zeros_like(sem)
 
         imgs = imgs.to(device)   # [B, C, H, W]
-        imgs = _align_input_channels(imgs, backbone)
+        imgs = _prepare_input_channels(imgs, backbone)
 
         # -------------------------------------------------------------------
         # Backbone forward: extract intermediate spatial patch features.
@@ -249,6 +277,18 @@ def extract_features(
         all_sem.append(sem.numpy().astype(np.int16))   # semantic class map
         all_inst.append(inst.numpy().astype(np.int32)) # instance IDs (0 if unavailable)
 
+    if return_chunks:
+        n_samples = sum(x.shape[0] for x in all_feats)
+        logger.info(
+            "Extracted %d samples as %d cache chunks for %s: first feature chunk %s",
+            n_samples,
+            len(all_feats),
+            desc,
+            all_feats[0].shape if all_feats else None,
+        )
+        return all_feats, all_sem, all_inst
+
+    logger.info("Concatenating %d feature batches for %s", len(all_feats), desc)
     features  = np.concatenate(all_feats, axis=0)  # [N, D, H_p, W_p]
     sem_masks = np.concatenate(all_sem,   axis=0)  # [N, H, W]
     inst_maps = np.concatenate(all_inst,  axis=0)  # [N, H, W]
@@ -262,29 +302,188 @@ def extract_features(
 
 def save_cache(
     out_path: str,
-    features:  np.ndarray,
-    sem_masks: np.ndarray,
-    inst_maps: np.ndarray,
+    features:  Union[np.ndarray, List[np.ndarray]],
+    sem_masks: Union[np.ndarray, List[np.ndarray]],
+    inst_maps: Union[np.ndarray, List[np.ndarray]],
     patch_size: int,
     embed_dim:  int,
     n_layers:   int,
+    compressed: bool = True,
 ):
-    """Save pre-extracted features and labels to a compressed .npz file."""
-    orig_H, orig_W = sem_masks.shape[1], sem_masks.shape[2]
-    np.savez_compressed(
+    """Save pre-extracted features and labels to a .npz file."""
+    first_sem = sem_masks[0] if isinstance(sem_masks, list) else sem_masks
+    orig_H, orig_W = first_sem.shape[1], first_sem.shape[2]
+    save_fn = np.savez_compressed if compressed else np.savez
+    logger.info(
+        "Saving cache (%s) -> %s",
+        "compressed" if compressed else "uncompressed",
         out_path,
-        features   = features,
-        sem_masks  = sem_masks,
-        inst_maps  = inst_maps,
-        orig_H     = np.int32(orig_H),
-        orig_W     = np.int32(orig_W),
-        patch_size = np.int32(patch_size),
-        embed_dim  = np.int32(embed_dim),
-        n_layers   = np.int32(n_layers),
     )
+    metadata = {
+        'orig_H': np.int32(orig_H),
+        'orig_W': np.int32(orig_W),
+        'patch_size': np.int32(patch_size),
+        'embed_dim': np.int32(embed_dim),
+        'n_layers': np.int32(n_layers),
+    }
+    if isinstance(features, list):
+        arrays = {
+            'chunked': np.int8(1),
+            'num_chunks': np.int32(len(features)),
+            'num_samples': np.int32(sum(x.shape[0] for x in features)),
+            **metadata,
+        }
+        for i, (feat, sem, inst) in enumerate(zip(features, sem_masks, inst_maps)):
+            key = f"{i:04d}"
+            arrays[f'features_{key}'] = feat
+            arrays[f'sem_masks_{key}'] = sem
+            arrays[f'inst_maps_{key}'] = inst
+        save_fn(out_path, **arrays)
+    else:
+        save_fn(
+            out_path,
+            features   = features,
+            sem_masks  = sem_masks,
+            inst_maps  = inst_maps,
+            chunked    = np.int8(0),
+            **metadata,
+        )
     size_mb = os.path.getsize(out_path + '.npz') / 1024 / 1024 if os.path.exists(out_path + '.npz') \
               else os.path.getsize(out_path) / 1024 / 1024
     logger.info(f"Saved cache → {out_path}  ({size_mb:.1f} MB)")
+
+
+def _write_npz_array(zf: zipfile.ZipFile, key: str, array: np.ndarray) -> None:
+    """Write one .npy member into an open .npz zip without keeping all arrays in RAM."""
+    with zf.open(f"{key}.npy", "w", force_zip64=True) as handle:
+        npy_format.write_array(handle, np.asarray(array), allow_pickle=False)
+
+
+@torch.inference_mode()
+def extract_features_to_cache(
+    out_path: str,
+    backbone: nn.Module,
+    dataset: Dataset,
+    n_layers: Union[int, List[int]],
+    batch_size: int,
+    num_workers: int,
+    device: torch.device,
+    desc: str,
+    patch_size: int,
+    embed_dim: int,
+    n_layers_scalar: int,
+    compressed: bool = False,
+) -> None:
+    """
+    Streaming chunked cache writer.
+
+    The older chunked path still accumulated every batch in Python lists before
+    writing the .npz.  TissueNet/PanNuke runs can therefore use tens of GB per
+    process.  This path writes each batch directly as a separate .npy member in
+    the .npz archive, so peak RAM is roughly one batch plus model/dataset state.
+    """
+    backbone = backbone.to(device)
+    backbone.eval()
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+    )
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    tmp_path = f"{out_path}.tmp.{os.getpid()}"
+    compression = zipfile.ZIP_DEFLATED if compressed else zipfile.ZIP_STORED
+    num_chunks = 0
+    num_samples = 0
+    orig_H: Optional[int] = None
+    orig_W: Optional[int] = None
+
+    logger.info(
+        "Streaming chunked cache (%s) -> %s",
+        "compressed" if compressed else "uncompressed",
+        out_path,
+    )
+
+    try:
+        with zipfile.ZipFile(tmp_path, "w", compression=compression, allowZip64=True) as zf:
+            for batch in tqdm(loader, desc=desc):
+                if len(batch) == 3:
+                    imgs, sem, inst = batch
+                else:
+                    imgs, sem = batch
+                    inst = torch.zeros_like(sem)
+
+                imgs = imgs.to(device)
+                imgs = _prepare_input_channels(imgs, backbone)
+
+                with torch.autocast(device_type='cuda', enabled=True, dtype=torch.float16):
+                    if getattr(backbone, "enable_channelvit", False):
+                        feats_list = _channelvit_spatial_features(backbone, imgs, n_layers)
+                    else:
+                        feats_list = backbone.get_intermediate_layers(
+                            imgs,
+                            n=n_layers,
+                            reshape=True,
+                            return_class_token=False,
+                        )
+                    feats = torch.cat(feats_list, dim=1).float()
+
+                feat_np = feats.half().cpu().numpy()
+                sem_np = sem.numpy().astype(np.int16)
+                inst_np = inst.numpy().astype(np.int32)
+
+                if orig_H is None:
+                    orig_H, orig_W = int(sem_np.shape[1]), int(sem_np.shape[2])
+
+                key = f"{num_chunks:04d}"
+                _write_npz_array(zf, f"features_{key}", feat_np)
+                _write_npz_array(zf, f"sem_masks_{key}", sem_np)
+                _write_npz_array(zf, f"inst_maps_{key}", inst_np)
+                num_chunks += 1
+                num_samples += int(feat_np.shape[0])
+
+                del imgs, sem, inst, feats, feats_list, feat_np, sem_np, inst_np
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
+                if num_chunks % 50 == 0:
+                    gc.collect()
+
+            if orig_H is None:
+                orig_H = orig_W = 0
+
+            metadata = {
+                'chunked': np.int8(1),
+                'num_chunks': np.int32(num_chunks),
+                'num_samples': np.int32(num_samples),
+                'orig_H': np.int32(orig_H),
+                'orig_W': np.int32(orig_W),
+                'patch_size': np.int32(patch_size),
+                'embed_dim': np.int32(embed_dim),
+                'n_layers': np.int32(n_layers_scalar),
+            }
+            for key, value in metadata.items():
+                _write_npz_array(zf, key, value)
+
+        os.replace(tmp_path, out_path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+    size_mb = os.path.getsize(out_path) / 1024 / 1024
+    logger.info(
+        "Saved streaming cache -> %s  (%d samples, %d chunks, %.1f MB)",
+        out_path,
+        num_samples,
+        num_chunks,
+        size_mb,
+    )
 
 
 def load_cache(cache_path: str) -> Dict[str, object]:
@@ -453,6 +652,14 @@ def main():
     parser.add_argument('--batch-size', type=int, default=16,
                         help='Inference batch size (default: 8)')
     parser.add_argument('--num-workers',type=int, default=4)
+    parser.add_argument('--no-compress-cache', action='store_true',
+                        help='Save cache with np.savez instead of np.savez_compressed. '
+                             'This uses more disk but avoids very slow CPU compression '
+                             'for large multi-layer feature tensors.')
+    parser.add_argument('--chunked-cache', action='store_true',
+                        help='Save each extraction batch as a separate npz entry. '
+                             'This avoids a large final np.concatenate step and is '
+                             'recommended for multi-layer feature tensors.')
     args = parser.parse_args()
 
     # -----------------------------------------------------------------------
@@ -528,6 +735,32 @@ def main():
         freeze=True,
     )
 
+    # Save path includes layer strategy and img_size for clarity.
+    os.makedirs(args.output_dir, exist_ok=True)
+    out_path = os.path.join(
+        args.output_dir,
+        f"{args.dataset}_{args.split}_{cfg_tag}_{layers_tag}_s{img_size}.npz"
+    )
+    n_layers_scalar = (len(layers_to_extract) if isinstance(layers_to_extract, list)
+                       else layers_to_extract)
+
+    if args.chunked_cache:
+        extract_features_to_cache(
+            out_path,
+            backbone,
+            dataset,
+            n_layers=layers_to_extract,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            device=device,
+            desc=f'{args.dataset}/{args.split}',
+            patch_size=backbone.patch_size,
+            embed_dim=backbone.embed_dim,
+            n_layers_scalar=n_layers_scalar,
+            compressed=not args.no_compress_cache,
+        )
+        return
+
     # Extract
     features, sem_masks, inst_maps = extract_features(
         backbone, dataset,
@@ -536,21 +769,15 @@ def main():
         num_workers=args.num_workers,
         device=device,
         desc=f'{args.dataset}/{args.split}',
+        return_chunks=False,
     )
 
-    # Save — include layer strategy and img_size in filename for clarity
-    os.makedirs(args.output_dir, exist_ok=True)
-    out_path = os.path.join(
-        args.output_dir,
-        f"{args.dataset}_{args.split}_{cfg_tag}_{layers_tag}_s{img_size}.npz"
-    )
-    n_layers_scalar = (len(layers_to_extract) if isinstance(layers_to_extract, list)
-                       else layers_to_extract)
     save_cache(
         out_path, features, sem_masks, inst_maps,
         patch_size=backbone.patch_size,
         embed_dim=backbone.embed_dim,
         n_layers=n_layers_scalar,
+        compressed=not args.no_compress_cache,
     )
 
 

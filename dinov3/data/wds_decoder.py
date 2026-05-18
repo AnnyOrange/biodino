@@ -11,6 +11,7 @@ WebDataset 图像解码器模块。
 
 import io
 import logging
+import random
 from typing import Optional
 
 import numpy as np
@@ -250,6 +251,83 @@ def decode_packed_sample(
     return result
 
 
+def decode_packed_channelvit_sample(
+    sample: dict,
+    *,
+    max_channels: int,
+    sample_channels: Optional[int] = None,
+) -> Optional[dict[str, Tensor]]:
+    """Decode a packed sample for true ChannelViT training.
+
+    Unlike ``decode_packed_sample``, this function never pads missing channels
+    with zeros and never copies channels.  It samples a fixed-size subset from
+    the channels actually present in the sample, returning both the image tensor
+    and the corresponding 0-based channel ids.
+    """
+    import re
+
+    if max_channels <= 0:
+        raise ValueError(f"max_channels must be positive, got {max_channels}")
+    if sample_channels is not None and sample_channels <= 0:
+        raise ValueError(f"sample_channels must be positive, got {sample_channels}")
+    if sample_channels is not None and sample_channels > max_channels:
+        raise ValueError(
+            f"sample_channels ({sample_channels}) must be <= max_channels ({max_channels})"
+        )
+
+    ch_key_re = re.compile(r"^ch(\d+)\.tiff?$", re.IGNORECASE)
+    channel_bytes: dict[int, bytes] = {}
+    for key, value in sample.items():
+        m = ch_key_re.match(key)
+        if m and isinstance(value, (bytes, bytearray)):
+            ch_num = int(m.group(1))
+            if 1 <= ch_num <= max_channels:
+                channel_bytes[ch_num] = value
+
+    if not channel_bytes:
+        logger.debug(
+            "packed ChannelViT sample %s skipped: no channels present",
+            sample.get("__key__", "?"),
+        )
+        return None
+
+    available_channels = sorted(channel_bytes.keys())
+    if sample_channels is not None and len(available_channels) > sample_channels:
+        selected_channels = sorted(random.sample(available_channels, sample_channels))
+    else:
+        selected_channels = available_channels
+    decoded: list[Tensor] = []
+    channel_ids: list[int] = []
+    expected_hw: tuple[int, int] | None = None
+
+    for ch_num in selected_channels:
+        tensor = decode_tiff_bytes(channel_bytes[ch_num], target_channels=1)
+        if tensor is None:
+            logger.debug("packed ChannelViT sample: failed to decode ch%d", ch_num)
+            continue
+        _, h, w = tensor.shape
+        if expected_hw is None:
+            expected_hw = (h, w)
+        elif expected_hw != (h, w):
+            logger.warning(
+                "packed ChannelViT sample %s skipped: channel spatial mismatch %s vs %s",
+                sample.get("__key__", "?"),
+                expected_hw,
+                (h, w),
+            )
+            return None
+        decoded.append(tensor[0])
+        channel_ids.append(ch_num - 1)
+
+    if not decoded:
+        return None
+
+    return {
+        "image": torch.stack(decoded, dim=0).to(torch.float32),
+        "channel_ids": torch.tensor(channel_ids, dtype=torch.long),
+    }
+
+
 def create_tiff_decoder() -> callable:
     """
     创建用于 WebDataset 的 TIFF 解码器函数。
@@ -265,4 +343,3 @@ def create_tiff_decoder() -> callable:
         return decode_tiff_bytes(tiff_bytes)
 
     return decoder
-
