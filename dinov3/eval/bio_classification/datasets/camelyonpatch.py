@@ -28,7 +28,6 @@ import logging
 import os
 from typing import Callable, List, Optional
 
-import h5py
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -41,16 +40,28 @@ _SPLIT_META = {
     "train": ("train", "camelyonpatch_level_2_split_train_y.h5"),
     "valid": ("valid", "camelyonpatch_level_2_split_valid_y.h5"),
     "test":  ("test",  "camelyonpatch_level_2_split_test_y.h5"),
+    "val":   ("valid", "camelyonpatch_level_2_split_valid_y.h5"),
 }
 
 
-def _load_labels_from_h5(h5_path: str) -> np.ndarray:
-    """
-    从官方 PCam HDF5 标签文件读取 1-D 标签数组。
+def _load_labels(label_path: str) -> np.ndarray:
+    """Load labels from official PCam HDF5, with .npy fallback for smoke tests."""
+    if label_path.endswith(".npy"):
+        return np.load(label_path).reshape(-1).astype(np.int64)
 
-    HDF5 内 key='y'，shape=(N, 1, 1, 1)，压缩为 (N,) int64 返回。
-    """
-    with h5py.File(h5_path, "r") as f:
+    try:
+        import h5py  # type: ignore
+    except ImportError as exc:
+        npy_fallback = os.path.splitext(label_path)[0] + ".npy"
+        if os.path.isfile(npy_fallback):
+            logger.warning("h5py is missing; using label fallback %s", npy_fallback)
+            return np.load(npy_fallback).reshape(-1).astype(np.int64)
+        raise ImportError(
+            "CamelyonPatch official labels are HDF5 files. Please install h5py, "
+            "or provide a .npy label file with the same basename for local smoke tests."
+        ) from exc
+
+    with h5py.File(label_path, "r") as f:
         labels = f["y"][:].reshape(-1).astype(np.int64)
     return labels
 
@@ -78,7 +89,7 @@ class CamelyonPatchDataset(Dataset):
 
     Args:
         root:        数据集根目录，包含 train/valid/test 三个子目录。
-        split:       数据集划分，可选 "train" | "valid" | "test"。
+        split:       数据集划分，可选 "train" | "valid"/"val" | "test"。
         transform:   图像变换（接受 numpy HWC float32 或 PIL Image，
                      建议直接使用 dinov3 的 make_classification_eval_transform）。
         target_channels: 读取图像时的目标通道数，默认 3（RGB）。
@@ -108,14 +119,18 @@ class CamelyonPatchDataset(Dataset):
 
         subdir_name, label_filename = _SPLIT_META[split]
         split_dir = os.path.join(root, subdir_name)
-        h5_path = os.path.join(split_dir, label_filename)
+        label_path = os.path.join(split_dir, label_filename)
+        if not os.path.isfile(label_path):
+            npy_fallback = os.path.splitext(label_path)[0] + ".npy"
+            if os.path.isfile(npy_fallback):
+                label_path = npy_fallback
 
         if not os.path.isdir(split_dir):
             raise FileNotFoundError(f"数据目录不存在：{split_dir}")
-        if not os.path.isfile(h5_path):
-            raise FileNotFoundError(f"标签文件不存在：{h5_path}")
+        if not os.path.isfile(label_path):
+            raise FileNotFoundError(f"标签文件不存在：{label_path}")
 
-        self._labels: np.ndarray = _load_labels_from_h5(h5_path)
+        self._labels: np.ndarray = _load_labels(label_path)
         n = len(self._labels)
         self._img_paths: List[str] = _collect_image_paths(split_dir, subdir_name, n)
 
