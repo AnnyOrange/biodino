@@ -26,43 +26,12 @@ mamba create -n dinov3 python=3.11 -y
 conda activate dinov3
 ```
 
-Install PyTorch for your CUDA/driver environment. Do not hard-code the CUDA
-version from another machine; use the command recommended by your cluster or
-the PyTorch website. For example:
-
-```bash
-# Example only. Replace with the correct CUDA build for your machine.
-pip install torch torchvision
-```
-
 Install the repository and Python dependencies:
 
 ```bash
 cd /mnt/huawei_deepcad/dinov3
 pip install -e .
 pip install -r requirement.txt
-```
-
-Check important packages:
-
-```bash
-python - <<'PY'
-mods = [
-    "torch", "torchvision", "webdataset", "omegaconf",
-    "h5py", "pycocotools", "cv2", "tifffile",
-    "sklearn", "pandas", "scipy", "PIL", "yaml",
-]
-missing = []
-for m in mods:
-    try:
-        mod = __import__(m)
-        print("OK", m, getattr(mod, "__version__", "unknown"))
-    except Exception as e:
-        print("MISSING", m, e)
-        missing.append(m)
-if missing:
-    raise SystemExit("Missing packages: " + ", ".join(missing))
-PY
 ```
 
 ## 2. Training Script
@@ -82,7 +51,6 @@ student.enable_channelvit=false
 teacher.enable_channelvit=false
 ```
 
-So it is an RGB baseline, not ChannelViT.
 
 ### 2.1 Single-Node Training
 
@@ -382,57 +350,4 @@ bash scripts/run_bio_benchmark_all.sh \
   /mnt/huawei_deepcad/benchmark
 ```
 
-## 5. Troubleshooting
-
-### Missing packages
-
-Run:
-
-```bash
-pip install -r requirement.txt
-```
-
-If LIVECell or PCam-related code complains about missing packages:
-
-```bash
-pip install h5py pycocotools
-```
-
-### Multi-node cannot connect
-
-Check:
-
-```bash
-echo $MASTER_ADDR
-echo $MASTER_PORT
-```
-
-Make sure every node can reach `MASTER_ADDR:MASTER_PORT`, and every node uses
-the same `NNODES`, `MASTER_ADDR`, `MASTER_PORT`, `DATASET_PATH`, and
-`OUTPUT_DIR`.
-
-### OOM during ViT-7B training
-
-Reduce:
-
-```bash
-BATCH_SIZE_PER_GPU=4
-```
-
-or keep small per-GPU batch and increase accumulation:
-
-```bash
-BATCH_SIZE_PER_GPU=4
-GRAD_ACCUM_STEPS=4
-```
-
-### Eval is too slow
-
-For quick screening:
-
-```bash
-SMOKE=1
-```
-
-For final numbers, do not use `SMOKE=1`.
 
