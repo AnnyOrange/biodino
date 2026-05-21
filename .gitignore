@@ -40,3 +40,4 @@ run_one_dataset_ckpts_b.sh
 run_one_dataset_ckpts_b1.sh
 run_one_dataset_ckpts_s.sh
 run_one_dataset_ckpts.sh
+BIO_TRAIN_TEST_GUIDE.md
