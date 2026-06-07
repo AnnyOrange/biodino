@@ -22,6 +22,7 @@ logger = logging.getLogger("bio_seg.run_linear_probe_pipeline")
 
 SUPPORTED_DATASETS = (
     "bbbc038",
+    "cellpose",
     "conic",
     "livecell",
     "monuseg",
@@ -31,6 +32,7 @@ SUPPORTED_DATASETS = (
 
 DEFAULT_IMG_SIZE_BY_DATASET = {
     "bbbc038": 512,
+    "cellpose": 512,
     "conic": 256,
     "livecell": 512,
     "monuseg": 512,
@@ -66,6 +68,12 @@ def _discover_checkpoints(checkpoints_dir: Path) -> Dict[int, Path]:
         ckpt_file = child / "checkpoint.pth"
         if ckpt_file.is_file():
             found[int(child.name)] = ckpt_file
+            continue
+        # Some newer DINOv3 runs are saved as torch.distributed.checkpoint
+        # directories.  The bio-segmentation loader can read these directories
+        # directly, so pass the checkpoint directory through as the checkpoint.
+        if (child / ".metadata").is_file():
+            found[int(child.name)] = child
     return dict(sorted(found.items()))
 
 
@@ -117,6 +125,16 @@ def _select_checkpoint_iters(
 def _resolve_data_root(data_root_base: Path, dataset: str) -> Path:
     if dataset == "livecell":
         return data_root_base / "LIVECell"
+    if dataset == "cellpose":
+        candidates = [
+            data_root_base / "Cellpose",
+            data_root_base / "cellpose",
+            data_root_base / "cellpose" / "extracted",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
     return data_root_base / dataset / "extracted"
 
 
@@ -266,7 +284,7 @@ def main() -> None:
         "--data-root-base",
         default="/mnt/huawei_deepcad/benchmark/segmentation",
         help="Dataset base root. Non-livecell uses <base>/<dataset>/extracted; "
-             "livecell uses <base>/LIVECell",
+             "livecell uses <base>/LIVECell; cellpose uses <base>/Cellpose if present",
     )
 
     # Optional extraction step
