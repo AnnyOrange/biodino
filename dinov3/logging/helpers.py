@@ -6,6 +6,7 @@
 import datetime
 import json
 import logging
+import os
 import time
 from collections import defaultdict, deque
 
@@ -14,6 +15,59 @@ import torch
 import dinov3.distributed as distributed
 
 logger = logging.getLogger("dinov3")
+
+
+def _read_rss_kb(pid):
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError):
+        return 0
+    return 0
+
+
+def _process_tree_rss_detail_gb(root_pid=None):
+    """Best-effort Linux RSS split for trainer and DataLoader workers."""
+    root_pid = os.getpid() if root_pid is None else root_pid
+    try:
+        proc_pids = [int(p) for p in os.listdir("/proc") if p.isdigit()]
+    except FileNotFoundError:
+        return 0.0, 0.0, 0
+
+    children_by_ppid = defaultdict(list)
+    for pid in proc_pids:
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                stat = f.read()
+            ppid = int(stat.rsplit(")", 1)[1].split()[1])
+        except (FileNotFoundError, ProcessLookupError, PermissionError, IndexError, ValueError):
+            continue
+        children_by_ppid[ppid].append(pid)
+
+    root_kb = _read_rss_kb(root_pid)
+    child_kb = 0
+    child_count = 0
+    stack = [root_pid]
+    seen = set()
+    while stack:
+        pid = stack.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        children = children_by_ppid.get(pid, ())
+        for child in children:
+            child_count += 1
+            child_kb += _read_rss_kb(child)
+            stack.append(child)
+    kb_to_gb = 1.0 / (1024.0 * 1024.0)
+    return root_kb * kb_to_gb, child_kb * kb_to_gb, child_count
+
+
+def _process_tree_rss_gb(root_pid=None):
+    root_gb, child_gb, _ = _process_tree_rss_detail_gb(root_pid)
+    return root_gb + child_gb
 
 
 class MetricLogger(object):
@@ -52,10 +106,15 @@ class MetricLogger(object):
     def dump_in_output_file(self, iteration, iter_time, data_time):
         if self.output_file is None or not distributed.is_main_process():
             return
+        rss_root_gb, rss_child_gb, rss_child_count = _process_tree_rss_detail_gb()
         dict_to_dump = dict(
             iteration=iteration,
             iter_time=iter_time,
             data_time=data_time,
+            rss_gb=rss_root_gb + rss_child_gb,
+            rss_root_gb=rss_root_gb,
+            rss_child_gb=rss_child_gb,
+            rss_child_count=rss_child_count,
         )
         dict_to_dump.update({k: v.median for k, v in self.meters.items()})
         with open(self.output_file, "a") as f:
@@ -83,6 +142,8 @@ class MetricLogger(object):
             "{meters}",
             "time: {time}",
             "data: {data}",
+            "rss: {rss_memory:.1f}G",
+            "(main: {rss_main:.1f}G workers: {rss_workers:.1f}G/{rss_worker_count})",
         ]
         if torch.cuda.is_available():
             log_list += ["mem: {current_memory:.0f}"]
@@ -101,6 +162,8 @@ class MetricLogger(object):
                 self.dump_in_output_file(iteration=i, iter_time=iter_time.avg, data_time=data_time.avg)
                 eta_seconds = iter_time.global_avg * (n_iterations - i)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+                rss_main, rss_workers, rss_worker_count = _process_tree_rss_detail_gb()
+                rss_memory = rss_main + rss_workers
                 if torch.cuda.is_available():
                     logger.info(
                         log_msg.format(
@@ -110,6 +173,10 @@ class MetricLogger(object):
                             meters=str(self),
                             time=str(iter_time),
                             data=str(data_time),
+                            rss_memory=rss_memory,
+                            rss_main=rss_main,
+                            rss_workers=rss_workers,
+                            rss_worker_count=rss_worker_count,
                             current_memory=torch.cuda.memory_allocated() / MB,
                             max_memory=torch.cuda.max_memory_allocated() / MB,
                         )
@@ -123,6 +190,10 @@ class MetricLogger(object):
                             meters=str(self),
                             time=str(iter_time),
                             data=str(data_time),
+                            rss_memory=rss_memory,
+                            rss_main=rss_main,
+                            rss_workers=rss_workers,
+                            rss_worker_count=rss_worker_count,
                         )
                     )
             i += 1

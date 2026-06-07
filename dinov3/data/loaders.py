@@ -86,18 +86,13 @@ def make_dataset(
     target_transform: Optional[Callable] = None,
     transforms: Optional[Callable] = None,
     target_channels: Optional[int] = None,
-    s3_cache_root: Optional[str] = None,
-    aws_profile: Optional[str] = None,
-    aws_region: Optional[str] = None,
+    wds_shuffle_buffer: int = 1000,
 ):
     """
     Creates a dataset with the specified parameters.
 
     Prefix-based routing (resolved once at init, not on the hot path):
         - no prefix          → DINOv3 native dataset (ImageNet:split=TRAIN …)
-        - ``wds:``           → local WebDataset shards (supports ``;`` for
-                               multiple shard patterns, e.g.
-                               ``wds:/data/ch1/train-{...}.tar;/data/ch2/train-{...}.tar``)
         - ``packwds:``       → packed multi-channel shards from ``data/repackage``.
                                Each sample bundles all channels (``ch1.tif`` …
                                ``chN.tif``) in one tar entry; missing channels
@@ -110,14 +105,10 @@ def make_dataset(
                                channel ids; no dataset-level zero padding/copying.
                                Optional suffix: ``::sample_channels=K`` caps
                                the number of sampled channels per sample.
-        - ``multiwds:``      → multi-channel WebDataset: parallel streams from
-                               multiple channel directories are zipped into a
-                               single N-channel tensor per sample.  Pattern
-                               uses ``{ch}`` as channel placeholder, e.g.
-                               ``multiwds:/data/{ch}/train-{000000..000128}.tar::ch1,ch2,...,ch8``
-        - ``s3wds:``         → S3 streaming WebDataset (pipe:aws s3 cp …)
-        - ``cachewds:``      → download S3 shards to *s3_cache_root*, then
-                               read as local WebDataset
+        - ``packwds_robust:`` → like ``packwds:`` but per-channel percentile
+                               normalization + single-channel replication
+                               (grayscale → replicated, not zero-filled).
+                               Optional suffix ``::pct=low,high`` (default 1,99).
 
     Args:
         dataset_str: Dataset descriptor string.
@@ -125,52 +116,34 @@ def make_dataset(
         target_transform: Target transform.
         transforms: Joint image+target transform.
         target_channels: Align decoded samples to this channel count (WebDataset only).
-        s3_cache_root: Local cache directory for ``cachewds:`` mode.
-        aws_profile: AWS CLI profile name for S3 modes (optional).
-        aws_region: AWS region for S3 modes (optional).
 
     Returns:
         The created dataset.
     """
     logger.info(f'using dataset: "{dataset_str}"')
 
+    if dataset_str.startswith("packwds_robust:"):
+        return _make_packed_robust_webdataset(
+            dataset_str[len("packwds_robust:") :],
+            transform,
+            target_channels=target_channels,
+            shuffle_buffer=wds_shuffle_buffer,
+        )
+
     if dataset_str.startswith("packwds_chvit:"):
         return _make_packed_channelvit_webdataset(
             dataset_str[len("packwds_chvit:") :],
             transform,
             target_channels=target_channels,
+            shuffle_buffer=wds_shuffle_buffer,
         )
 
     if dataset_str.startswith("packwds:"):
         return _make_packed_webdataset(
-            dataset_str[8:], transform, target_channels=target_channels
-        )
-
-    if dataset_str.startswith("multiwds:"):
-        return _make_multichannel_webdataset(dataset_str[9:], transform)
-
-    if dataset_str.startswith("wds:"):
-        shard_spec = dataset_str[4:]
-        if ";" in shard_spec:
-            shard_patterns = [s.strip() for s in shard_spec.split(";") if s.strip()]
-            return _make_webdataset(shard_patterns, transform, target_channels=target_channels)
-        return _make_webdataset(shard_spec, transform, target_channels=target_channels)
-
-    if dataset_str.startswith("s3wds:"):
-        return _make_s3_stream_webdataset(
-            dataset_str[6:], transform,
+            dataset_str[8:],
+            transform,
             target_channels=target_channels,
-            aws_profile=aws_profile,
-            aws_region=aws_region,
-        )
-
-    if dataset_str.startswith("cachewds:"):
-        return _make_s3_cache_webdataset(
-            dataset_str[9:], transform,
-            target_channels=target_channels,
-            cache_root=s3_cache_root,
-            aws_profile=aws_profile,
-            aws_region=aws_region,
+            shuffle_buffer=wds_shuffle_buffer,
         )
 
     # DINOv3 native dataset path
@@ -193,6 +166,7 @@ def _make_packed_webdataset(
     shard_spec: str,
     transform: Optional[Callable] = None,
     target_channels: Optional[int] = None,
+    shuffle_buffer: int = 1000,
 ):
     """Create a pipeline for packed multi-channel shards (``packwds:`` prefix).
 
@@ -238,7 +212,7 @@ def _make_packed_webdataset(
     effective_channels = target_channels or 8
     config = WdsConfig(
         shard_urls=shard_urls,
-        shuffle_buffer=1000,
+        shuffle_buffer=shuffle_buffer,
         target_channels=effective_channels,
     )
     pipeline = build_packed_wds_pipeline(config, transform=transform)
@@ -252,6 +226,7 @@ def _make_packed_channelvit_webdataset(
     shard_spec: str,
     transform: Optional[Callable] = None,
     target_channels: Optional[int] = None,
+    shuffle_buffer: int = 1000,
 ):
     """Create a true ChannelViT pipeline for packed multi-channel shards.
 
@@ -289,7 +264,7 @@ def _make_packed_channelvit_webdataset(
 
     config = WdsConfig(
         shard_urls=shard_urls,
-        shuffle_buffer=1000,
+        shuffle_buffer=shuffle_buffer,
         target_channels=max_channels,
     )
     pipeline = build_packed_channelvit_wds_pipeline(
@@ -301,6 +276,69 @@ def _make_packed_channelvit_webdataset(
         "Packed ChannelViT WebDataset pipeline created (max_channels=%d, sample_channels=%s)",
         max_channels,
         sample_channels if sample_channels is not None else "all-present",
+    )
+    return pipeline
+
+
+def _make_packed_robust_webdataset(
+    shard_spec: str,
+    transform: Optional[Callable] = None,
+    target_channels: Optional[int] = None,
+    shuffle_buffer: int = 1000,
+):
+    """Create a pipeline for packed shards with robust per-channel normalization
+    (``packwds_robust:`` prefix).
+
+    Same packed shards as ``packwds:`` but each channel is percentile-clipped
+    and rescaled to [0, 1], and single-channel samples are replicated across
+    ``target_channels`` instead of zero-filled.  Optional suffix
+    ``::pct=low,high`` sets the clip percentiles (default ``1,99``).
+
+    The original ``packwds:`` path (:func:`_make_packed_webdataset`) is unchanged.
+    """
+    from .wds_pipeline import WdsConfig, build_packed_robust_wds_pipeline
+
+    p_low, p_high = 1.0, 99.0
+    if "::" in shard_spec:
+        shard_spec, opts_str = shard_spec.rsplit("::", 1)
+        opts_str = opts_str.strip()
+        if opts_str.startswith("pct="):
+            vals = [v.strip() for v in opts_str[len("pct=") :].split(",")]
+            if len(vals) != 2:
+                raise ValueError(
+                    f"packwds_robust: ::pct expects 'pct=low,high', got: {opts_str}"
+                )
+            p_low, p_high = float(vals[0]), float(vals[1])
+        elif opts_str:
+            raise ValueError(f"Unknown packwds_robust option: {opts_str}")
+
+    if not (0.0 <= p_low < p_high <= 100.0):
+        raise ValueError(
+            f"packwds_robust: pct must satisfy 0 <= low < high <= 100, got {p_low},{p_high}"
+        )
+
+    raw_patterns = [s.strip() for s in shard_spec.split(";") if s.strip()]
+    shard_urls: List[str] = _expand_shard_patterns(raw_patterns)
+    if not shard_urls:
+        raise FileNotFoundError(
+            f"packwds_robust: no tar shards found matching: {shard_spec}\n"
+            "Check that the output directory exists and the pattern is correct."
+        )
+
+    effective_channels = target_channels or 8
+    config = WdsConfig(
+        shard_urls=shard_urls,
+        shuffle_buffer=shuffle_buffer,
+        target_channels=effective_channels,
+    )
+    pipeline = build_packed_robust_wds_pipeline(
+        config, transform=transform, p_low=p_low, p_high=p_high
+    )
+    logger.info(
+        "Packed ROBUST WebDataset pipeline created (target_channels=%d, pct=[%s,%s])",
+        effective_channels,
+        p_low,
+        p_high,
     )
     return pipeline
 
@@ -339,131 +377,6 @@ def _expand_shard_patterns(patterns: List[str]) -> List[str]:
             seen.add(path)
             unique.append(path)
     return unique
-
-
-def _make_webdataset(
-    shard_urls: Union[str, List[str]],
-    transform: Optional[Callable] = None,
-    target_channels: Optional[int] = None,
-):
-    """Create a WebDataset pipeline from local shards or pre-resolved URL list.
-
-    Args:
-        shard_urls: Brace pattern string, explicit list of URLs, or list of
-            brace pattern strings (all patterns are expanded and merged).
-        transform: Image transform.
-        target_channels: Align decoded samples to this channel count.
-
-    Returns:
-        WebDataset IterableDataset pipeline.
-    """
-    from .wds_pipeline import WdsConfig, build_wds_pipeline
-
-    if isinstance(shard_urls, list):
-        from braceexpand import braceexpand
-        expanded = []
-        for pattern in shard_urls:
-            expanded.extend(braceexpand(pattern))
-        logger.info(
-            f"creating WebDataset from {len(shard_urls)} patterns "
-            f"→ {len(expanded)} total shards"
-        )
-        shard_urls = expanded
-    else:
-        logger.info(f"creating WebDataset from: {shard_urls}")
-
-    config = WdsConfig(
-        shard_urls=shard_urls,
-        shuffle_buffer=1000,
-        target_channels=target_channels,
-    )
-    pipeline = build_wds_pipeline(config, transform=transform)
-
-    logger.info("WebDataset pipeline created (infinite streaming)")
-    return pipeline
-
-
-def _make_multichannel_webdataset(
-    spec: str,
-    transform: Optional[Callable] = None,
-):
-    """Create a multi-channel WebDataset by zipping parallel per-channel streams.
-
-    The spec format is ``<pattern>::<ch1>,<ch2>,...,<chN>`` where ``{ch}``
-    in *pattern* is replaced with each channel name.  For example::
-
-        /data/{ch}/train-{000000..000128}.tar::ch1,ch2,ch3,ch4,ch5,ch6,ch7,ch8
-
-    Each per-channel stream independently decodes single-channel images.
-    Samples from all streams are zipped together (round-robin), producing an
-    N-channel tensor per output sample.
-
-    Note: because each channel's shards are shuffled independently, the
-    paired channels in one output sample do NOT necessarily correspond to the
-    same physical specimen.  For self-supervised pretraining (DINO/iBOT) this
-    is acceptable — the model learns per-channel representations regardless.
-    """
-    from .wds_pipeline import build_multichannel_wds_pipeline
-
-    if "::" not in spec:
-        raise ValueError(
-            "multiwds: spec must be '<pattern>::<ch1>,<ch2>,...' "
-            f"but got: {spec}"
-        )
-    pattern, channels_str = spec.rsplit("::", 1)
-    channel_names = [c.strip() for c in channels_str.split(",") if c.strip()]
-    if not channel_names:
-        raise ValueError(f"multiwds: no channel names after '::' in: {spec}")
-
-    shard_patterns = [pattern.replace("{ch}", ch) for ch in channel_names]
-    logger.info(
-        f"creating multi-channel WebDataset: {len(channel_names)} channels "
-        f"({', '.join(channel_names)})"
-    )
-    pipeline = build_multichannel_wds_pipeline(
-        shard_patterns=shard_patterns,
-        channel_names=channel_names,
-        transform=transform,
-    )
-    logger.info("multi-channel WebDataset pipeline created (infinite streaming)")
-    return pipeline
-
-
-def _make_s3_stream_webdataset(
-    s3_shard_pattern: str,
-    transform: Optional[Callable] = None,
-    target_channels: Optional[int] = None,
-    aws_profile: Optional[str] = None,
-    aws_region: Optional[str] = None,
-):
-    """S3 streaming mode: expand pattern → pipe:aws s3 cp URLs → WebDataset."""
-    from .s3_utils import resolve_s3_stream_urls
-
-    pipe_urls = resolve_s3_stream_urls(s3_shard_pattern, profile=aws_profile, region=aws_region)
-    return _make_webdataset(pipe_urls, transform, target_channels=target_channels)
-
-
-def _make_s3_cache_webdataset(
-    s3_shard_pattern: str,
-    transform: Optional[Callable] = None,
-    target_channels: Optional[int] = None,
-    cache_root: Optional[str] = None,
-    aws_profile: Optional[str] = None,
-    aws_region: Optional[str] = None,
-):
-    """S3 cache mode: download shards to *cache_root*, then read locally."""
-    from .s3_utils import sync_s3_to_cache
-
-    if not cache_root:
-        raise ValueError(
-            "cachewds: mode requires 'train.s3_cache_root' in config — "
-            "set it to a local directory for shard caching"
-        )
-
-    local_paths = sync_s3_to_cache(
-        s3_shard_pattern, cache_root, profile=aws_profile, region=aws_region,
-    )
-    return _make_webdataset(local_paths, transform, target_channels=target_channels)
 
 
 def _make_sampler(
@@ -543,6 +456,8 @@ def make_data_loader(
     sampler_advance: int = 0,
     drop_last: bool = True,
     persistent_workers: bool = False,
+    pin_memory: bool = True,
+    prefetch_factor: Optional[int] = None,
     collate_fn: Optional[Callable[[List[T]], Any]] = None,
     worker_init_fn: Optional[Callable[[List[T]], Any]] = None,
 ):
@@ -571,6 +486,8 @@ def make_data_loader(
             num_workers=num_workers,
             drop_last=drop_last,
             persistent_workers=persistent_workers,
+            pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
             collate_fn=collate_fn,
             worker_init_fn=worker_init_fn,
         )
@@ -585,17 +502,19 @@ def make_data_loader(
     )
 
     logger.info("using PyTorch data loader")
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
+    loader_kwargs = dict(
         sampler=sampler,
         batch_size=batch_size,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
         drop_last=drop_last,
         persistent_workers=persistent_workers,
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn,
     )
+    if prefetch_factor is not None and num_workers > 0:
+        loader_kwargs["prefetch_factor"] = int(prefetch_factor)
+    data_loader = torch.utils.data.DataLoader(dataset, **loader_kwargs)
 
     try:
         logger.info(f"# of batches: {len(data_loader):,d}")
@@ -611,6 +530,8 @@ def _make_webdataset_loader(
     num_workers: int,
     drop_last: bool = True,
     persistent_workers: bool = False,
+    pin_memory: bool = True,
+    prefetch_factor: Optional[int] = None,
     collate_fn: Optional[Callable] = None,
     worker_init_fn: Optional[Callable] = None,
 ) -> torch.utils.data.DataLoader:
@@ -634,18 +555,20 @@ def _make_webdataset_loader(
     logger.info("using WebDataset (IterableDataset) data loader")
     logger.info("sampler: none (WebDataset handles shuffling internally)")
 
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
+    loader_kwargs = dict(
         sampler=None,  # WebDataset 不使用 Sampler
         shuffle=False,  # 强制关闭，shuffle 由 WebDataset 内部处理
         batch_size=batch_size,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
         drop_last=drop_last,
         persistent_workers=persistent_workers and num_workers > 0,
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn,
     )
+    if prefetch_factor is not None and num_workers > 0:
+        loader_kwargs["prefetch_factor"] = int(prefetch_factor)
+    data_loader = torch.utils.data.DataLoader(dataset, **loader_kwargs)
 
     logger.info("WebDataset DataLoader created (dataset controls finiteness/infinite streaming)")
     return data_loader

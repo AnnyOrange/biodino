@@ -30,9 +30,21 @@ def collate_data_and_cast(
     random_circular_shift=False,
     local_batch_size=None,
 ):
+    def _format_sample_key(sample):
+        key = str(sample.get("__key__", ""))
+        url = str(sample.get("__url__", ""))
+        shard = url.rsplit("/", 1)[-1] if url else ""
+        return f"{shard}::{key}" if shard else key
+
     n_global_crops = len(samples_list[0][0]["global_crops"])
     n_local_crops = len(samples_list[0][0]["local_crops"])
     has_channel_ids = "channel_ids" in samples_list[0][0]
+    sample_keys = [_format_sample_key(s[0]) for s in samples_list]
+    sample_channel_ids = (
+        [s[0]["channel_ids"].detach().cpu().tolist() for s in samples_list]
+        if has_channel_ids
+        else None
+    )
     max_sample_channels = (
         max(int(s[0]["channel_ids"].shape[0]) for s in samples_list)
         if has_channel_ids
@@ -157,7 +169,10 @@ def collate_data_and_cast(
         "masks_weight": masks_weight,
         "upperbound": upperbound,
         "n_masked_patches": torch.full((1,), fill_value=mask_indices_list.shape[0], dtype=torch.long),
+        "sample_keys": sample_keys,
     }
+    if sample_channel_ids is not None:
+        out["sample_channel_ids"] = sample_channel_ids
     if collated_gram_teacher_crops is not None:
         out["collated_gram_teacher_crops"] = collated_gram_teacher_crops.to(dtype)
     if collated_global_channel_ids is not None:
@@ -244,6 +259,10 @@ def get_batch_subset(collated_data_batch, divide_by):
 
     if "global_batch_size" in collated_data_batch.keys():
         new_batch["global_batch_size"] = collated_data_batch["global_batch_size"] // divide_by
+    if "sample_keys" in collated_data_batch:
+        new_batch["sample_keys"] = collated_data_batch["sample_keys"][:target_bs]
+    if "sample_channel_ids" in collated_data_batch:
+        new_batch["sample_channel_ids"] = collated_data_batch["sample_channel_ids"][:target_bs]
     if collated_global_channel_ids is not None:
         new_batch["collated_global_channel_ids"] = collated_global_channel_ids
         new_batch["collated_local_channel_ids"] = collated_local_channel_ids

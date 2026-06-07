@@ -1,7 +1,7 @@
 # ViT-B/16：不接 ChannelViT，3 通道；有效全局 batch 1024（32/GPU×8×accum 4）。
 
 train:
-  dataset_path: "packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000999}.tar"
+  dataset_path: "packwds:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar"
   batch_size_per_gpu: 32
   num_workers: 10
   OFFICIAL_EPOCH_LENGTH: 1025
