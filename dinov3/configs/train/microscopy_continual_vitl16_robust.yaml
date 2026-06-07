@@ -1,0 +1,65 @@
+# ViT-L/16 RGB robust-norm ablation.
+# 与 microscopy_continual_vitl16.yaml 的唯一区别：
+#   (1) 数据走 packwds_robust:（per-channel 百分位归一化 + 单通道复制）
+#   (2) rgb_mean/std 用配套重算的 robust 统计
+#   (3) gradient_accumulation_steps=8 → 4 卡 × 32/GPU × 8 = global batch 1024
+# 其它超参与 L 基线全同 → 与原 packwds: run 做干净 A/B（看 monuseg/pannuke AJI/bPQ）。
+# robust rgb_mean/std 由 scripts/compute_packed_rgb_stats_train_tensor.py --robust --pct-low 1 --pct-high 99 算出。
+
+train:
+  dataset_path: "packwds_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar::pct=1,99"
+  batch_size_per_gpu: 32
+  num_workers: 10
+  OFFICIAL_EPOCH_LENGTH: 1025
+  output_dir: ./outputs/bio_continue_vitl16_robust
+  compile: false
+
+student:
+  arch: vit_large
+  patch_size: 16
+  ffn_layer: mlp
+  ffn_ratio: 4.0
+  drop_path_rate: 0.25
+  in_chans: 3
+  enable_channelvit: false
+  n_storage_tokens: 4
+  mask_k_bias: true
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+
+teacher:
+  in_chans: 3
+  enable_channelvit: false
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+
+optim:
+  epochs: 15
+  optimizer: adamw
+  lr: 1.0e-4
+  min_lr: 1.0e-6
+  warmup_epochs: 3
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 8   # 4 卡 × 32 × 8 = global 1024（L 基线是 8 卡 × 32 × accum 4）
+
+crops:
+  # robust per-channel [0,1] 归一化后的统计（≠ 原 ÷65535 分布的 mean/std）。
+  rgb_mean:
+    - 0.514666
+    - 0.488834
+    - 0.498267
+  rgb_std:
+    - 0.338707
+    - 0.339202
+    - 0.336091
+
+evaluation:
+  eval_period_iterations: 2050
+
+checkpointing:
+  period: 1025
+  max_to_keep: 15

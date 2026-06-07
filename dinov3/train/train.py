@@ -49,6 +49,70 @@ torch.backends.cudnn.benchmark = False  # True
 logger = logging.getLogger("dinov3")
 
 
+def _summarize_nan_tensor(name, tensor, sample_keys=None, max_extreme=8):
+    if not torch.is_tensor(tensor):
+        return f"{name}: not a tensor"
+
+    with torch.no_grad():
+        t = tensor.detach()
+        finite = torch.isfinite(t)
+        finite_count = int(finite.sum().item())
+        total_count = t.numel()
+        parts = [
+            f"{name}: shape={tuple(t.shape)} dtype={t.dtype} "
+            f"finite={finite_count}/{total_count}"
+        ]
+        if finite_count:
+            vals = t[finite].float()
+            parts.append(
+                "min={:.6g} max={:.6g} mean={:.6g} std={:.6g}".format(
+                    float(vals.min().item()),
+                    float(vals.max().item()),
+                    float(vals.mean().item()),
+                    float(vals.std(unbiased=False).item()) if vals.numel() > 1 else 0.0,
+                )
+            )
+        else:
+            parts.append("all values are non-finite")
+
+        if sample_keys:
+            batch_size = len(sample_keys)
+            if t.ndim >= 4 and batch_size > 0 and t.shape[0] % batch_size == 0:
+                n_crops = t.shape[0] // batch_size
+                per_sample = t.reshape(n_crops, batch_size, *t.shape[1:])
+                per_sample_flat = per_sample.flatten(2)
+                per_sample_finite = torch.isfinite(per_sample_flat).all(dim=2).all(dim=0)
+                per_sample_abs = torch.nan_to_num(
+                    per_sample_flat.float().abs(),
+                    nan=float("inf"),
+                    posinf=float("inf"),
+                    neginf=float("inf"),
+                ).amax(dim=2).amax(dim=0)
+                topk = min(max_extreme, batch_size)
+                top_indices = torch.topk(per_sample_abs, k=topk).indices.cpu().tolist()
+                extreme = []
+                for idx in top_indices:
+                    key = sample_keys[idx] if idx < len(sample_keys) else str(idx)
+                    extreme.append(
+                        f"{idx}:{float(per_sample_abs[idx].item()):.6g}:"
+                        f"{'finite' if bool(per_sample_finite[idx].item()) else 'NONFINITE'}:{key}"
+                    )
+                parts.append(f"top_abs_by_sample={extreme}")
+    return " ".join(parts)
+
+
+def _log_nan_debug_batch(data, logger):
+    sample_keys = data.get("sample_keys") or []
+    sample_channel_ids = data.get("sample_channel_ids")
+    if sample_keys:
+        logger.warning("NaN debug sample_keys (%d): %s", len(sample_keys), sample_keys)
+    if sample_channel_ids is not None:
+        logger.warning("NaN debug sample_channel_ids: %s", sample_channel_ids)
+    for name in ("collated_global_crops", "collated_local_crops", "collated_gram_teacher_crops"):
+        if name in data:
+            logger.warning("NaN debug %s", _summarize_nan_tensor(name, data[name], sample_keys=sample_keys))
+
+
 def get_args_parser(add_help: bool = True):
     parser = argparse.ArgumentParser("DINOv3 training", add_help=add_help)
     parser.add_argument("--config-file", default="", metavar="FILE", help="path to config file")
@@ -322,9 +386,7 @@ def build_data_loader_from_cfg(
         transform=model.build_data_augmentation_dino(cfg),
         target_transform=lambda _: (),
         target_channels=cfg.student.in_chans,
-        s3_cache_root=getattr(cfg.train, "s3_cache_root", None),
-        aws_profile=getattr(cfg.train, "aws_profile", None),
-        aws_region=getattr(cfg.train, "aws_region", None),
+        wds_shuffle_buffer=getattr(cfg.train, "wds_shuffle_buffer", 1000),
     )
 
     if isinstance(dataset, torch.utils.data.IterableDataset):
@@ -341,6 +403,8 @@ def build_data_loader_from_cfg(
         sampler_type=sampler_type,
         sampler_advance=start_iter * accum_steps * dataloader_batch_size_per_gpu,
         drop_last=True,
+        pin_memory=getattr(cfg.train, "pin_memory", True),
+        prefetch_factor=getattr(cfg.train, "prefetch_factor", None),
         collate_fn=collate_fn,
     )
     return data_loader
@@ -550,6 +614,7 @@ def do_train(cfg, model, resume=False):
             logger.warning("Consecutive NaNs: %d", consecutive_nan_count)
             metrics_dict_str = "\n".join([f"{k}: {v}" for k, v in metrics_dict.items()])
             logger.warning("All-reduced metrics:\n%s", metrics_dict_str)
+            _log_nan_debug_batch(data, logger)
             if consecutive_nan_count > 2 and not cfg.multidistillation.enabled:
                 msg = "Too many consecutive nans detected in loss, aborting..."
                 logger.error(msg)

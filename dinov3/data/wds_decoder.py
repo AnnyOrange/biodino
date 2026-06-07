@@ -251,6 +251,100 @@ def decode_packed_sample(
     return result
 
 
+def _robust_per_channel(channel: Tensor, p_low: float, p_high: float) -> Tensor:
+    """Percentile clip + rescale a single ``(H, W)`` channel to ``[0, 1]``.
+
+    Robust alternative to the dtype-max scaling in ``_to_float_tensor``: instead
+    of dividing by the dtype maximum (which leaves 16-bit microscopy dim and
+    low-contrast), clip to the ``[p_low, p_high]`` percentiles of *this* channel
+    and rescale that window to ``[0, 1]``.  Percentiles are invariant to the
+    prior monotonic dtype scaling, so this composes correctly on top of
+    ``decode_tiff_bytes`` output without touching ``_to_float_tensor``.
+
+    A (near-)constant channel (``p_high <= p_low``) maps to all zeros.
+    """
+    flat = channel.flatten().to(torch.float32)
+    lo = torch.quantile(flat, p_low / 100.0)
+    hi = torch.quantile(flat, p_high / 100.0)
+    if not torch.isfinite(lo) or not torch.isfinite(hi) or hi <= lo:
+        return torch.zeros_like(channel, dtype=torch.float32)
+    out = (channel.to(torch.float32) - lo) / (hi - lo)
+    return out.clamp_(0.0, 1.0)
+
+
+def decode_packed_sample_robust(
+    sample: dict,
+    target_channels: int = 8,
+    p_low: float = 1.0,
+    p_high: float = 99.0,
+) -> Optional[Tensor]:
+    """Robust-normalization variant of :func:`decode_packed_sample`.
+
+    Differences from :func:`decode_packed_sample` (which is left UNCHANGED and
+    remains the default ``packwds:`` behavior):
+
+    * each present channel is normalized with :func:`_robust_per_channel`
+      (per-channel percentile clip + rescale) instead of dtype-max division;
+    * a sample with exactly ONE present channel is **replicated** across all
+      ``target_channels`` (a grayscale source becomes ``(gray, gray, gray)``
+      for an RGB model instead of ``(gray, 0, 0)``).
+
+    Samples with two or more present channels keep the original placement
+    (channel ``N`` → index ``N-1``; absent channels stay zero).
+
+    Selected by the ``packwds_robust:`` dataset prefix.
+    """
+    import re
+
+    ch_key_re = re.compile(r"^ch(\d+)\.tiff?$", re.IGNORECASE)
+
+    channel_bytes: dict[int, bytes] = {}
+    for key, value in sample.items():
+        m = ch_key_re.match(key)
+        if m and isinstance(value, (bytes, bytearray)):
+            channel_bytes[int(m.group(1))] = value
+
+    if not channel_bytes:
+        logger.warning(
+            "packed_robust sample %s has no ch*.tif keys — keys: %s",
+            sample.get("__key__", "?"),
+            list(sample.keys()),
+        )
+        return None
+
+    decoded: dict[int, Tensor] = {}
+    h: Optional[int] = None
+    w: Optional[int] = None
+    for ch_num in sorted(channel_bytes):
+        if ch_num < 1 or ch_num > target_channels:
+            continue
+        tensor = decode_tiff_bytes(channel_bytes[ch_num], target_channels=1)
+        if tensor is None:
+            logger.debug("packed_robust sample: failed to decode ch%d", ch_num)
+            continue
+        decoded[ch_num] = _robust_per_channel(tensor[0], p_low, p_high)  # (H, W)
+        if h is None:
+            _, h, w = tensor.shape
+
+    if not decoded or h is None:
+        logger.warning(
+            "packed_robust sample %s: all channels failed to decode",
+            sample.get("__key__", "?"),
+        )
+        return None
+
+    result = torch.zeros(target_channels, h, w, dtype=torch.float32)
+    if len(decoded) == 1:
+        # Single present channel → replicate across all target channels.
+        only_channel = next(iter(decoded.values()))
+        result[:] = only_channel.unsqueeze(0)
+    else:
+        for ch_num, channel in decoded.items():
+            result[ch_num - 1] = channel
+
+    return result
+
+
 def decode_packed_channelvit_sample(
     sample: dict,
     *,
