@@ -29,8 +29,13 @@ class Job:
 def _discover_checkpoints(checkpoints_dir: Path) -> Dict[int, Path]:
     found: Dict[int, Path] = {}
     for child in checkpoints_dir.iterdir():
-        if child.is_dir() and child.name.isdigit() and (child / "checkpoint.pth").is_file():
+        if not (child.is_dir() and child.name.isdigit()):
+            continue
+        if (child / "checkpoint.pth").is_file():
             found[int(child.name)] = child / "checkpoint.pth"
+        elif (child / ".metadata").is_file():
+            # torch.distributed.checkpoint directory (e.g. ViT-7B runs).
+            found[int(child.name)] = child
     return dict(sorted(found.items()))
 
 
@@ -76,7 +81,8 @@ def _run_job(job: Job, dry_run: bool) -> Tuple[Job, int, str]:
     env["CUDA_VISIBLE_DEVICES"] = job.gpu
     env["PYTHONUNBUFFERED"] = "1"
     cmd_str = shlex.join(job.cmd)
-    log_path = job.output_dir / "run.log"
+    dataset_tag = re.sub(r"[^A-Za-z0-9_.-]+", "_", job.dataset)
+    log_path = job.output_dir / f"run_{job.task}_{dataset_tag}_{job.ckpt_id}.log"
     logger.info("[gpu %s] %s/%s ckpt=%s $ %s", job.gpu, job.task, job.dataset, job.ckpt_id, cmd_str)
     if dry_run:
         log_path.write_text(cmd_str + "\n")
@@ -139,19 +145,36 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
                 cmd.extend(["--fast-eval", "--semantic-only", "--skip-test-eval"])
             jobs.append(Job("segmentation", "+".join(args.segmentation_datasets), ckpt_id, gpu, cmd, seg_out / args.run_name))
 
+        # Classification / regression / multilabel use the sklearn frozen-feature
+        # probes (dinov3.eval.bio_frozen_eval) that reproduce benchmark_results_*.md.
+        # The entry auto-detects the task from the dataset name, so the same module
+        # serves all three; multilabel datasets (e.g. chestmnist) go in
+        # --classification-datasets.
+        frozen_common = [
+            "--checkpoint", str(ckpt),
+            "--train-config", str(Path(args.train_config).resolve()),
+            "--benchmark-root", str(Path(args.benchmark_root).resolve()),
+            "--model-name", f"dinov3-{ckpt_id}",
+            "--probe-backend", args.probe_backend,
+            "--n-last-blocks", str(args.frozen_n_last_blocks),
+            "--autocast-dtype", args.autocast_dtype,
+            "--batch-size", str(args.frozen_batch_size),
+            "--num-workers", str(args.num_workers),
+            "--train-fraction", str(args.train_fraction),
+            "--seed", str(args.seed),
+        ]
+        frozen_cap: List[str] = []
+        if args.smoke:
+            frozen_cap = ["--max-samples", str(args.smoke_max_samples)]
+        elif args.max_samples_per_split:
+            frozen_cap = ["--max-samples", str(args.max_samples_per_split)]
+
         if "classification" in args.tasks:
             for ds in args.classification_datasets:
                 od = out / "bio_classification" / ds / str(ckpt_id)
                 cmd = [
-                    py, "-m", "dinov3.eval.bio_classification.linear",
-                    *ckpt_args, *common,
-                    "--dataset", ds,
-                    "--output-dir", str(od),
-                    "--epochs", str(args.cls_epochs if not args.smoke else 1),
-                    "--batch-size", str(args.cls_batch_size),
-                    "--num-workers", str(args.num_workers),
-                    "--learning-rates", *args.cls_learning_rates,
-                    "--max-samples-per-split", smoke_cap,
+                    py, "-m", "dinov3.eval.bio_frozen_eval.run_classification",
+                    "--datasets", ds, "--output-dir", str(od), *frozen_common, *frozen_cap,
                 ]
                 jobs.append(Job("classification", ds, ckpt_id, next(gpu_iter), cmd, od))
 
@@ -159,13 +182,8 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
             for ds in args.regression_datasets:
                 od = out / "bio_regression" / ds / str(ckpt_id)
                 cmd = [
-                    py, "-m", "dinov3.eval.bio_regression.linear",
-                    *ckpt_args, *common,
-                    "--dataset", ds,
-                    "--output-dir", str(od),
-                    "--batch-size", str(args.reg_batch_size),
-                    "--num-workers", str(args.num_workers),
-                    "--max-samples-per-split", smoke_cap,
+                    py, "-m", "dinov3.eval.bio_frozen_eval.run_classification",
+                    "--datasets", ds, "--output-dir", str(od), *frozen_common, *frozen_cap,
                 ]
                 jobs.append(Job("regression", ds, ckpt_id, next(gpu_iter), cmd, od))
 
@@ -183,6 +201,27 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
                     "--max-samples-per-split", smoke_cap,
                 ]
                 jobs.append(Job("detection", ds, ckpt_id, next(gpu_iter), cmd, od))
+
+        if "retrieval" in args.tasks:
+            for ds in args.retrieval_datasets:
+                od = out / "bio_retrieval" / ds / str(ckpt_id)
+                cmd = [
+                    py, "-m", "dinov3.eval.bio_frozen_eval.run_retrieval_clustering",
+                    "--checkpoint", str(ckpt),
+                    "--train-config", str(Path(args.train_config).resolve()),
+                    "--benchmark-root", str(Path(args.benchmark_root).resolve()),
+                    "--datasets", ds, "--output-dir", str(od),
+                    "--model-name", f"dinov3-{ckpt_id}",
+                    "--n-last-blocks", str(args.frozen_n_last_blocks),
+                    "--autocast-dtype", args.autocast_dtype,
+                    "--batch-size", str(args.frozen_batch_size),
+                    "--num-workers", str(args.num_workers),
+                    "--seed", str(args.seed),
+                ]
+                if args.smoke:
+                    # clustering needs more than n_clusters samples; keep a floor.
+                    cmd += ["--max-samples", str(max(args.smoke_max_samples, 64))]
+                jobs.append(Job("retrieval", ds, ckpt_id, next(gpu_iter), cmd, od))
     return jobs
 
 
@@ -193,7 +232,7 @@ def parse_args(argv=None):
     parser.add_argument("--train-config", required=True)
     parser.add_argument("--benchmark-root", default="/mnt/huawei_deepcad/benchmark")
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--tasks", nargs="+", default=["segmentation", "classification", "regression", "detection"], choices=["segmentation", "classification", "regression", "detection"])
+    parser.add_argument("--tasks", nargs="+", default=["segmentation", "classification", "regression", "detection", "retrieval"], choices=["segmentation", "classification", "regression", "detection", "retrieval"])
     parser.add_argument("--gpus", nargs="+", default=None)
     parser.add_argument("--jobs-per-gpu", type=int, default=1)
     parser.add_argument("--dry-run", action="store_true")
@@ -202,17 +241,26 @@ def parse_args(argv=None):
     parser.add_argument("--max-samples-per-split", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--run-name", default="bio_eval")
-    parser.add_argument("--classification-datasets", nargs="+", default=["bloodmnist", "bbbc048", "cyclops", "midog25"])
+    # classification (incl. multilabel chestmnist), regression and retrieval use the
+    # sklearn frozen-feature probes in dinov3.eval.bio_frozen_eval, which reproduce
+    # benchmark_results_*.md. Dataset names must match the bio_frozen_eval registry
+    # (e.g. cyclops-protein-loc / bbbc048-cellcycle, not cyclops / bbbc048).
+    parser.add_argument("--classification-datasets", nargs="+", default=["bloodmnist", "bbbc048-cellcycle", "cyclops-protein-loc", "midog25-atypical", "chestmnist"])
     parser.add_argument("--regression-datasets", nargs="+", default=["bbbc013"])
+    parser.add_argument("--retrieval-datasets", nargs="+", default=["lc25000", "nct-crc-he-1k", "crc-val-he-7k"])
     parser.add_argument("--detection-datasets", nargs="+", default=["livecell"])
     parser.add_argument("--segmentation-datasets", nargs="+", default=["bbbc038", "conic", "monuseg", "pannuke", "tissuenet"])
+    # frozen-probe (classification / regression / multilabel / retrieval) settings
+    parser.add_argument("--probe-backend", default="sklearn", choices=["sklearn", "torch"], help="sklearn reproduces the reported numbers; torch is the legacy ablation.")
+    parser.add_argument("--frozen-batch-size", type=int, default=64, help="Feature-extraction batch size for frozen-probe tasks.")
+    parser.add_argument("--frozen-n-last-blocks", type=int, default=1)
+    parser.add_argument("--autocast-dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
+    parser.add_argument("--train-fraction", type=float, default=0.8)
+    parser.add_argument("--seed", type=int, default=0)
+    # segmentation / detection dense linear probe (repo code in bio_segmentation / bio_detection)
     parser.add_argument("--layer-preset", default="last1")
     parser.add_argument("--seg-feature-batch-size", type=int, default=32)
     parser.add_argument("--seg-probe-epochs", type=int, default=50)
-    parser.add_argument("--cls-epochs", type=int, default=10)
-    parser.add_argument("--cls-batch-size", type=int, default=256)
-    parser.add_argument("--cls-learning-rates", nargs="+", default=["1e-4", "5e-4", "1e-3", "5e-3", "1e-2"])
-    parser.add_argument("--reg-batch-size", type=int, default=128)
     parser.add_argument("--det-epochs", type=int, default=5)
     parser.add_argument("--det-batch-size", type=int, default=8)
     return parser.parse_args(argv)

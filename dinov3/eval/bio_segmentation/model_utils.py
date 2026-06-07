@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import math
+import pickle
 from functools import partial
 from pathlib import Path
 from typing import List, Sequence
@@ -17,7 +18,7 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 
 from dinov3.configs import get_default_config
-from dinov3.models import build_model_for_eval
+from dinov3.models import build_model_for_eval, build_model_from_cfg
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +296,83 @@ def _load_chadavit_backbone(
     return model
 
 
+def _load_dcp_backbone_for_eval(
+    checkpoint_dir: Path,
+    cfg,
+    device: torch.device,
+    freeze: bool,
+):
+    """Load a training DCP directory into the bare teacher backbone for eval.
+
+    Some local training runs saved the full SSL wrapper in DCP with keys such as
+    ``model.teacher.backbone.*``.  The generic eval loader expects
+    ``model.backbone.*`` and cannot map those keys, so we read the teacher
+    backbone tensors directly and then load them into an unsharded eval model.
+    """
+    import torch.distributed.checkpoint as dcp
+    import torch.distributed.checkpoint.filesystem as dcpfs
+
+    metadata_path = checkpoint_dir / ".metadata"
+    with metadata_path.open("rb") as f:
+        metadata = pickle.load(f)
+    checkpoint_keys = set(metadata.state_dict_metadata.keys())
+
+    prefix_candidates = (
+        "model.teacher.backbone.",
+        "model.model_ema.backbone.",
+        "model.student.backbone.",
+    )
+    prefix = max(prefix_candidates, key=lambda p: sum(k.startswith(p) for k in checkpoint_keys))
+    if not any(k.startswith(prefix) for k in checkpoint_keys):
+        raise KeyError(f"No backbone tensors found in DCP checkpoint: {checkpoint_dir}")
+
+    model, _ = build_model_from_cfg(cfg, only_teacher=True)
+    template_state = model.state_dict()
+    tensors_to_load = {}
+    missing = []
+    for key, tensor in template_state.items():
+        checkpoint_key = prefix + key
+        if checkpoint_key in checkpoint_keys:
+            tensors_to_load[checkpoint_key] = torch.empty(
+                tuple(tensor.shape),
+                dtype=tensor.dtype,
+                device="cpu",
+            )
+        else:
+            missing.append(key)
+    if missing:
+        raise KeyError(
+            f"DCP checkpoint is missing {len(missing)} eval backbone keys; "
+            f"examples={missing[:10]}"
+        )
+
+    dcp.load(
+        tensors_to_load,
+        storage_reader=dcpfs.FileSystemReader(checkpoint_dir),
+        planner=dcp.default_planner.DefaultLoadPlanner(allow_partial_load=False),
+    )
+
+    # The model was built on meta; allocate real tensors before loading.
+    model.to_empty(device="cpu")
+    state_dict = {key[len(prefix) :]: value for key, value in tensors_to_load.items()}
+    msg = model.load_state_dict(state_dict, strict=True)
+    logger.info(
+        "Loaded DCP eval backbone from %s using prefix=%s with msg: %s",
+        checkpoint_dir,
+        prefix,
+        msg,
+    )
+
+    model = model.to(device)
+    if freeze and str(getattr(cfg.student, "arch", "")) == "vit_7b":
+        model = model.to(dtype=torch.bfloat16)
+    model.eval()
+    if freeze:
+        for param in model.parameters():
+            param.requires_grad_(False)
+    return model
+
+
 def load_dinov3_backbone(
     checkpoint_path: str,
     train_config_path: str,
@@ -323,6 +401,11 @@ def load_dinov3_backbone(
 
     default_cfg = get_default_config()
     cfg = OmegaConf.merge(default_cfg, OmegaConf.load(train_config_path))
+
+    if ck.is_dir() and (ck / ".metadata").exists():
+        model = _load_dcp_backbone_for_eval(ck, cfg, device=device, freeze=freeze)
+        logger.info("Backbone ready: embed_dim=%s, patch_size=%s", model.embed_dim, model.patch_size)
+        return model
 
     consolidated_key: str | None = "teacher"
     if ck.is_file():

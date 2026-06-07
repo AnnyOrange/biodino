@@ -71,14 +71,26 @@ def get_cellpose_paths(data_root: str, split: str = 'train') -> Tuple[List[str],
     Returns:
         (img_paths, mask_paths) - sorted, matched pairs.
     """
-    split_dir = os.path.join(data_root, split, split)
+    requested_split = split
+    source_split = 'train' if split == 'val' else split
+    split_dir = os.path.join(data_root, source_split, source_split)
     if not os.path.exists(split_dir):
-        split_dir = os.path.join(data_root, split)
+        split_dir = os.path.join(data_root, source_split)
     if not os.path.exists(split_dir):
         raise ValueError(f"Cellpose split directory not found: {split_dir}")
 
     img_paths = sorted(glob(os.path.join(split_dir, '*_img.png')))
     mask_paths = sorted(glob(os.path.join(split_dir, '*_masks.png')))
+
+    # Cellpose benchmark commonly has only train/test. Use a deterministic
+    # train/val split so the linear-probe pipeline still has a validation set.
+    if source_split == 'train' and len(img_paths) > 1:
+        val_count = max(1, int(round(len(img_paths) * 0.2)))
+        cutoff = len(img_paths) - val_count
+        if requested_split == 'train':
+            img_paths, mask_paths = img_paths[:cutoff], mask_paths[:cutoff]
+        elif requested_split == 'val':
+            img_paths, mask_paths = img_paths[cutoff:], mask_paths[cutoff:]
 
     logger.info(f"[Cellpose {split}] Found {len(img_paths)} images, {len(mask_paths)} masks")
     if len(img_paths) != len(mask_paths):
