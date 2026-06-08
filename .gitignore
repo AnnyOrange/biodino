@@ -46,4 +46,5 @@ benchmark_runs
 # Ignore Office documents (internal discussion docs)
 *.docx
 README.md
-docs
+docs/
+docs/data_compression
