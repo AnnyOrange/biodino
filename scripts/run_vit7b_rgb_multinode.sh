@@ -14,7 +14,8 @@ Usage:
 Run the same command on every node, changing only NODE_RANK.
 
 Important env vars:
-  DATASET_PATH          Required. DINOv3 dataset string, e.g. ImageNet:split=TRAIN or packwds:/.../*.tar
+  DATASET_PATH         DINOv3 dataset string. Default: packed microscopy RGB shards
+                       (packwds:.../webds_micro_100k_by_channel_patched_shuffle/...).
   OUTPUT_DIR           Required. Training output dir.
   NNODES               Number of nodes. Default: 1
   NODE_RANK            Rank of this node. Default: 0
@@ -51,10 +52,15 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ -z "${DATASET_PATH:-}" || -z "${OUTPUT_DIR:-}" ]]; then
+if [[ -z "${OUTPUT_DIR:-}" ]]; then
   usage >&2
-  echo "ERROR: DATASET_PATH and OUTPUT_DIR are required." >&2
+  echo "ERROR: OUTPUT_DIR is required." >&2
   exit 2
+fi
+# Single-quote default so the {000000..000999} brace range is preserved literally
+# (a `}` inside ${VAR:-...} would prematurely close the parameter expansion).
+if [[ -z "${DATASET_PATH:-}" ]]; then
+  DATASET_PATH='packwds:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar'
 fi
 
 if [[ -n "${PYTHON_BIN:-}" ]]; then
@@ -133,8 +139,8 @@ cmd=(
   student.enable_channelvit=false
   teacher.enable_channelvit=false
   student.resume_from_teacher_chkpt="$INIT_WEIGHTS"
-  crops.rgb_mean="[0.485,0.456,0.406]"
-  crops.rgb_std="[0.229,0.224,0.225]"
+  crops.rgb_mean="[0.511375,0.598449,0.683452]"
+  crops.rgb_std="[0.340017,0.306132,0.284308]"
 )
 
 if [[ "${NO_RESUME:-0}" == "1" ]]; then
