@@ -45,8 +45,5 @@ benchmark_runs
 
 # Ignore Office documents (internal discussion docs)
 *.docx
-
-# Ship the multi-node launcher / benchmark scripts (the *.sh rule above ignores them by default)
-!scripts/run_vit7b_rgb_multinode.sh
-!scripts/run_channelvit_multinode.sh
-!scripts/run_bio_benchmark_all.sh
+README.md
+docs
