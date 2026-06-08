@@ -34,6 +34,7 @@ run never leaves a half-written shard that looks complete.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import io
 import sys
 import tarfile
@@ -75,17 +76,17 @@ def _add_bytes(tar: tarfile.TarFile, member: tarfile.TarInfo, data: bytes) -> No
     tar.addfile(ti, io.BytesIO(data))
 
 
-def process_shard(src_path_s: str, out_deflate_s: str, out_uint8_s: str,
+def process_shard(src_path_s: str, out_deflate_s: str | None, out_uint8_s: str | None,
                   verify: bool) -> dict:
     src_path = Path(src_path_s)
-    out_deflate = Path(out_deflate_s)
-    out_uint8 = Path(out_uint8_s)
+    out_deflate = Path(out_deflate_s) if out_deflate_s else None
+    out_uint8 = Path(out_uint8_s) if out_uint8_s else None
 
-    if out_deflate.exists() and out_uint8.exists():
+    if (out_deflate is None or out_deflate.exists()) and (out_uint8 is None or out_uint8.exists()):
         return {"shard": src_path.name, "status": "skip"}
 
-    tmp_d = out_deflate.with_suffix(".tar.tmp")
-    tmp_u = out_uint8.with_suffix(".tar.tmp")
+    tmp_d = out_deflate.with_suffix(".tar.tmp") if out_deflate is not None else None
+    tmp_u = out_uint8.with_suffix(".tar.tmp") if out_uint8 is not None else None
 
     stats = {
         "shard": src_path.name, "status": "ok",
@@ -95,9 +96,9 @@ def process_shard(src_path_s: str, out_deflate_s: str, out_uint8_s: str,
     verified = 0
 
     try:
-        with tarfile.open(src_path, "r") as tin, \
-             tarfile.open(tmp_d, "w") as td, \
-             tarfile.open(tmp_u, "w") as tu:
+        with tarfile.open(src_path, "r") as tin, contextlib.ExitStack() as stack:
+            td = stack.enter_context(tarfile.open(tmp_d, "w")) if tmp_d is not None else None
+            tu = stack.enter_context(tarfile.open(tmp_u, "w")) if tmp_u is not None else None
             for member in tin:
                 if not member.isfile():
                     continue
@@ -111,33 +112,41 @@ def process_shard(src_path_s: str, out_deflate_s: str, out_uint8_s: str,
                     except Exception:
                         # keep the sample intact: copy original bytes verbatim
                         stats["n_decode_fail"] += 1
-                        _add_bytes(td, member, data)
-                        _add_bytes(tu, member, data)
+                        if td is not None:
+                            _add_bytes(td, member, data)
+                        if tu is not None:
+                            _add_bytes(tu, member, data)
                         continue
 
-                    db = encode_tiff(arr)  # lossless, same dtype
-                    ub = encode_tiff(quantize_uint8_global(arr))  # lossy uint8
+                    db = encode_tiff(arr) if td is not None else None  # lossless, same dtype
+                    ub = encode_tiff(quantize_uint8_global(arr)) if tu is not None else None  # lossy uint8
 
-                    if verify and verified < 50:
+                    if verify and db is not None and verified < 50:
                         back = tifffile.imread(io.BytesIO(db))
                         if not np.array_equal(back, arr):
                             stats["n_verify_fail"] += 1
                         verified += 1
 
-                    stats["deflate_bytes"] += len(db)
-                    stats["uint8_bytes"] += len(ub)
-                    _add_bytes(td, member, db)
-                    _add_bytes(tu, member, ub)
+                    if db is not None and td is not None:
+                        stats["deflate_bytes"] += len(db)
+                        _add_bytes(td, member, db)
+                    if ub is not None and tu is not None:
+                        stats["uint8_bytes"] += len(ub)
+                        _add_bytes(tu, member, ub)
                 else:
                     stats["n_other"] += 1
-                    _add_bytes(td, member, data)
-                    _add_bytes(tu, member, data)
+                    if td is not None:
+                        _add_bytes(td, member, data)
+                    if tu is not None:
+                        _add_bytes(tu, member, data)
 
-        tmp_d.replace(out_deflate)
-        tmp_u.replace(out_uint8)
+        if tmp_d is not None and out_deflate is not None:
+            tmp_d.replace(out_deflate)
+        if tmp_u is not None and out_uint8 is not None:
+            tmp_u.replace(out_uint8)
     except Exception as exc:  # noqa: BLE001
         for tmp in (tmp_d, tmp_u):
-            if tmp.exists():
+            if tmp is not None and tmp.exists():
                 tmp.unlink()
         stats["status"] = f"ERROR: {type(exc).__name__}: {exc}"
 
@@ -150,6 +159,12 @@ def main() -> int:
     ap.add_argument("--out-root", required=True, type=Path)
     ap.add_argument("--glob", default="filtered_mixed_train_w*-*.tar")
     ap.add_argument("--workers", type=int, default=32)
+    ap.add_argument(
+        "--mode",
+        choices=("both", "deflate", "uint8"),
+        default="both",
+        help="which compressed copy to build; default preserves old behavior",
+    )
     ap.add_argument("--limit-shards", type=int, default=0,
                     help="process only the first N shards (testing)")
     ap.add_argument("--verify", action="store_true",
@@ -163,17 +178,21 @@ def main() -> int:
         print(f"no shards matching {args.glob} in {args.src_dir}", file=sys.stderr)
         return 1
 
-    out_deflate_dir = args.out_root / "deflate_lossless"
-    out_uint8_dir = args.out_root / "uint8_deflate"
-    out_deflate_dir.mkdir(parents=True, exist_ok=True)
-    out_uint8_dir.mkdir(parents=True, exist_ok=True)
+    out_deflate_dir = args.out_root / "deflate_lossless" if args.mode in ("both", "deflate") else None
+    out_uint8_dir = args.out_root / "uint8_deflate" if args.mode in ("both", "uint8") else None
+    if out_deflate_dir is not None:
+        out_deflate_dir.mkdir(parents=True, exist_ok=True)
+    if out_uint8_dir is not None:
+        out_uint8_dir.mkdir(parents=True, exist_ok=True)
 
     jobs = [
-        (str(sp), str(out_deflate_dir / sp.name), str(out_uint8_dir / sp.name),
+        (str(sp),
+         str(out_deflate_dir / sp.name) if out_deflate_dir is not None else None,
+         str(out_uint8_dir / sp.name) if out_uint8_dir is not None else None,
          args.verify)
         for sp in shards
     ]
-    print(f"{len(jobs)} shards, {args.workers} workers", file=sys.stderr)
+    print(f"{len(jobs)} shards, {args.workers} workers, mode={args.mode}", file=sys.stderr)
 
     t0 = time.time()
     tot = {"n_tif": 0, "n_other": 0, "n_decode_fail": 0, "n_verify_fail": 0,
@@ -209,8 +228,10 @@ def main() -> int:
           f"decode_fail={tot['n_decode_fail']} verify_fail={tot['n_verify_fail']}")
     if sb:
         print(f"source tif payload : {sb/1e9:.1f} GB")
-        print(f"deflate (lossless) : {dbb/1e9:.1f} GB ({100*dbb/sb:.1f}%)")
-        print(f"uint8 + deflate    : {ub/1e9:.1f} GB ({100*ub/sb:.1f}%)")
+        if args.mode in ("both", "deflate"):
+            print(f"deflate (lossless) : {dbb/1e9:.1f} GB ({100*dbb/sb:.1f}%)")
+        if args.mode in ("both", "uint8"):
+            print(f"uint8 + deflate    : {ub/1e9:.1f} GB ({100*ub/sb:.1f}%)")
     print(f"elapsed: {el:.0f}s")
     if tot["n_verify_fail"]:
         print("WARNING: lossless verify FAILED on some tifs", file=sys.stderr)
