@@ -19,11 +19,13 @@ For COCO-JSON-based datasets:
 """
 
 from .cellpose import CellposeDataset, get_cellpose_paths
+from .cellpose_instance import CellposeInstanceDataset, get_cellpose_instance_paths
 from .csc      import CSCDataset,      get_csc_paths
 from .bbbc038  import BBBC038Dataset,  get_bbbc038_paths
 from .conic    import CoNICDataset,    get_conic_paths
 from .livecell import LIVECellDataset, get_livecell_paths
 from .monuseg  import MoNuSegDataset,  get_monuseg_paths
+from .multimodal_cellseg import MultimodalCellSegDataset, get_multimodal_cellseg_paths
 from .pannuke  import PanNukeDataset,  get_pannuke_paths
 from .tissuenet import TissueNetDataset, get_tissuenet_paths
 
@@ -37,6 +39,7 @@ DATASET_REGISTRY = {
     'conic':    (CoNICDataset,    get_conic_paths,    'array'),
     'livecell': (LIVECellDataset, get_livecell_paths, 'coco'),
     'monuseg':  (MoNuSegDataset,  get_monuseg_paths,  'file'),
+    'multimodal_cellseg': (MultimodalCellSegDataset, get_multimodal_cellseg_paths, 'file'),
     'pannuke':  (PanNukeDataset,  get_pannuke_paths,  'array'),
     'tissuenet':(TissueNetDataset,get_tissuenet_paths,'array'),
 }
@@ -45,12 +48,14 @@ __all__ = [
     'DATASET_REGISTRY',
     # existing
     'CellposeDataset', 'get_cellpose_paths',
+    'CellposeInstanceDataset', 'get_cellpose_instance_paths',
     'CSCDataset',      'get_csc_paths',
     # new
     'BBBC038Dataset',    'get_bbbc038_paths',
     'CoNICDataset',      'get_conic_paths',
     'LIVECellDataset',   'get_livecell_paths',
     'MoNuSegDataset',    'get_monuseg_paths',
+    'MultimodalCellSegDataset', 'get_multimodal_cellseg_paths',
     'PanNukeDataset',    'get_pannuke_paths',
     'TissueNetDataset',  'get_tissuenet_paths',
 ]

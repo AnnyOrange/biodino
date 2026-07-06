@@ -20,15 +20,25 @@ Optional env vars:
   GPUS="0 1 2 3"                   If unset, bio_benchmark uses all currently visible GPUs.
   JOBS_PER_GPU=1                   Parallel jobs per GPU.
   TASKS="segmentation classification regression detection retrieval"
-  LAYER_PRESET=last1               last1 | even4 | last4 | layerwise.
+  SEGMENTATION_PROTOCOL=best        best | manual. best uses the dataset-specific final protocol.
+  SEGMENTATION_MULTICHANNEL=0       1 passes --multichannel to the segmentation pipeline
+                                   (meaningful for dualroute + TissueNet true channels).
+  LAYER_PRESET=last1               manual protocol only: last1 | even4 | last4 | layerwise.
   NUM_WORKERS=4
-  PROBE_BACKEND=sklearn            Frozen cls/reg/multilabel/retrieval probe backend.
-                                   sklearn reproduces benchmark_results_*.md; torch is the legacy ablation.
   FROZEN_BATCH_SIZE=64             Feature-extraction batch size for the frozen probes.
-  SEED=0                           Split seed for the frozen probes.
+  AUTOCAST_DTYPE=bf16              bf16 | fp16 | fp32 for frozen feature extraction.
+  CLASSIFICATION_RESOLUTION_PROTOCOL=best
+                                   best | manual. best uses the 2026-06-23 5-dataset ablation table.
+  CLASSIFICATION_IMAGE_SIZE=224    Manual/fallback final square crop size for classification/multilabel.
+  CLASSIFICATION_RESIZE_SIZE=0     Optional pre-crop resize size; 0 uses ImageNet eval ratio.
+  TRAIN_FRACTION=0.8               Fallback internal frozen-probe train fraction.
+  SEED=0                           Split seed for fallback internal frozen probes.
   *_DATASETS                       CLASSIFICATION_/REGRESSION_/RETRIEVAL_/SEGMENTATION_/DETECTION_DATASETS.
   SEG_FEATURE_BATCH_SIZE=32
+  SEG_FEATURE_NUM_WORKERS=4
   SEG_PROBE_EPOCHS=50
+  SEG_PROBE_BATCH_SIZE=32
+  SEG_PROBE_NUM_WORKERS=4
   DET_EPOCHS=5
   DET_BATCH_SIZE=8
   DRY_RUN=1                        Print generated jobs but do not run.
@@ -63,6 +73,8 @@ fi
 CHECKPOINT_ITERS="${CHECKPOINT_ITERS:-all}"
 JOBS_PER_GPU="${JOBS_PER_GPU:-1}"
 TASKS="${TASKS:-segmentation classification regression detection retrieval}"
+SEGMENTATION_PROTOCOL="${SEGMENTATION_PROTOCOL:-best}"
+SEGMENTATION_MULTICHANNEL="${SEGMENTATION_MULTICHANNEL:-0}"
 LAYER_PRESET="${LAYER_PRESET:-last1}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 
@@ -73,13 +85,19 @@ REGRESSION_DATASETS="${REGRESSION_DATASETS:-bbbc013}"
 RETRIEVAL_DATASETS="${RETRIEVAL_DATASETS:-lc25000 nct-crc-he-1k crc-val-he-7k}"
 DETECTION_DATASETS="${DETECTION_DATASETS:-livecell}"
 
-# Frozen cls/reg/multilabel/retrieval probes (sklearn reproduces the reported md).
-PROBE_BACKEND="${PROBE_BACKEND:-sklearn}"
+# Frozen cls/reg/multilabel/retrieval probes use the canonical sklearn protocol.
 FROZEN_BATCH_SIZE="${FROZEN_BATCH_SIZE:-64}"
+AUTOCAST_DTYPE="${AUTOCAST_DTYPE:-bf16}"
+CLASSIFICATION_RESOLUTION_PROTOCOL="${CLASSIFICATION_RESOLUTION_PROTOCOL:-best}"
+CLASSIFICATION_IMAGE_SIZE="${CLASSIFICATION_IMAGE_SIZE:-224}"
+CLASSIFICATION_RESIZE_SIZE="${CLASSIFICATION_RESIZE_SIZE:-0}"
 SEED="${SEED:-0}"
 TRAIN_FRACTION="${TRAIN_FRACTION:-0.8}"
 SEG_FEATURE_BATCH_SIZE="${SEG_FEATURE_BATCH_SIZE:-32}"
+SEG_FEATURE_NUM_WORKERS="${SEG_FEATURE_NUM_WORKERS:-4}"
 SEG_PROBE_EPOCHS="${SEG_PROBE_EPOCHS:-50}"
+SEG_PROBE_BATCH_SIZE="${SEG_PROBE_BATCH_SIZE:-32}"
+SEG_PROBE_NUM_WORKERS="${SEG_PROBE_NUM_WORKERS:-4}"
 DET_EPOCHS="${DET_EPOCHS:-5}"
 DET_BATCH_SIZE="${DET_BATCH_SIZE:-8}"
 
@@ -98,19 +116,30 @@ cmd=(
   --regression-datasets $REGRESSION_DATASETS
   --retrieval-datasets $RETRIEVAL_DATASETS
   --detection-datasets $DETECTION_DATASETS
-  --probe-backend "$PROBE_BACKEND"
   --frozen-batch-size "$FROZEN_BATCH_SIZE"
+  --autocast-dtype "$AUTOCAST_DTYPE"
+  --classification-resolution-protocol "$CLASSIFICATION_RESOLUTION_PROTOCOL"
+  --classification-image-size "$CLASSIFICATION_IMAGE_SIZE"
+  --classification-resize-size "$CLASSIFICATION_RESIZE_SIZE"
   --seed "$SEED"
   --train-fraction "$TRAIN_FRACTION"
+  --segmentation-protocol "$SEGMENTATION_PROTOCOL"
   --layer-preset "$LAYER_PRESET"
   --seg-feature-batch-size "$SEG_FEATURE_BATCH_SIZE"
+  --seg-feature-num-workers "$SEG_FEATURE_NUM_WORKERS"
   --seg-probe-epochs "$SEG_PROBE_EPOCHS"
+  --seg-probe-batch-size "$SEG_PROBE_BATCH_SIZE"
+  --seg-probe-num-workers "$SEG_PROBE_NUM_WORKERS"
   --det-epochs "$DET_EPOCHS"
   --det-batch-size "$DET_BATCH_SIZE"
 )
 
 if [[ -n "${GPUS:-}" ]]; then
   cmd+=(--gpus $GPUS)
+fi
+
+if [[ "$SEGMENTATION_MULTICHANNEL" == "1" ]]; then
+  cmd+=(--segmentation-multichannel)
 fi
 
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
@@ -126,6 +155,9 @@ echo "[run_bio_benchmark_all] Checkpoints: $CHECKPOINTS_DIR"
 echo "[run_bio_benchmark_all] Train config: $TRAIN_CONFIG"
 echo "[run_bio_benchmark_all] Benchmark root: $BENCHMARK_ROOT"
 echo "[run_bio_benchmark_all] Output: $OUTPUT_DIR"
+echo "[run_bio_benchmark_all] Segmentation protocol: $SEGMENTATION_PROTOCOL"
+echo "[run_bio_benchmark_all] Segmentation multichannel: $SEGMENTATION_MULTICHANNEL"
+echo "[run_bio_benchmark_all] Classification resolution protocol: $CLASSIFICATION_RESOLUTION_PROTOCOL"
 echo "[run_bio_benchmark_all] Command:"
 printf ' %q' "${cmd[@]}"
 echo

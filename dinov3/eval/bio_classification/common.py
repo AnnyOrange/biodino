@@ -35,13 +35,20 @@ class LinearFeatureModel(torch.nn.Module):
         self.autocast_dtype = autocast_dtype
 
     @torch.inference_mode()
-    def forward(self, images: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        images: torch.Tensor,
+        channel_ids: torch.Tensor | None = None,
+        channel_valid_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         with torch.autocast("cuda", enabled=True, dtype=self.autocast_dtype):
             tokens = self.backbone.get_intermediate_layers(
                 images,
                 n=self.n_last_blocks,
                 reshape=False,
                 return_class_token=True,
+                channel_ids=channel_ids,
+                channel_valid_mask=channel_valid_mask,
             )
         return create_linear_input(tokens, use_n_blocks=self.n_last_blocks, use_avgpool=self.use_avgpool)
 

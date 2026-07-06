@@ -49,16 +49,32 @@ def _pairwise_iou(
     Returns:
         iou_matrix : [len(gt_ids), len(pred_ids)] float32
     """
-    iou = np.zeros((len(gt_ids), len(pred_ids)), dtype=np.float32)
-    for gi, gid in enumerate(gt_ids):
-        gt_mask = gt_map == gid
-        for pi, pid in enumerate(pred_ids):
-            p_mask = pred_map == pid
-            inter  = (gt_mask & p_mask).sum()
-            if inter == 0:
-                continue
-            union  = (gt_mask | p_mask).sum()
-            iou[gi, pi] = inter / (union + 1e-8)
+    n_gt, n_pred = len(gt_ids), len(pred_ids)
+    if n_gt == 0 or n_pred == 0:
+        return np.zeros((n_gt, n_pred), dtype=np.float32)
+
+    # Vectorized via label-pair histogram: O(H*W + n_gt*n_pred) instead of
+    # O(n_gt*n_pred*H*W). Identical IoU values to the naive double loop, but
+    # tractable for crowded datasets (e.g. TissueNet, ~600 instances/image).
+    # Build LUTs mapping arbitrary instance ids -> contiguous 1..n in the
+    # *provided* id order (compute_ap passes area-sorted pred_ids).
+    g_lut = np.zeros(int(gt_map.max()) + 1, dtype=np.int64)
+    g_lut[np.asarray(gt_ids, dtype=np.int64)] = np.arange(1, n_gt + 1)
+    p_lut = np.zeros(int(pred_map.max()) + 1, dtype=np.int64)
+    p_lut[np.asarray(pred_ids, dtype=np.int64)] = np.arange(1, n_pred + 1)
+
+    g = g_lut[gt_map]      # [H, W], 0 = bg/unlisted
+    p = p_lut[pred_map]
+    fg = (g > 0) & (p > 0)
+
+    inter = np.bincount(
+        (g[fg] - 1) * n_pred + (p[fg] - 1), minlength=n_gt * n_pred
+    ).reshape(n_gt, n_pred).astype(np.float64)
+    gt_areas = np.bincount(g[g > 0] - 1, minlength=n_gt).astype(np.float64)
+    pred_areas = np.bincount(p[p > 0] - 1, minlength=n_pred).astype(np.float64)
+    union = gt_areas[:, None] + pred_areas[None, :] - inter
+    iou = np.zeros((n_gt, n_pred), dtype=np.float32)
+    np.divide(inter, union + 1e-8, out=iou, where=union > 0)
     return iou
 
 

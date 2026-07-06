@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from dinov3.data.transforms import make_classification_eval_transform
@@ -27,6 +28,9 @@ __all__ = [
     "completed",
     "pil_collate",
 ]
+
+ROBUST_MC_MEAN = (0.514666, 0.488834, 0.498267)
+ROBUST_MC_STD = (0.338707, 0.339202, 0.336091)
 
 
 def _free_tcp_port() -> int:
@@ -68,6 +72,54 @@ def pil_collate(batch):
     return list(imgs), np.asarray(labels), list(paths)
 
 
+def _config_get(container, key: str):
+    if container is None:
+        return None
+    if isinstance(container, dict):
+        return container.get(key)
+    return getattr(container, key, None)
+
+
+def _load_multichannel_stats(train_config: Path) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Read robust microscopy eval stats from the train config if available."""
+    mean, std = ROBUST_MC_MEAN, ROBUST_MC_STD
+    try:
+        from omegaconf import OmegaConf
+
+        cfg = OmegaConf.load(train_config)
+        crops = _config_get(cfg, "crops")
+        cfg_mean = _config_get(crops, "rgb_mean")
+        cfg_std = _config_get(crops, "rgb_std")
+        if cfg_mean is not None and cfg_std is not None:
+            mean = tuple(float(x) for x in cfg_mean)
+            std = tuple(float(x) for x in cfg_std)
+            return mean, std
+    except Exception:
+        pass
+    try:
+        import yaml
+
+        with Path(train_config).open() as f:
+            cfg = yaml.safe_load(f) or {}
+        crops = cfg.get("crops", {}) if isinstance(cfg, dict) else {}
+        cfg_mean = crops.get("rgb_mean")
+        cfg_std = crops.get("rgb_std")
+        if cfg_mean is not None and cfg_std is not None:
+            mean = tuple(float(x) for x in cfg_mean)
+            std = tuple(float(x) for x in cfg_std)
+    except Exception:
+        pass
+    return mean, std
+
+
+def _cycle_stats(values: tuple[float, ...], channels: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    if not values:
+        values = (0.0,)
+    repeats = (channels + len(values) - 1) // len(values)
+    expanded = (list(values) * repeats)[:channels]
+    return torch.tensor(expanded, device=device, dtype=dtype).view(1, channels, 1, 1)
+
+
 class Dinov3CkptEncoder:
     def __init__(
         self,
@@ -77,6 +129,8 @@ class Dinov3CkptEncoder:
         n_last_blocks: int,
         use_avgpool: bool,
         autocast_dtype: torch.dtype,
+        image_size: int = 224,
+        resize_size: int = 256,
     ):
         self.device = torch.device(device)
         maybe_init_dist_for_dcp(checkpoint)
@@ -85,7 +139,10 @@ class Dinov3CkptEncoder:
             backbone, n_last_blocks=n_last_blocks, use_avgpool=use_avgpool, autocast_dtype=autocast_dtype
         )
         self.model.to(self.device).eval()
-        self.transform = make_classification_eval_transform(resize_size=256, crop_size=224)
+        self.image_size = image_size
+        self.resize_size = resize_size
+        self.transform = make_classification_eval_transform(resize_size=resize_size, crop_size=image_size)
+        self.mc_mean, self.mc_std = _load_multichannel_stats(train_config)
 
     @torch.inference_mode()
     def encode_pil(self, images: list) -> np.ndarray:
@@ -93,6 +150,83 @@ class Dinov3CkptEncoder:
         feat = self.model(x).float()
         feat = torch.nn.functional.normalize(feat, dim=1)
         return feat.cpu().numpy().astype(np.float16)
+
+    def _resize_center_crop_tensor(self, image: torch.Tensor) -> torch.Tensor:
+        if image.ndim != 3:
+            raise ValueError(f"Expected tensor image shaped C,H,W, got {tuple(image.shape)}")
+        image = image.to(dtype=torch.float32).clamp(0.0, 1.0)
+        _, height, width = image.shape
+        short = max(1, min(height, width))
+        scale = float(self.resize_size) / float(short)
+        new_h = max(self.image_size, int(round(height * scale)))
+        new_w = max(self.image_size, int(round(width * scale)))
+        image = image.unsqueeze(0)
+        try:
+            image = F.interpolate(image, size=(new_h, new_w), mode="bilinear", align_corners=False, antialias=True)
+        except TypeError:
+            image = F.interpolate(image, size=(new_h, new_w), mode="bilinear", align_corners=False)
+        image = image.squeeze(0)
+        top = max(0, (new_h - self.image_size) // 2)
+        left = max(0, (new_w - self.image_size) // 2)
+        return image[:, top : top + self.image_size, left : left + self.image_size].contiguous()
+
+    def _normalize_tensor_batch(self, x: torch.Tensor) -> torch.Tensor:
+        channels = int(x.shape[1])
+        mean = _cycle_stats(self.mc_mean, channels, x.device, x.dtype)
+        std = _cycle_stats(self.mc_std, channels, x.device, x.dtype).clamp_min(1e-6)
+        return (x - mean) / std
+
+    @staticmethod
+    def _collapse_to_three_channels(x: torch.Tensor) -> torch.Tensor:
+        channels = int(x.shape[1])
+        if channels == 3:
+            return x
+        if channels == 1:
+            return x.repeat(1, 3, 1, 1)
+        if channels == 2:
+            return torch.cat([x, x[:, -1:]], dim=1)
+        return x[:, :3]
+
+    @torch.inference_mode()
+    def encode_tensor(self, images: list[torch.Tensor]) -> np.ndarray:
+        tensors = [self._resize_center_crop_tensor(img) for img in images]
+        max_channels = max(int(t.shape[0]) for t in tensors)
+        batch = torch.zeros(
+            len(tensors),
+            max_channels,
+            self.image_size,
+            self.image_size,
+            dtype=torch.float32,
+        )
+        valid = torch.zeros(len(tensors), max_channels, dtype=torch.bool)
+        for i, tensor in enumerate(tensors):
+            channels = int(tensor.shape[0])
+            batch[i, :channels] = tensor
+            valid[i, :channels] = True
+
+        backbone = self.model.backbone
+        true_multichannel = getattr(backbone, "stem_type", None) in {
+            "dualroute",
+            "residual_mc",
+            "rgb_extra_residual",
+        } or getattr(backbone, "enable_channelvit", False)
+        if true_multichannel:
+            x = self._normalize_tensor_batch(batch).to(self.device, non_blocking=True)
+            valid = valid.to(self.device, non_blocking=True)
+            channel_ids = torch.arange(max_channels, dtype=torch.long, device=self.device)
+            feat = self.model(x, channel_ids=channel_ids, channel_valid_mask=valid).float()
+        else:
+            x = self._collapse_to_three_channels(batch)
+            x = self._normalize_tensor_batch(x).to(self.device, non_blocking=True)
+            feat = self.model(x).float()
+        feat = torch.nn.functional.normalize(feat, dim=1)
+        return feat.cpu().numpy().astype(np.float16)
+
+    @torch.inference_mode()
+    def encode_images(self, images: list) -> np.ndarray:
+        if images and torch.is_tensor(images[0]):
+            return self.encode_tensor(images)
+        return self.encode_pil(images)
 
 
 def extract_features(
@@ -122,7 +256,7 @@ def extract_features(
     )
     feats, labels, paths = [], [], []
     for i, (imgs, y, p) in enumerate(loader, 1):
-        feats.append(encoder.encode_pil(imgs))
+        feats.append(encoder.encode_images(imgs))
         labels.append(np.asarray(y))
         paths.extend(p)
         if i == 1 or i % 50 == 0 or i == len(loader):
@@ -137,8 +271,15 @@ def extract_features(
     return features.astype(np.float32), labels_arr
 
 
-def completed(summary_path: Path, dataset: str, model: str) -> bool:
-    """True if (dataset, model) already has an error-free row in summary.csv."""
+def completed(
+    summary_path: Path,
+    dataset: str,
+    model: str,
+    image_size: int | None = None,
+    resize_size: int | None = None,
+    split: str | None = None,
+) -> bool:
+    """True if (dataset/model/protocol) already has an error-free row in summary.csv."""
     import csv
 
     summary_path = Path(summary_path)
@@ -148,7 +289,24 @@ def completed(summary_path: Path, dataset: str, model: str) -> bool:
         with summary_path.open(newline="") as f:
             for row in csv.DictReader(f):
                 if row.get("dataset") == dataset and row.get("model") == model and not row.get("error"):
-                    return True
+                    if split is not None:
+                        row_split = row.get("split")
+                        # Legacy rows have no split column and were produced by
+                        # the historical internal 80/20 probe. Reuse them only
+                        # for datasets that still use that same protocol.
+                        if row_split:
+                            if row_split != split:
+                                continue
+                        elif split != "internal-80-20":
+                            continue
+                    if image_size is None:
+                        return True
+                    row_image_size = row.get("image_size")
+                    row_resize_size = row.get("resize_size")
+                    if not row_image_size and image_size == 224 and resize_size in (None, 256):
+                        return True
+                    if row_image_size == str(image_size) and row_resize_size == str(resize_size):
+                        return True
     except Exception:
         return False
     return False

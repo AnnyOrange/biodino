@@ -120,6 +120,108 @@ def _add_zero_channel_embed_if_missing(chkpt: dict, model_state: dict) -> None:
         )
 
 
+def _remap_dualroute_patch_embed(chkpt: dict, model_state: dict) -> None:
+    """Bootstrap a #1 dual-route stem from a standard PatchEmbed checkpoint.
+
+    A dual-route model holds two stems: ``patch_embed.rgb`` (Conv2d, 3-in) and
+    ``patch_embed.pool`` (shared per-channel Conv2d, 1-in). A pretrained / #4 /
+    #5 checkpoint only has the original ``patch_embed.proj.{weight,bias}``.
+    We route the pretrained stem to BOTH:
+      * ``patch_embed.rgb.proj.*`` <- exact copy (preserves the 1.7B RGB prior),
+      * ``patch_embed.pool.proj.weight`` <- mean over the 3 input channels
+        (``[D,3,P,P] -> [D,1,P,P]``, same trick as the ChannelViT adapter),
+        ``patch_embed.pool.proj.bias`` <- exact copy.
+    The content-descriptor MLP / attention query are absent from the checkpoint
+    and keep their ``init_weights()`` values. No-op unless the model is
+    dual-route, so all other load paths are unaffected.
+    """
+    rgb_marker = "patch_embed.rgb.proj.weight"
+    pool_marker = "patch_embed.pool.proj.weight"
+    if not any(k.endswith(rgb_marker) for k in model_state):
+        return  # not a dual-route model
+    if not any(k.endswith(pool_marker) for k in model_state):
+        return  # another RGB-submodule stem (for example residual_mc)
+    src_w_key = next((k for k in chkpt if k.endswith("patch_embed.proj.weight")), None)
+    if src_w_key is None:
+        return  # checkpoint already dual-route, or no standard stem to remap
+    prefix = src_w_key[: -len("patch_embed.proj.weight")]  # e.g. "backbone."
+    src_b_key = prefix + "patch_embed.proj.bias"
+    src_w = chkpt[src_w_key]
+    rgb_w_key = prefix + "patch_embed.rgb.proj.weight"
+    rgb_b_key = prefix + "patch_embed.rgb.proj.bias"
+    pool_w_key = prefix + "patch_embed.pool.proj.weight"
+    pool_b_key = prefix + "patch_embed.pool.proj.bias"
+
+    if rgb_w_key in model_state and rgb_w_key not in chkpt:
+        chkpt[rgb_w_key] = src_w
+        if src_b_key in chkpt and rgb_b_key in model_state:
+            chkpt[rgb_b_key] = chkpt[src_b_key]
+    if pool_w_key in model_state and pool_w_key not in chkpt and src_w.ndim == 4:
+        chkpt[pool_w_key] = src_w.float().mean(dim=1, keepdim=True).to(src_w.dtype)
+        if src_b_key in chkpt and pool_b_key in model_state:
+            chkpt[pool_b_key] = chkpt[src_b_key]
+    # Drop the now-orphaned standard-stem keys (no target in a dual-route model).
+    chkpt.pop(src_w_key, None)
+    chkpt.pop(src_b_key, None)
+    logger.info(
+        "[CKPT] remapped standard PatchEmbed -> dual-route stem (rgb=exact copy, pool=channel-mean): %s",
+        src_w_key,
+    )
+
+
+def _remap_residual_multichannel_patch_embed(chkpt: dict, model_state: dict) -> None:
+    """Bootstrap a residual multi-channel stem from a standard RGB PatchEmbed.
+
+    The residual stem has an exact RGB base path plus a 1-channel extra branch:
+      * ``patch_embed.rgb.proj.*`` <- exact RGB PatchEmbed copy,
+      * ``patch_embed.extra.weight`` <- mean over RGB input-channel weights,
+      * ``patch_embed.extra_scale`` <- tiny scalar gate.
+
+    The extra branch has no bias by design, so the RGB PatchEmbed bias is not
+    duplicated in the residual path.
+    """
+    rgb_marker = "patch_embed.rgb.proj.weight"
+    extra_marker = "patch_embed.extra.weight"
+    if not any(k.endswith(rgb_marker) for k in model_state):
+        return
+    if not any(k.endswith(extra_marker) for k in model_state):
+        return  # dual-route also has patch_embed.rgb; this is not residual_mc
+
+    src_w_key = next((k for k in chkpt if k.endswith("patch_embed.proj.weight")), None)
+    if src_w_key is None:
+        return  # checkpoint already has residual_mc keys, or no standard stem
+    prefix = src_w_key[: -len("patch_embed.proj.weight")]
+    src_b_key = prefix + "patch_embed.proj.bias"
+    src_w = chkpt[src_w_key]
+
+    rgb_w_key = prefix + "patch_embed.rgb.proj.weight"
+    rgb_b_key = prefix + "patch_embed.rgb.proj.bias"
+    extra_w_key = prefix + "patch_embed.extra.weight"
+    extra_scale_key = prefix + "patch_embed.extra_scale"
+
+    if rgb_w_key in model_state and rgb_w_key not in chkpt:
+        chkpt[rgb_w_key] = src_w
+        if src_b_key in chkpt and rgb_b_key in model_state:
+            chkpt[rgb_b_key] = chkpt[src_b_key]
+    if extra_w_key in model_state and extra_w_key not in chkpt and src_w.ndim == 4:
+        chkpt[extra_w_key] = src_w.float().mean(dim=1, keepdim=True).to(src_w.dtype)
+    if extra_scale_key in model_state and extra_scale_key not in chkpt:
+        target = model_state[extra_scale_key]
+        target_shape = _checkpoint_tensor_shape(target)
+        if target_shape is not None:
+            dtype = getattr(target, "dtype", torch.float32)
+            chkpt[extra_scale_key] = torch.full(target_shape, 1e-3, dtype=dtype)
+
+    # Drop the now-orphaned standard-stem keys (no target in residual_mc).
+    chkpt.pop(src_w_key, None)
+    chkpt.pop(src_b_key, None)
+    logger.info(
+        "[CKPT] remapped standard PatchEmbed -> residual multi-channel stem "
+        "(rgb=exact copy, extra=channel-mean, scale=1e-3): %s",
+        src_w_key,
+    )
+
+
 class CheckpointRetentionPolicy(Enum):
     ALL = "all"  # keep all checkpoints
     BEST = "best"
@@ -458,6 +560,8 @@ def init_fsdp_model_from_checkpoint(
         keys_not_sharded = keys_not_sharded or []
         model_state = model.state_dict()
         _add_zero_channel_embed_if_missing(chkpt, model_state)
+        _remap_dualroute_patch_embed(chkpt, model_state)
+        _remap_residual_multichannel_patch_embed(chkpt, model_state)
         converted_chkpt = {}
         for key, tensor in chkpt.items():
             if any(key_not_sharded in key for key_not_sharded in keys_not_sharded):
@@ -566,6 +670,8 @@ def init_model_from_checkpoint_for_evals(
 
     model_state = model.state_dict()
     _add_zero_channel_embed_if_missing(state_dict, model_state)
+    _remap_dualroute_patch_embed(state_dict, model_state)
+    _remap_residual_multichannel_patch_embed(state_dict, model_state)
     filtered_state_dict = {}
     for key, tensor in state_dict.items():
         target_tensor = model_state.get(key)

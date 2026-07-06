@@ -124,38 +124,56 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
         if "segmentation" in args.tasks:
             seg_out = out / "bio_segmentation"
             seg_cache = out / "cache" / "bio_segmentation"
-            gpu = next(gpu_iter)
-            cmd = [
-                py, "-m", "dinov3.eval.bio_segmentation.scripts.run_linear_probe_pipeline",
-                "--datasets", *args.segmentation_datasets,
-                "--checkpoints-dir", str(Path(args.checkpoints_dir).resolve()),
-                "--checkpoint-iters", str(ckpt_id),
-                "--train-config", str(Path(args.train_config).resolve()),
-                "--data-root-base", str(Path(args.benchmark_root).resolve() / "segmentation"),
-                "--output-root", str(seg_out),
-                "--cache-root", str(seg_cache),
-                "--run-name", args.run_name,
-                "--layer-preset", args.layer_preset,
-                "--feature-batch-size", str(args.seg_feature_batch_size),
-                "--probe-epochs", str(args.seg_probe_epochs if not args.smoke else 1),
-                "--probe-eval-every", str(args.seg_probe_epochs if not args.smoke else 1),
-                "--gpu", gpu,
-            ]
-            if args.smoke:
-                cmd.extend(["--fast-eval", "--semantic-only", "--skip-test-eval"])
-            jobs.append(Job("segmentation", "+".join(args.segmentation_datasets), ckpt_id, gpu, cmd, seg_out / args.run_name))
+            seg_job_specs = [(args.segmentation_datasets, False)]
+            if args.segmentation_multichannel:
+                mc_datasets = [d for d in args.segmentation_datasets if d == "tissuenet"]
+                rgb_datasets = [d for d in args.segmentation_datasets if d != "tissuenet"]
+                seg_job_specs = []
+                if rgb_datasets:
+                    seg_job_specs.append((rgb_datasets, False))
+                if mc_datasets:
+                    seg_job_specs.append((mc_datasets, True))
+                else:
+                    logger.warning("--segmentation-multichannel requested, but no multichannel-capable dataset is selected")
+
+            for seg_datasets, use_multichannel in seg_job_specs:
+                seg_run_name = f"{args.run_name}_mc" if use_multichannel else args.run_name
+                gpu = next(gpu_iter)
+                cmd = [
+                    py, "-m", "dinov3.eval.bio_segmentation.scripts.run_linear_probe_pipeline",
+                    "--datasets", *seg_datasets,
+                    "--checkpoints-dir", str(Path(args.checkpoints_dir).resolve()),
+                    "--checkpoint-iters", str(ckpt_id),
+                    "--train-config", str(Path(args.train_config).resolve()),
+                    "--data-root-base", str(Path(args.benchmark_root).resolve() / "segmentation"),
+                    "--output-root", str(seg_out),
+                    "--cache-root", str(seg_cache),
+                    "--run-name", args.run_name,
+                    "--protocol", args.segmentation_protocol,
+                    "--layer-preset", args.layer_preset,
+                    "--feature-batch-size", str(args.seg_feature_batch_size),
+                    "--feature-num-workers", str(args.seg_feature_num_workers),
+                    "--probe-epochs", str(args.seg_probe_epochs if not args.smoke else 1),
+                    "--probe-batch-size", str(args.seg_probe_batch_size),
+                    "--probe-num-workers", str(args.seg_probe_num_workers),
+                    "--probe-eval-every", str(args.seg_probe_epochs if not args.smoke else 1),
+                    "--gpu", gpu,
+                ]
+                if args.smoke:
+                    cmd.extend(["--fast-eval", "--semantic-only", "--skip-test-eval"])
+                if use_multichannel:
+                    cmd.append("--multichannel")
+                jobs.append(Job("segmentation", "+".join(seg_datasets), ckpt_id, gpu, cmd, seg_out / seg_run_name))
 
         # Classification / regression / multilabel use the sklearn frozen-feature
-        # probes (dinov3.eval.bio_frozen_eval) that reproduce benchmark_results_*.md.
-        # The entry auto-detects the task from the dataset name, so the same module
-        # serves all three; multilabel datasets (e.g. chestmnist) go in
-        # --classification-datasets.
+        # probes (dinov3.eval.bio_frozen_eval). The entry auto-detects the task
+        # and applies the dataset's held-out split protocol (official test,
+        # committed group split, or the deterministic 80/20 fallback).
         frozen_common = [
             "--checkpoint", str(ckpt),
             "--train-config", str(Path(args.train_config).resolve()),
             "--benchmark-root", str(Path(args.benchmark_root).resolve()),
             "--model-name", f"dinov3-{ckpt_id}",
-            "--probe-backend", args.probe_backend,
             "--n-last-blocks", str(args.frozen_n_last_blocks),
             "--autocast-dtype", args.autocast_dtype,
             "--batch-size", str(args.frozen_batch_size),
@@ -174,7 +192,15 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
                 od = out / "bio_classification" / ds / str(ckpt_id)
                 cmd = [
                     py, "-m", "dinov3.eval.bio_frozen_eval.run_classification",
-                    "--datasets", ds, "--output-dir", str(od), *frozen_common, *frozen_cap,
+                    "--datasets", ds, "--output-dir", str(od), *frozen_common,
+                    "--resolution-protocol", args.classification_resolution_protocol,
+                    "--image-size", str(args.classification_image_size),
+                    *(
+                        ["--resize-size", str(args.classification_resize_size)]
+                        if args.classification_resize_size > 0
+                        else []
+                    ),
+                    *frozen_cap,
                 ]
                 jobs.append(Job("classification", ds, ckpt_id, next(gpu_iter), cmd, od))
 
@@ -241,26 +267,39 @@ def parse_args(argv=None):
     parser.add_argument("--max-samples-per-split", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--run-name", default="bio_eval")
-    # classification (incl. multilabel chestmnist), regression and retrieval use the
-    # sklearn frozen-feature probes in dinov3.eval.bio_frozen_eval, which reproduce
-    # benchmark_results_*.md. Dataset names must match the bio_frozen_eval registry
-    # (e.g. cyclops-protein-loc / bbbc048-cellcycle, not cyclops / bbbc048).
+    # classification (incl. multilabel chestmnist), regression and retrieval use
+    # the sklearn frozen-feature probes in dinov3.eval.bio_frozen_eval. Dataset
+    # names must match the bio_frozen_eval registry (e.g. cyclops-protein-loc /
+    # bbbc048-cellcycle, not cyclops / bbbc048).
     parser.add_argument("--classification-datasets", nargs="+", default=["bloodmnist", "bbbc048-cellcycle", "cyclops-protein-loc", "midog25-atypical", "chestmnist"])
     parser.add_argument("--regression-datasets", nargs="+", default=["bbbc013"])
     parser.add_argument("--retrieval-datasets", nargs="+", default=["lc25000", "nct-crc-he-1k", "crc-val-he-7k"])
     parser.add_argument("--detection-datasets", nargs="+", default=["livecell"])
     parser.add_argument("--segmentation-datasets", nargs="+", default=["bbbc038", "conic", "monuseg", "pannuke", "tissuenet"])
     # frozen-probe (classification / regression / multilabel / retrieval) settings
-    parser.add_argument("--probe-backend", default="sklearn", choices=["sklearn", "torch"], help="sklearn reproduces the reported numbers; torch is the legacy ablation.")
+    parser.add_argument(
+        "--probe-backend",
+        default="sklearn",
+        choices=["sklearn"],
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--frozen-batch-size", type=int, default=64, help="Feature-extraction batch size for frozen-probe tasks.")
     parser.add_argument("--frozen-n-last-blocks", type=int, default=1)
     parser.add_argument("--autocast-dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
+    parser.add_argument("--classification-resolution-protocol", default="best", choices=["manual", "best"])
+    parser.add_argument("--classification-image-size", type=int, default=224, help="Manual/fallback final square crop size for classification/multilabel frozen features.")
+    parser.add_argument("--classification-resize-size", type=int, default=0, help="Optional pre-crop resize size for classification; 0 keeps the ImageNet eval ratio.")
     parser.add_argument("--train-fraction", type=float, default=0.8)
     parser.add_argument("--seed", type=int, default=0)
     # segmentation / detection dense linear probe (repo code in bio_segmentation / bio_detection)
+    parser.add_argument("--segmentation-protocol", default="best", choices=["manual", "best"])
+    parser.add_argument("--segmentation-multichannel", action="store_true", help="Pass --multichannel to the segmentation linear-probe pipeline.")
     parser.add_argument("--layer-preset", default="last1")
     parser.add_argument("--seg-feature-batch-size", type=int, default=32)
+    parser.add_argument("--seg-feature-num-workers", type=int, default=4)
     parser.add_argument("--seg-probe-epochs", type=int, default=50)
+    parser.add_argument("--seg-probe-batch-size", type=int, default=32)
+    parser.add_argument("--seg-probe-num-workers", type=int, default=4)
     parser.add_argument("--det-epochs", type=int, default=5)
     parser.add_argument("--det-batch-size", type=int, default=8)
     return parser.parse_args(argv)

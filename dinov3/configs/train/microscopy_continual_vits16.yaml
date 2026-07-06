@@ -1,24 +1,32 @@
-# ViT-S+/16：不接 ChannelViT，3 通道对齐 + 官方 S+ checkpoint；有效全局 batch 1024（64/GPU×8×accum 2）。
-# OFFICIAL_EPOCH_LENGTH = ceil(1048771 / 1024) = 1025。
+# ViT-S+/16 official-arch continuation for the microscopy packed WebDataset.
+# Effective global batch 1024 on 8 GPUs:
+#   default 128/GPU x 8 x accum 1; if OOM use 64/GPU x 8 x accum 2.
+# OFFICIAL_EPOCH_LENGTH follows the existing S+ baseline setting.
 
 train:
-  dataset_path: "packwds:/mnt/huawei_deepcad/wds_packed_shards/filtered_mixed_train_w*-{000000..000999}.tar"
+  dataset_path: "packwds:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar"
   batch_size_per_gpu: 64
-  num_workers: 10
+  num_workers: 2
   OFFICIAL_EPOCH_LENGTH: 1025
-  output_dir: ./outputs/bio_continue_vitsplus16
+  output_dir: ./outputs/bio_chinchilla_vitsplus16_1tb_b1024
   compile: false
+  wds_shuffle_buffer: 50
+  prefetch_factor: 1
+  pin_memory: false
 
 student:
   arch: vit_small
   patch_size: 16
   ffn_layer: swiglu
   ffn_ratio: 6.0
-  drop_path_rate: 0.3
+  drop_path_rate: 0.15
+  norm_layer: layernormbf16
   in_chans: 3
   enable_channelvit: false
   n_storage_tokens: 4
   mask_k_bias: true
+  pos_embed_rope_rescale_coords: 2
+  pos_embed_rope_dtype: fp32
   resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth"
 
 teacher:
@@ -26,14 +34,14 @@ teacher:
   enable_channelvit: false
   warmup_teacher_temp: 0.04
   teacher_temp: 0.07
-  warmup_teacher_temp_epochs: 30
+  warmup_teacher_temp_epochs: 5
 
 optim:
-  epochs: 15
+  epochs: 30
   optimizer: adamw
-  lr: 2.0e-4
+  lr: 1.5e-4
   min_lr: 1.0e-6
-  warmup_epochs: 3
+  warmup_epochs: 2
   weight_decay: 0.04
   weight_decay_end: 0.2
   clip_grad: 3.0
@@ -52,8 +60,8 @@ crops:
     - 0.284308
 
 evaluation:
-  eval_period_iterations: 2050
+  eval_period_iterations: 0
 
 checkpointing:
   period: 1025
-  max_to_keep: 15
+  max_to_keep: 50

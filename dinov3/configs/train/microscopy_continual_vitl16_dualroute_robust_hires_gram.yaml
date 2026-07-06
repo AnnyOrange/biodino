@@ -1,0 +1,92 @@
+# Combo experiment: ViT-L base + #4 robust channel normalization + #5 hi-res
+# Gram anchoring + dual-route true multi-channel stem.
+#
+# Intended use:
+#   - initialize dual-route from the #4 robust ViT-L teacher checkpoint
+#     (standard PatchEmbed is remapped to rgb/pool stems at load time);
+#   - train on true packed multi-channel shards with #4 percentile robust
+#     normalization, keeping channel_ids instead of collapsing to RGB;
+#   - use the same #4 teacher as the frozen Gram anchor, matching #5.
+
+train:
+  dataset_path: "packwds_chvit_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar::pct=1,99"
+  batch_size_per_gpu: 8
+  num_workers: 10
+  OFFICIAL_EPOCH_LENGTH: 1025
+  output_dir: ./outputs/bio_continue_vitl16_dualroute_robust_hires_gram
+  compile: false
+
+student:
+  arch: vit_large
+  patch_size: 16
+  ffn_layer: mlp
+  ffn_ratio: 4.0
+  drop_path_rate: 0.25
+  # For packwds_chvit_robust this is the maximum channel id capacity, not a
+  # fixed input channel count for the dual-route stem. Set to 8 to keep all
+  # packed microscopy channels that exist in the shards.
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: dualroute
+  n_storage_tokens: 4
+  mask_k_bias: true
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/dinov3/outputs/bio_continue_vitl16_robust/eval/training_14349/teacher_checkpoint.pth"
+
+teacher:
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: dualroute
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+
+optim:
+  # #5-style short high-resolution phase. The launcher can override this with EPOCHS.
+  epochs: 3
+  optimizer: adamw
+  lr: 2.0e-5
+  min_lr: 1.0e-6
+  warmup_epochs: 1
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 16
+
+crops:
+  global_crops_size: 512
+  local_crops_size: 96
+  gram_teacher_crops_size: 512
+  gram_teacher_no_distortions: true
+  # Decoder already returns float32 [0,1] after percentile normalization.
+  float_input: true
+  # Robust stats from #4. DataAugmentationDINO cycles/maps them for >3 true channels.
+  rgb_mean:
+    - 0.514666
+    - 0.488834
+    - 0.498267
+  rgb_std:
+    - 0.338707
+    - 0.339202
+    - 0.336091
+
+gram:
+  use_loss: true
+  compute_stats: false
+  loss_weight: 1.0
+  ema_teacher: false
+  ckpt: "/mnt/huawei_deepcad/dinov3/outputs/bio_continue_vitl16_robust/eval/training_14349/teacher_checkpoint.pth"
+  it_load_ema_teacher: -1
+  rep_update: false
+  tokens_used: all
+  normalized: true
+  global_teacher_resize_method: bicubic
+  global_teacher_resize_antialias: false
+
+evaluation:
+  eval_period_iterations: 0
+
+checkpointing:
+  period: 1025
+  max_to_keep: 5

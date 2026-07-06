@@ -29,12 +29,13 @@ Usage:
 import logging
 from typing import List, Optional, Tuple
 
-import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from dinov3.eval.bio_segmentation.constants import MICRO_RGB_MEAN, MICRO_RGB_STD
+
+from .base import resize_image_and_masks
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,8 @@ class CoNICDataset(Dataset):
         images_npy: str,
         labels_npy: str,
         indices: Optional[List[int]] = None,
-        size: Tuple[int, int] = (256, 256),
+        size: Optional[Tuple[int, int]] = (256, 256),
+        resize_mode: str = "stretch",
         augment: bool = False,
         rgb_mean=MICRO_RGB_MEAN,
         rgb_std=MICRO_RGB_STD,
@@ -72,6 +74,8 @@ class CoNICDataset(Dataset):
             labels_npy : path to labels.npy
             indices    : sample indices to use (None = all)
             size       : output (H, W) - images are already 256×256
+            resize_mode: "stretch" for direct resize, "pad" for keep-aspect
+                         long-side resize plus centered padding.
             augment    : random horizontal/vertical flips
             rgb_mean / rgb_std / do_normalize : fixed normalisation after scaling to [0, 1].
         """
@@ -83,6 +87,7 @@ class CoNICDataset(Dataset):
             indices = list(range(len(self.images)))
         self.indices = indices
         self.size = size
+        self.resize_mode = resize_mode
         self.augment = augment
         self.do_normalize = do_normalize
         self.rgb_mean = torch.tensor(rgb_mean, dtype=torch.float32).view(3, 1, 1)
@@ -104,11 +109,15 @@ class CoNICDataset(Dataset):
         else:
             h, w = self.size
         if img.shape[:2] != (h, w):
-            img  = cv2.resize(img,  (w, h), interpolation=cv2.INTER_LINEAR)
-            inst = cv2.resize(inst.astype(np.float32), (w, h),
-                              interpolation=cv2.INTER_NEAREST).astype(np.int64)
-            sem  = cv2.resize(sem.astype(np.float32), (w, h),
-                              interpolation=cv2.INTER_NEAREST).astype(np.int64)
+            img, resized_masks, _ = resize_image_and_masks(
+                img,
+                [sem.astype(np.int64), inst.astype(np.int64)],
+                (h, w),
+                mode=self.resize_mode,
+                mask_pad_values=[255, 0],
+            )
+            sem = resized_masks[0].astype(np.int64)
+            inst = resized_masks[1].astype(np.int64)
 
         if self.augment:
             if np.random.rand() > 0.5:

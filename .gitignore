@@ -4,6 +4,7 @@ dinov3/ChannelViT/
 outputs/
 *.egg-info/
 **/__pycache__/
+*.py[cod]
 
 **/.ipynb_checkpoints
 **/.ipynb_checkpoints/**
@@ -18,6 +19,11 @@ outputs/
 
 # Ignore vscode directory
 .vscode/
+.agents/
+.claude/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 benchmark_data/features
 benchmark_data
 dinov3/.cursorrulues
@@ -28,20 +34,46 @@ dinov3/dataset_webdataset/
 dinov3/smart_sharding
 dinov3/dataset_webdataset
 cache
+ckpt/
 dinov3/eval/segmentation/models/utils/ops/build_msda.log
 dinov3/md
 local_dino
 README.md
 dinov3/data/repackage/pipeline.md
 logs
+nan_logs/
 outputs
 plot
+pymp-*/
+shared_envs/
+tasks/
+nohup.out
+/config.yaml
+/training_metrics.json
+/--*
+/optim.gradient_accumulation_steps=*
+/train.batch_size_per_gpu=*
+
+# Large generated artifacts, checkpoints, and local dataset/cache payloads
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+*.npy
+*.npz
+*.tar
+*.tar.gz
+*.tgz
+*.zip
 run_one_dataset_ckpts_b.sh
 run_one_dataset_ckpts_b1.sh
 run_one_dataset_ckpts_s.sh
 run_one_dataset_ckpts.sh
 BIO_TRAIN_TEST_GUIDE.md
 benchmark_runs
+dinov3/eval/bio_segmentation/assets/bioseg_protocol_comparison.png
+dinov3/eval/bio_segmentation/assets/bioseg_protocol_comparison.svg
 
 # Ignore Office documents (internal discussion docs)
 *.docx

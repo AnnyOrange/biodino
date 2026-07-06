@@ -1,0 +1,60 @@
+# ViT-L/16 robust continuation on 5TB plus 10% ID weak train-only data.
+# mixwds_robust randomly interleaves sources per sample with the weights below.
+
+train:
+  dataset_path: "mixwds_robust:0.9=/mnt/huawei_deepcad/final-data/5TB/filtered_mixed_train_5TB_nested-*.tar||0.1=/mnt/huawei_deepcad/dinov3/tasks/id_weak_train_collection/wds/id_weak_train-*.tar::pct=1,99"
+  batch_size_per_gpu: 32
+  num_workers: 10
+  OFFICIAL_EPOCH_LENGTH: 1025
+  output_dir: ./outputs/bio_continue_vitl16_robust_5tb_idweak10
+  compile: false
+
+student:
+  arch: vit_large
+  patch_size: 16
+  ffn_layer: mlp
+  ffn_ratio: 4.0
+  drop_path_rate: 0.25
+  in_chans: 3
+  enable_channelvit: false
+  n_storage_tokens: 4
+  mask_k_bias: true
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+
+teacher:
+  in_chans: 3
+  enable_channelvit: false
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+
+optim:
+  epochs: 15
+  optimizer: adamw
+  lr: 1.0e-4
+  min_lr: 1.0e-6
+  warmup_epochs: 3
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 8   # 4 卡 × 32 × 8 = global 1024（L 基线是 8 卡 × 32 × accum 4）
+
+crops:
+  # robust per-channel [0,1] 归一化后的统计（≠ 原 ÷65535 分布的 mean/std）。
+  rgb_mean:
+    - 0.514666
+    - 0.488834
+    - 0.498267
+  rgb_std:
+    - 0.338707
+    - 0.339202
+    - 0.336091
+
+evaluation:
+  eval_period_iterations: 2050
+
+checkpointing:
+  period: 1025
+  max_to_keep: 15

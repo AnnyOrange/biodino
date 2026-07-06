@@ -8,7 +8,7 @@
 
 train:
   dataset_path: "packwds_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar::pct=1,99"
-  batch_size_per_gpu: 4          # 512 很重 + 还要跑 Gram teacher forward,先保守防 OOM(显存健康可升到 6~8)
+  batch_size_per_gpu: 8          # 512 下 per-GPU 上限约 6~8(含 Gram teacher forward);OOM 就降到 4 并把 accum 提到 32
   num_workers: 10
   OFFICIAL_EPOCH_LENGTH: 1025
   output_dir: ./outputs/bio_continue_vitl16_robust_hires_gram
@@ -45,7 +45,7 @@ optim:
   clip_grad: 3.0
   freeze_last_layer_epochs: 1
   scaling_rule: fixed
-  gradient_accumulation_steps: 8 # 8卡 × 4 × 8 = global 256(高分辨率阶段不必 1024)
+  gradient_accumulation_steps: 16 # 8卡 × 8 × 16 = global 1024(与 #4 一致)
 
 crops:
   global_crops_size: 512         # ★ student 高分辨率

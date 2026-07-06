@@ -28,13 +28,14 @@ import os
 from glob import glob
 from typing import Optional, Tuple
 
-import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from dinov3.eval.bio_segmentation.constants import MICRO_RGB_MEAN, MICRO_RGB_STD
 from dinov3.eval.bio_segmentation.preprocessing import apply_preprocessing_single_channel
+
+from .base import resize_image_and_masks
 
 logger = logging.getLogger(__name__)
 
@@ -52,23 +53,32 @@ class TissueNetDataset(Dataset):
         self,
         npz_path: str,
         target: str = 'nuclear',
-        size: Tuple[int, int] = (448, 448),
+        size: Optional[Tuple[int, int]] = (448, 448),
+        resize_mode: str = "stretch",
         augment: bool = False,
         norm_mode: str = 'percentile',
         cache_preprocessed: bool = False,
         rgb_mean=MICRO_RGB_MEAN,
         rgb_std=MICRO_RGB_STD,
         do_normalize: bool = True,
+        multichannel: bool = False,
     ):
         """
         Args:
             npz_path  : path to the .npz file (e.g. tissuenet_v1.1_train.npz).
             target    : 'nuclear' (y[..., 0]) or 'cell' (y[..., 1]).
             size      : output (H, W).
+            resize_mode: "stretch" for direct resize, "pad" for keep-aspect
+                         long-side resize plus centered padding.
             augment   : random horizontal/vertical flips.
             norm_mode : per-channel normalisation – 'minmax', 'percentile', or 'hybrid'.
             cache_preprocessed : eagerly build a pseudo-RGB cache in RAM for faster training.
             rgb_mean / rgb_std / do_normalize : fixed normalisation on tensors after pseudo-RGB.
+            multichannel : if True, return the TRUE 2-channel tensor [2,H,W]
+                         (ch0=nuclear, ch1=whole-cell), per-channel normalised, instead of
+                         the pseudo-RGB [3,H,W]. Lets the dual-route stem's pool path activate
+                         on real channels. Default False keeps the historical pseudo-RGB path
+                         byte-for-byte. (cache_preprocessed is ignored in this mode.)
         """
         logger.info(f"Loading TissueNet from {npz_path} ...")
         data = np.load(npz_path, mmap_mode='r')
@@ -77,9 +87,11 @@ class TissueNetDataset(Dataset):
 
         self.target    = 0 if target == 'nuclear' else 1
         self.size      = size
+        self.resize_mode = resize_mode
         self.augment   = augment
         self.norm_mode = norm_mode
-        self.cache_preprocessed = cache_preprocessed
+        self.multichannel = multichannel
+        self.cache_preprocessed = cache_preprocessed and not multichannel
         self.do_normalize = do_normalize
         self.rgb_mean = torch.tensor(rgb_mean, dtype=torch.float32).view(3, 1, 1)
         self.rgb_std = torch.tensor(rgb_std, dtype=torch.float32).view(3, 1, 1)
@@ -147,6 +159,17 @@ class TissueNetDataset(Dataset):
                                                   mode=self.norm_mode)
         return np.stack([ch0, ch1, ch0], axis=-1)   # [H, W, 3]
 
+    def _make_multichannel(self, x: np.ndarray) -> np.ndarray:
+        """
+        Convert (H, W, 2) fluorescence image to TRUE 2-channel [H, W, 2] in [0, 1]
+        (ch0=nuclear, ch1=whole-cell), per-channel normalised — NO pseudo-RGB duplication.
+        """
+        ch0 = apply_preprocessing_single_channel(x[:, :, 0].astype(np.float32),
+                                                  mode=self.norm_mode)
+        ch1 = apply_preprocessing_single_channel(x[:, :, 1].astype(np.float32),
+                                                  mode=self.norm_mode)
+        return np.stack([ch0, ch1], axis=-1)   # [H, W, 2]
+
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Returns a 3-tuple:
@@ -154,21 +177,31 @@ class TissueNetDataset(Dataset):
             sem_t  : [H, W] int64  binary semantic (0=bg, 1=cell)
             inst_t : [H, W] int64  instance IDs   (0=bg, 1..N)
         """
-        if self.rgb_cache is not None:
+        if self.multichannel:
+            img = self._make_multichannel(self.X[idx])   # [H, W, 2] float32 — true channels
+        elif self.rgb_cache is not None:
             img = self.rgb_cache[idx].astype(np.float32, copy=False)
         else:
             img = self._make_rgb(self.X[idx])        # [H, W, 3] float32
         inst = self.y[idx, :, :, self.target].astype(np.int64)  # [H, W]
 
         # Resize only when a fixed output size is requested
+        valid_mask = None
         if self.size is not None:
             h, w = self.size
             if img.shape[:2] != (h, w):
-                img  = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
-                inst = cv2.resize(inst.astype(np.float32), (w, h),
-                                  interpolation=cv2.INTER_NEAREST).astype(np.int64)
+                img, resized_masks, valid_mask = resize_image_and_masks(
+                    img,
+                    [inst.astype(np.int64)],
+                    (h, w),
+                    mode=self.resize_mode,
+                    mask_pad_values=[0],
+                )
+                inst = resized_masks[0].astype(np.int64)
 
         sem = (inst > 0).astype(np.int64)
+        if valid_mask is not None:
+            sem[~valid_mask] = 255
 
         if self.augment:
             if np.random.rand() > 0.5:
@@ -180,9 +213,18 @@ class TissueNetDataset(Dataset):
                 inst = np.flip(inst, axis=0).copy()
                 sem  = np.flip(sem,  axis=0).copy()
 
-        img_t = torch.from_numpy(img).permute(2, 0, 1).float()
+        img_t = torch.from_numpy(img).permute(2, 0, 1).float()   # [C, H, W], C=2 (mc) or 3 (rgb)
         if self.do_normalize:
-            img_t = (img_t - self.rgb_mean) / self.rgb_std
+            if self.multichannel:
+                # per-channel (x-mean)/std, cycling the 3-element stats to C channels,
+                # mirroring training's _adapt_stats_to_channels (data/augmentations.py).
+                c = img_t.shape[0]
+                ci = torch.tensor([i % 3 for i in range(c)])
+                mean = self.rgb_mean.view(-1)[ci].view(c, 1, 1)
+                std = self.rgb_std.view(-1)[ci].view(c, 1, 1)
+                img_t = (img_t - mean) / std
+            else:
+                img_t = (img_t - self.rgb_mean) / self.rgb_std
         sem_t = torch.from_numpy(sem).long()
         inst_t = torch.from_numpy(inst).long()
         return img_t, sem_t, inst_t

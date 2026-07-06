@@ -6,6 +6,7 @@ optional dataset extraction -> feature extraction -> cached linear probe.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import logging
 import os
 import re
@@ -26,6 +27,7 @@ SUPPORTED_DATASETS = (
     "conic",
     "livecell",
     "monuseg",
+    "multimodal_cellseg",
     "pannuke",
     "tissuenet",
 )
@@ -36,9 +38,78 @@ DEFAULT_IMG_SIZE_BY_DATASET = {
     "conic": 256,
     "livecell": 512,
     "monuseg": 512,
+    "multimodal_cellseg": 512,
     "pannuke": 256,
     "tissuenet": 256,
 }
+
+
+BEST_PROTOCOL_BY_DATASET = {
+    # Empirical best validation protocol from the 3090 DINOv3-H+ sweep.
+    # Keep native 256 patches where available; use pad for variable-aspect data.
+    "bbbc038": {
+        "feature_img_size": 512,
+        "resize_mode": "pad",
+        "layer_preset": "even4",
+        "probe_class_weight_mode": "none",
+    },
+    "cellpose": {
+        "feature_img_size": 512,
+        "resize_mode": "pad",
+        "layer_preset": "last1",
+        "probe_class_weight_mode": "none",
+    },
+    "conic": {
+        "feature_img_size": 256,
+        "resize_mode": "stretch",
+        "layer_preset": "even4",
+        "probe_class_weight_mode": "sqrt_inverse",
+    },
+    "livecell": {
+        "feature_img_size": 512,
+        "resize_mode": "pad",
+        "layer_preset": "even4",
+        "probe_class_weight_mode": "none",
+    },
+    "monuseg": {
+        "feature_img_size": 768,
+        "resize_mode": "pad",
+        "layer_preset": "last1",
+        "probe_class_weight_mode": "none",
+    },
+    "multimodal_cellseg": {
+        "feature_img_size": 512,
+        "resize_mode": "pad",
+        "layer_preset": "last1",
+        "probe_class_weight_mode": "none",
+    },
+    "pannuke": {
+        "feature_img_size": 256,
+        "resize_mode": "stretch",
+        "layer_preset": "even4",
+        "probe_class_weight_mode": "none",
+    },
+    "tissuenet": {
+        "feature_img_size": 256,
+        "resize_mode": "stretch",
+        "layer_preset": "last1",
+        "probe_class_weight_mode": "none",
+    },
+}
+
+
+@dataclass(frozen=True)
+class DatasetRunJob:
+    dataset: str
+    feature_img_size_arg: int
+    img_size: int
+    resize_mode: str
+    layers: Optional[List[int]]
+    layers_tag: str
+    cache_run_name: str
+    output_run_name: str
+    probe_class_weight_mode: str
+    probe_class_weight_beta: float
 
 
 def _run_cmd(cmd: List[str], env: Dict[str, str], dry_run: bool) -> None:
@@ -135,6 +206,8 @@ def _resolve_data_root(data_root_base: Path, dataset: str) -> Path:
             if candidate.exists():
                 return candidate
         return candidates[0]
+    if dataset == "multimodal_cellseg":
+        return data_root_base / "Multimodal_CellSeg" / "neurips22_cellseg"
     return data_root_base / dataset / "extracted"
 
 
@@ -153,6 +226,10 @@ def _resolve_layers_tag(layers: Sequence[int] | None) -> str:
     return "custom_" + "_".join(str(x) for x in layers)
 
 
+def _resize_cache_tag(resize_mode: str) -> str:
+    return "" if resize_mode == "stretch" else f"_{resize_mode}"
+
+
 def _infer_arch_depth(train_config: Path) -> Tuple[str, int]:
     text = train_config.read_text(errors="ignore")
     match = re.search(r"^\s*arch:\s*([A-Za-z0-9_+-]+)\s*$", text, flags=re.MULTILINE)
@@ -161,6 +238,7 @@ def _infer_arch_depth(train_config: Path) -> Tuple[str, int]:
         "vit_small": 12,
         "vit_base": 12,
         "vit_large": 24,
+        "vit_huge2": 32,
         "vit_7b": 40,
     }
     depth = depth_by_arch.get(arch)
@@ -235,6 +313,158 @@ def _resolve_layer_jobs(
     return deduped
 
 
+def _resolve_layer_preset(preset: str, depth: int) -> Tuple[Optional[List[int]], str]:
+    key = preset.lower().replace("-", "_")
+    if key == "last1":
+        return None, "last1"
+    if key in {"even4", "four_even", "multilayer", "multi_layer"}:
+        layers = _even4_layers(depth)
+        return layers, _resolve_layers_tag(layers)
+    if key == "last4":
+        layers = _last4_layers(depth)
+        return layers, _resolve_layers_tag(layers)
+    raise ValueError(f"Unsupported protocol layer_preset={preset!r}.")
+
+
+def _make_manual_run_name(
+    *,
+    run_name: str,
+    layer_jobs_count: int,
+    layers_tag: str,
+    resize_mode: str,
+) -> str:
+    effective_run_name = (
+        run_name
+        if layer_jobs_count == 1 and layers_tag == "last1"
+        else f"{run_name}__{layers_tag}"
+    )
+    if resize_mode != "stretch":
+        effective_run_name = f"{effective_run_name}__{resize_mode}"
+    return effective_run_name
+
+
+def _make_best_run_names(
+    *,
+    run_name: str,
+    layers_tag: str,
+    resize_mode: str,
+    img_size: int,
+    class_weight_mode: str,
+) -> Tuple[str, str]:
+    cache_run_name = f"{run_name}__best__{layers_tag}"
+    if resize_mode != "stretch":
+        cache_run_name = f"{cache_run_name}__{resize_mode}"
+    cache_run_name = f"{cache_run_name}__s{img_size}"
+
+    output_run_name = cache_run_name
+    if class_weight_mode != "none":
+        output_run_name = f"{output_run_name}__cw_{class_weight_mode}"
+    return cache_run_name, output_run_name
+
+
+def _resolve_dataset_jobs(
+    *,
+    datasets: Sequence[str],
+    protocol: str,
+    run_name: str,
+    train_config: Path,
+    explicit_layers: Optional[Sequence[int]],
+    layer_presets: Optional[Sequence[str]],
+    feature_img_size: int,
+    resize_mode: str,
+    probe_class_weight_mode: str,
+    probe_class_weight_beta: float,
+) -> List[DatasetRunJob]:
+    if protocol == "manual":
+        layer_jobs = _resolve_layer_jobs(
+            explicit_layers=explicit_layers,
+            presets=layer_presets,
+            train_config=train_config,
+        )
+        jobs: List[DatasetRunJob] = []
+        for layers, layers_tag in layer_jobs:
+            effective_run_name = _make_manual_run_name(
+                run_name=run_name,
+                layer_jobs_count=len(layer_jobs),
+                layers_tag=layers_tag,
+                resize_mode=resize_mode,
+            )
+            for dataset in datasets:
+                jobs.append(
+                    DatasetRunJob(
+                        dataset=dataset,
+                        feature_img_size_arg=feature_img_size,
+                        img_size=_resolve_img_size(dataset, feature_img_size),
+                        resize_mode=resize_mode,
+                        layers=layers,
+                        layers_tag=layers_tag,
+                        cache_run_name=effective_run_name,
+                        output_run_name=effective_run_name,
+                        probe_class_weight_mode=probe_class_weight_mode,
+                        probe_class_weight_beta=probe_class_weight_beta,
+                    )
+                )
+        return jobs
+
+    if protocol != "best":
+        raise ValueError(f"Unknown protocol={protocol!r}.")
+
+    ignored = []
+    if explicit_layers is not None:
+        ignored.append("--layers")
+    if layer_presets:
+        ignored.append("--layer-preset")
+    if feature_img_size != 0:
+        ignored.append("--feature-img-size")
+    if resize_mode != "stretch":
+        ignored.append("--resize-mode")
+    if probe_class_weight_mode != "none":
+        ignored.append("--probe-class-weight-mode")
+    if ignored:
+        logger.warning(
+            "--protocol best ignores manual feature/layer/weight arguments: %s",
+            ", ".join(ignored),
+        )
+
+    arch, depth = _infer_arch_depth(train_config)
+    jobs = []
+    for dataset in datasets:
+        cfg = BEST_PROTOCOL_BY_DATASET[dataset]
+        layers, layers_tag = _resolve_layer_preset(str(cfg["layer_preset"]), depth)
+        img_size = _resolve_img_size(dataset, int(cfg["feature_img_size"]))
+        job_resize_mode = str(cfg["resize_mode"])
+        job_class_weight_mode = str(cfg["probe_class_weight_mode"])
+        cache_run_name, output_run_name = _make_best_run_names(
+            run_name=run_name,
+            layers_tag=layers_tag,
+            resize_mode=job_resize_mode,
+            img_size=img_size,
+            class_weight_mode=job_class_weight_mode,
+        )
+        jobs.append(
+            DatasetRunJob(
+                dataset=dataset,
+                feature_img_size_arg=img_size,
+                img_size=img_size,
+                resize_mode=job_resize_mode,
+                layers=layers,
+                layers_tag=layers_tag,
+                cache_run_name=cache_run_name,
+                output_run_name=output_run_name,
+                probe_class_weight_mode=job_class_weight_mode,
+                probe_class_weight_beta=probe_class_weight_beta,
+            )
+        )
+
+    logger.info(
+        "Best protocol arch=%s depth=%d resolved even4=%s",
+        arch,
+        depth,
+        _even4_layers(depth),
+    )
+    return jobs
+
+
 def _check_datasets(datasets: Sequence[str]) -> None:
     bad = [d for d in datasets if d not in SUPPORTED_DATASETS]
     if bad:
@@ -303,10 +533,24 @@ def main() -> None:
         action="store_true",
         help="Pass --overwrite to extract_datasets.",
     )
+    parser.add_argument(
+        "--protocol",
+        choices=["manual", "best"],
+        default="manual",
+        help="manual uses the CLI feature/layer settings. best applies the "
+             "dataset-specific validation-best bio-seg protocol.",
+    )
 
     # Feature extraction settings
     parser.add_argument("--skip-feature-extraction", action="store_true")
     parser.add_argument("--feature-img-size", type=int, default=0)
+    parser.add_argument(
+        "--resize-mode",
+        choices=["stretch", "pad"],
+        default="stretch",
+        help="Feature-cache resize mode: stretch is the historical square resize; "
+             "pad keeps aspect ratio with long-side resize and ignored padding.",
+    )
     parser.add_argument("--layers", type=int, nargs="+", default=None)
     parser.add_argument(
         "--layer-preset",
@@ -331,6 +575,15 @@ def main() -> None:
              "auto-enables this for multi-layer jobs to avoid a large final "
              "np.concatenate step.",
     )
+    parser.add_argument(
+        "--multichannel",
+        action="store_true",
+        help="ADDITIVE multichannel eval: pass --multichannel to feature_extractor so the "
+             "dataset's TRUE channels are fed (no 3ch collapse) to spatial multi-channel stems. "
+             "Run/cache names get a '_mc' suffix so results don't collide with the RGB run. "
+             "Only meaningful for stem_type=dualroute/residual_mc + a multichannel-capable "
+             "dataset (currently tissuenet).",
+    )
 
     # Linear probe settings
     parser.add_argument("--probe-epochs", type=int, default=50)
@@ -339,6 +592,18 @@ def main() -> None:
     parser.add_argument("--probe-weight-decay", type=float, default=1e-4)
     parser.add_argument("--probe-num-workers", type=int, default=4)
     parser.add_argument("--probe-eval-every", type=int, default=5)
+    parser.add_argument(
+        "--probe-class-weight-mode",
+        default="none",
+        choices=["none", "inverse", "sqrt_inverse", "median_frequency", "effective_number"],
+        help="Pass class-balanced CE weighting to the cached linear probe.",
+    )
+    parser.add_argument(
+        "--probe-class-weight-beta",
+        type=float,
+        default=0.999,
+        help="Beta for effective_number class weighting.",
+    )
     parser.add_argument("--skip-test-eval", action="store_true")
     parser.add_argument("--semantic-only", action="store_true")
     parser.add_argument(
@@ -366,11 +631,20 @@ def main() -> None:
         parser.error(f"--train-config not found: {train_config}")
     cfg_stem = train_config.stem
     run_name = args.run_name or cfg_stem
+    if args.multichannel:
+        run_name = f"{run_name}_mc"   # keep mc cache + results separate from the RGB run
     try:
-        layer_jobs = _resolve_layer_jobs(
-            explicit_layers=args.layers,
-            presets=args.layer_preset,
+        dataset_jobs = _resolve_dataset_jobs(
+            datasets=args.datasets,
+            protocol=args.protocol,
+            run_name=run_name,
             train_config=train_config,
+            explicit_layers=args.layers,
+            layer_presets=args.layer_preset,
+            feature_img_size=args.feature_img_size,
+            resize_mode=args.resize_mode,
+            probe_class_weight_mode=args.probe_class_weight_mode,
+            probe_class_weight_beta=args.probe_class_weight_beta,
         )
     except ValueError as err:
         parser.error(str(err))
@@ -405,7 +679,17 @@ def main() -> None:
     logger.info("Checkpoint source: %s", checkpoints_label)
     logger.info("Selected ckpt iters: %s", selected_iters)
     logger.info("Train config: %s", train_config)
-    logger.info("run_name=%s layer_jobs=%s", run_name, [tag for _, tag in layer_jobs])
+    logger.info("run_name=%s protocol=%s", run_name, args.protocol)
+    logger.info(
+        "Dataset jobs: %s",
+        [
+            (
+                f"{job.dataset}:s{job.img_size},{job.resize_mode},"
+                f"{job.layers_tag},cw={job.probe_class_weight_mode}"
+            )
+            for job in dataset_jobs
+        ],
+    )
 
     if args.fast_eval:
         args.probe_epochs = min(args.probe_epochs, 10)
@@ -417,16 +701,14 @@ def main() -> None:
             args.probe_epochs,
         )
 
-    auto_no_compress = any(layers is not None and len(layers) > 1 for layers, _ in layer_jobs)
-    no_compress_cache = args.no_compress_cache or auto_no_compress
-    auto_chunked_cache = any(layers is not None and len(layers) > 1 for layers, _ in layer_jobs)
-    chunked_cache = args.chunked_cache or auto_chunked_cache
-    if no_compress_cache:
+    auto_no_compress = any(job.layers is not None and len(job.layers) > 1 for job in dataset_jobs)
+    auto_chunked_cache = any(job.layers is not None and len(job.layers) > 1 for job in dataset_jobs)
+    if args.no_compress_cache or auto_no_compress:
         logger.info(
             "Feature cache compression disabled%s.",
             " automatically for multi-layer extraction" if auto_no_compress and not args.no_compress_cache else "",
         )
-    if chunked_cache:
+    if args.chunked_cache or auto_chunked_cache:
         logger.info(
             "Feature cache chunked saving enabled%s.",
             " automatically for multi-layer extraction" if auto_chunked_cache and not args.chunked_cache else "",
@@ -455,106 +737,112 @@ def main() -> None:
 
     for iter_id in selected_iters:
         ckpt_path = discovered[iter_id]
-        for layers, layers_tag in layer_jobs:
-            effective_run_name = (
-                run_name
-                if len(layer_jobs) == 1 and layers_tag == "last1"
-                else f"{run_name}__{layers_tag}"
-            )
-            for dataset in args.datasets:
-                data_root = _resolve_data_root(data_root_base, dataset)
-                if not args.dry_run and not data_root.exists():
+        for job in dataset_jobs:
+            dataset = job.dataset
+            data_root = _resolve_data_root(data_root_base, dataset)
+            if not args.dry_run and not data_root.exists():
+                raise FileNotFoundError(
+                    f"Dataset root not found for {dataset}: {data_root}\n"
+                    f"Set --data-root-base correctly or use --extract-src-dir first."
+                )
+
+            cache_dir = cache_root / job.cache_run_name / dataset / str(iter_id)
+            output_dir = output_root / job.output_run_name / dataset / str(iter_id)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            if not args.skip_feature_extraction:
+                splits = ("train", "val") if args.skip_test_eval else ("train", "val", "test")
+                for split in splits:
+                    job_multilayer = job.layers is not None and len(job.layers) > 1
+                    job_no_compress_cache = args.no_compress_cache or job_multilayer
+                    job_chunked_cache = args.chunked_cache or job_multilayer
+                    feature_cmd = [
+                        sys.executable,
+                        "-m",
+                        "dinov3.eval.bio_segmentation.feature_extractor",
+                        "--dataset",
+                        dataset,
+                        "--data-root",
+                        str(data_root),
+                        "--checkpoint",
+                        str(ckpt_path),
+                        "--train-config",
+                        str(train_config),
+                        "--output-dir",
+                        str(cache_dir),
+                        "--split",
+                        split,
+                        "--img-size",
+                        str(job.feature_img_size_arg),
+                        "--resize-mode",
+                        job.resize_mode,
+                        "--batch-size",
+                        str(args.feature_batch_size),
+                        "--num-workers",
+                        str(args.feature_num_workers),
+                    ]
+                    if job.layers:
+                        feature_cmd.extend(["--layers", *[str(x) for x in job.layers]])
+                    if job_no_compress_cache:
+                        feature_cmd.append("--no-compress-cache")
+                    if job_chunked_cache:
+                        feature_cmd.append("--chunked-cache")
+                    if args.multichannel:
+                        feature_cmd.append("--multichannel")
+                    _run_cmd(feature_cmd, env=env, dry_run=args.dry_run)
+
+            resize_tag = _resize_cache_tag(job.resize_mode)
+            mc_tag = "_mc" if args.multichannel else ""   # matches feature_extractor out_path suffix
+            train_cache = cache_dir / f"{dataset}_train_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}.npz"
+            val_cache = cache_dir / f"{dataset}_val_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}.npz"
+            test_cache = cache_dir / f"{dataset}_test_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}.npz"
+
+            if not args.dry_run:
+                required_caches = (train_cache, val_cache) if args.skip_test_eval else (train_cache, val_cache, test_cache)
+                missing_cache = [str(p) for p in required_caches if not p.is_file()]
+                if missing_cache:
                     raise FileNotFoundError(
-                        f"Dataset root not found for {dataset}: {data_root}\n"
-                        f"Set --data-root-base correctly or use --extract-src-dir first."
+                        "Expected cache file(s) not found:\n"
+                        + "\n".join(missing_cache)
                     )
 
-                cache_dir = cache_root / effective_run_name / dataset / str(iter_id)
-                output_dir = output_root / effective_run_name / dataset / str(iter_id)
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                output_dir.mkdir(parents=True, exist_ok=True)
-
-                if not args.skip_feature_extraction:
-                    splits = ("train", "val") if args.skip_test_eval else ("train", "val", "test")
-                    for split in splits:
-                        feature_cmd = [
-                            sys.executable,
-                            "-m",
-                            "dinov3.eval.bio_segmentation.feature_extractor",
-                            "--dataset",
-                            dataset,
-                            "--data-root",
-                            str(data_root),
-                            "--checkpoint",
-                            str(ckpt_path),
-                            "--train-config",
-                            str(train_config),
-                            "--output-dir",
-                            str(cache_dir),
-                            "--split",
-                            split,
-                            "--img-size",
-                            str(args.feature_img_size),
-                            "--batch-size",
-                            str(args.feature_batch_size),
-                            "--num-workers",
-                            str(args.feature_num_workers),
-                        ]
-                        if layers:
-                            feature_cmd.extend(["--layers", *[str(x) for x in layers]])
-                        if no_compress_cache:
-                            feature_cmd.append("--no-compress-cache")
-                        if chunked_cache:
-                            feature_cmd.append("--chunked-cache")
-                        _run_cmd(feature_cmd, env=env, dry_run=args.dry_run)
-
-                img_size = _resolve_img_size(dataset, args.feature_img_size)
-                train_cache = cache_dir / f"{dataset}_train_{cfg_stem}_{layers_tag}_s{img_size}.npz"
-                val_cache = cache_dir / f"{dataset}_val_{cfg_stem}_{layers_tag}_s{img_size}.npz"
-                test_cache = cache_dir / f"{dataset}_test_{cfg_stem}_{layers_tag}_s{img_size}.npz"
-
-                if not args.dry_run:
-                    required_caches = (train_cache, val_cache) if args.skip_test_eval else (train_cache, val_cache, test_cache)
-                    missing_cache = [str(p) for p in required_caches if not p.is_file()]
-                    if missing_cache:
-                        raise FileNotFoundError(
-                            "Expected cache file(s) not found:\n"
-                            + "\n".join(missing_cache)
-                        )
-
-                probe_cmd = [
-                    sys.executable,
-                    "-m",
-                    "dinov3.eval.bio_segmentation.linear_probe",
-                    "--dataset",
-                    dataset,
-                    "--use-cached-features",
-                    "--train-cache",
-                    str(train_cache),
-                    "--val-cache",
-                    str(val_cache),
-                    "--output-dir",
-                    str(output_dir),
-                    "--epochs",
-                    str(args.probe_epochs),
-                    "--batch-size",
-                    str(args.probe_batch_size),
-                    "--lr",
-                    str(args.probe_lr),
-                    "--weight-decay",
-                    str(args.probe_weight_decay),
-                    "--num-workers",
-                    str(args.probe_num_workers),
-                    "--eval-every",
-                    str(args.probe_eval_every),
-                ]
-                if not args.skip_test_eval:
-                    probe_cmd.extend(["--test-cache", str(test_cache)])
-                else:
-                    probe_cmd.append("--skip-test-eval")
-                if args.semantic_only:
-                    probe_cmd.append("--semantic-only")
-                _run_cmd(probe_cmd, env=env, dry_run=args.dry_run)
+            probe_cmd = [
+                sys.executable,
+                "-m",
+                "dinov3.eval.bio_segmentation.linear_probe",
+                "--dataset",
+                dataset,
+                "--use-cached-features",
+                "--train-cache",
+                str(train_cache),
+                "--val-cache",
+                str(val_cache),
+                "--output-dir",
+                str(output_dir),
+                "--epochs",
+                str(args.probe_epochs),
+                "--batch-size",
+                str(args.probe_batch_size),
+                "--lr",
+                str(args.probe_lr),
+                "--weight-decay",
+                str(args.probe_weight_decay),
+                "--num-workers",
+                str(args.probe_num_workers),
+                "--eval-every",
+                str(args.probe_eval_every),
+            ]
+            if not args.skip_test_eval:
+                probe_cmd.extend(["--test-cache", str(test_cache)])
+            else:
+                probe_cmd.append("--skip-test-eval")
+            if args.semantic_only:
+                probe_cmd.append("--semantic-only")
+            if job.probe_class_weight_mode != "none":
+                probe_cmd.extend(["--class-weight-mode", job.probe_class_weight_mode])
+                probe_cmd.extend(["--class-weight-beta", str(job.probe_class_weight_beta)])
+            _run_cmd(probe_cmd, env=env, dry_run=args.dry_run)
 
     logger.info("Pipeline done.")
 

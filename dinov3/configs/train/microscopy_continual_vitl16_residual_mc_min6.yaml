@@ -1,0 +1,97 @@
+# ViT-L/16 residual multi-channel stem, stress-test on true 6-8ch samples.
+#
+# Difference from microscopy_continual_vitl16_residual_mc.yaml:
+#   * packwds_chvit_robust filters samples with fewer than 6 real channels
+#   * stats are estimated on min_channels>=6 robust tensors
+#
+# This is the cleaner experiment for: can ch4+ residuals help when the batch is
+# actually multi-channel? Use the mixed residual_mc config for the safer
+# "does not hurt <=3ch/RGB-like data" check.
+
+train:
+  dataset_path: "packwds_chvit_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar::min_channels=6,pct=1,99"
+  batch_size_per_gpu: 16
+  num_workers: 10
+  OFFICIAL_EPOCH_LENGTH: 1025
+  output_dir: ./outputs/bio_continue_vitl16_residual_mc_min6
+  compile: false
+
+student:
+  arch: vit_large
+  patch_size: 16
+  ffn_layer: mlp
+  ffn_ratio: 4.0
+  drop_path_rate: 0.25
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: residual_mc
+  n_storage_tokens: 4
+  mask_k_bias: true
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+
+teacher:
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: residual_mc
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+
+optim:
+  epochs: 15
+  optimizer: adamw
+  lr: 1.0e-4
+  min_lr: 1.0e-6
+  warmup_epochs: 3
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 8
+
+crops:
+  global_crops_scale:
+    - 0.32
+    - 1.0
+  local_crops_number: 8
+  local_crops_scale:
+    - 0.05
+    - 0.32
+  global_crops_size: 224
+  local_crops_size: 96
+  global_local_crop_pairs_ratios: 1.0
+  gram_teacher_crops_size: null
+  localcrops_subset_of_globalcrops: false
+  share_color_jitter: false
+  horizontal_flips: true
+  gram_teacher_no_distortions: false
+  # Decoder already returns float32 [0,1] after percentile normalization.
+  float_input: true
+  # Estimated on 1000 robust samples with >=6 present channels. ch7/ch8 have
+  # fewer samples than ch1-6, but this is still better than cycling RGB stats.
+  rgb_mean:
+    - 0.184887
+    - 0.275656
+    - 0.328689
+    - 0.176789
+    - 0.189616
+    - 0.169213
+    - 0.453678
+    - 0.528373
+  rgb_std:
+    - 0.219576
+    - 0.261338
+    - 0.258673
+    - 0.276958
+    - 0.258753
+    - 0.225394
+    - 0.209363
+    - 0.179011
+
+evaluation:
+  eval_period_iterations: 0
+
+checkpointing:
+  period: 1025
+  max_to_keep: null

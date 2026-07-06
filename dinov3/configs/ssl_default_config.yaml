@@ -99,6 +99,8 @@ student:
   untie_cls_and_patch_norms: false  # If true, use separate norms for CLS/reg and patch/mask tokens
   untie_global_and_local_cls_norm: false  # If true, use separate norms for local and global crop CLS token during training
   in_chans: 3
+  enable_channelvit: false
+  stem_type: null  # null/"auto" = standard PatchEmbed or enable_channelvit; "dualroute" = hard RGB/pool switch; "residual_mc" = RGB base + ch4+ residual
   pos_embed_type: rope
   pos_embed_rope_base: 100.0
   pos_embed_rope_min_period: null
@@ -117,6 +119,8 @@ teacher:
   teacher_temp: 0.07
   warmup_teacher_temp_epochs: 30
   in_chans: 3
+  enable_channelvit: false
+  stem_type: null
 distillation:  # teacher
   enabled: false
   full_cfg_path: ""
@@ -162,6 +166,7 @@ crops:
   share_color_jitter: false
   horizontal_flips: true
   gram_teacher_no_distortions: false  # If True, no distortions are applied to gram teacher crops
+  float_input: false  # Set true when decoders already output float32 [0,1] tensors
   rgb_mean:
   - 0.485
   - 0.456
