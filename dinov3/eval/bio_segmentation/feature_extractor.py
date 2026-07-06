@@ -51,7 +51,9 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from .constants import MICRO_RGB_MEAN, MICRO_RGB_STD
-from .model_utils import load_dinov3_backbone
+# NOTE: load_dinov3_backbone is imported lazily inside main() so that importing
+# this module only for `_build_dataset` (e.g. run_specialist in a cellpose-only
+# env) does not require the backbone deps (omegaconf, dinov3.models).
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
@@ -78,11 +80,21 @@ DATASET_DEFAULT_IMG_SIZES: Dict[str, int] = {
     'livecell':  512,  # ~520×696 tif images → 512
     'monuseg':   512,  # 1000×1000 H&E → 512  (slide inference for M2F)
     'pannuke':   256,  # all patches are natively 256×256
+    'multimodal_cellseg': 512,  # mixed microscopy modalities, variable sizes
     'tissuenet': 256,  # fluorescence patches, native ~256
     'cellpose':  512,
     'csc':       512,
 }
 logger = logging.getLogger('feature_extractor')
+
+
+def _is_spatial_multichannel_stem(backbone: nn.Module) -> bool:
+    return getattr(backbone, "stem_type", None) in {"dualroute", "residual_mc", "rgb_extra_residual"}
+
+
+def _resize_cache_tag(resize_mode: str) -> str:
+    """Keep legacy cache names for stretch; disambiguate pad experiments."""
+    return "" if resize_mode == "stretch" else f"_{resize_mode}"
 
 
 # ============================================================================
@@ -186,6 +198,38 @@ def _channelvit_spatial_features(
 
 
 @torch.inference_mode()
+def _build_channel_metadata(imgs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Construct (channel_ids, channel_valid_mask) for a true multichannel batch, matching the
+    training collate shapes (data/collate.py): channel_ids (C,) long, valid mask (B, C) bool.
+    All real channels are valid here (eval images are not channel-padded)."""
+    B, C = imgs.shape[0], imgs.shape[1]
+    channel_ids = torch.arange(C, dtype=torch.long, device=imgs.device)
+    channel_valid_mask = torch.ones(B, C, dtype=torch.bool, device=imgs.device)
+    return channel_ids, channel_valid_mask
+
+
+def _backbone_spatial_features(backbone, imgs, n_layers, multichannel: bool):
+    """Single source of truth for the backbone forward used by both extract paths.
+
+    Default (RGB) path is unchanged: collapse channels to backbone.in_chans, then either the
+    ChannelViT aggregation or the standard get_intermediate_layers. The NEW multichannel path
+    (only for the dual-route stem) skips the 3ch collapse and passes channel_ids/valid_mask so
+    the dual-route stem routes through its (already-trained) pool path. Returns a list of
+    [B, D, H_p, W_p] tensors."""
+    if multichannel and _is_spatial_multichannel_stem(backbone):
+        cid, cmask = _build_channel_metadata(imgs)          # real channels, NO collapse
+        return backbone.get_intermediate_layers(
+            imgs, n=n_layers, reshape=True, return_class_token=False,
+            channel_ids=cid, channel_valid_mask=cmask,
+        )
+    imgs = _prepare_input_channels(imgs, backbone)
+    if getattr(backbone, "enable_channelvit", False):
+        return _channelvit_spatial_features(backbone, imgs, n_layers)
+    return backbone.get_intermediate_layers(
+        imgs, n=n_layers, reshape=True, return_class_token=False,
+    )
+
+
 def extract_features(
     backbone:    nn.Module,
     dataset:     Dataset,
@@ -195,6 +239,7 @@ def extract_features(
     device:      torch.device = torch.device('cuda'),
     desc:        str = 'Extracting',
     return_chunks: bool = False,
+    multichannel: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Run the backbone over every sample in *dataset* and collect:
@@ -250,24 +295,14 @@ def extract_features(
             inst = torch.zeros_like(sem)
 
         imgs = imgs.to(device)   # [B, C, H, W]
-        imgs = _prepare_input_channels(imgs, backbone)
 
         # -------------------------------------------------------------------
         # Backbone forward: extract intermediate spatial patch features.
-        # get_intermediate_layers(n=k) returns the LAST k layers when k is
-        # an int; returns tuple of tensors [B, C, H_p, W_p] when reshape=True
-        # and return_class_token=False.
+        # RGB path (default): collapse to in_chans then get_intermediate_layers.
+        # multichannel path (dual-route only): keep real channels + channel mask.
         # -------------------------------------------------------------------
         with torch.autocast(device_type='cuda', enabled=True, dtype=torch.float16):
-            if getattr(backbone, "enable_channelvit", False):
-                feats_list = _channelvit_spatial_features(backbone, imgs, n_layers)
-            else:
-                feats_list = backbone.get_intermediate_layers(
-                    imgs,
-                    n=n_layers,
-                    reshape=True,
-                    return_class_token=False,
-                )
+            feats_list = _backbone_spatial_features(backbone, imgs, n_layers, multichannel)
             # Each element: [B, C, H_p, W_p] – concatenate along channel axis
             feats = torch.cat(feats_list, dim=1).float()  # [B, D, H_p, W_p]
 
@@ -373,6 +408,7 @@ def extract_features_to_cache(
     embed_dim: int,
     n_layers_scalar: int,
     compressed: bool = False,
+    multichannel: bool = False,
 ) -> None:
     """
     Streaming chunked cache writer.
@@ -418,18 +454,9 @@ def extract_features_to_cache(
                     inst = torch.zeros_like(sem)
 
                 imgs = imgs.to(device)
-                imgs = _prepare_input_channels(imgs, backbone)
 
                 with torch.autocast(device_type='cuda', enabled=True, dtype=torch.float16):
-                    if getattr(backbone, "enable_channelvit", False):
-                        feats_list = _channelvit_spatial_features(backbone, imgs, n_layers)
-                    else:
-                        feats_list = backbone.get_intermediate_layers(
-                            imgs,
-                            n=n_layers,
-                            reshape=True,
-                            return_class_token=False,
-                        )
+                    feats_list = _backbone_spatial_features(backbone, imgs, n_layers, multichannel)
                     feats = torch.cat(feats_list, dim=1).float()
 
                 feat_np = feats.half().cpu().numpy()
@@ -510,10 +537,12 @@ def _build_dataset(
     data_root: str,
     split: str,
     img_size: Optional[int],
+    resize_mode: str = "stretch",
     augment: bool = False,
     rgb_mean=MICRO_RGB_MEAN,
     rgb_std=MICRO_RGB_STD,
     do_normalize: bool = True,
+    multichannel: bool = False,
 ) -> Dataset:
     """
     Build a dataset instance from the registry.
@@ -523,6 +552,8 @@ def _build_dataset(
                    Pass None (or 0) to keep images at native resolution —
                    required for Mask2Former (random-crop training + sliding-
                    window evaluation).
+        resize_mode: "stretch" for the historical fixed square resize, or
+                   "pad" for long-side resize plus centered padding.
 
     Loader types:
         'file'  : get_paths_fn(root, split) → (img_paths, mask_paths)
@@ -552,6 +583,7 @@ def _build_dataset(
             img_paths,
             mask_paths,
             size=size,
+            resize_mode=resize_mode,
             augment=augment,
             rgb_mean=rgb_mean,
             rgb_std=rgb_std,
@@ -564,6 +596,7 @@ def _build_dataset(
             coco_json,
             img_root,
             size=size,
+            resize_mode=resize_mode,
             augment=augment,
             rgb_mean=rgb_mean,
             rgb_std=rgb_std,
@@ -578,6 +611,7 @@ def _build_dataset(
                 labels_npy,
                 indices=indices,
                 size=size,
+                resize_mode=resize_mode,
                 augment=augment,
                 rgb_mean=rgb_mean,
                 rgb_std=rgb_std,
@@ -591,6 +625,7 @@ def _build_dataset(
                 fold_dirs,
                 split_folds=folds,
                 size=size,
+                resize_mode=resize_mode,
                 augment=augment,
                 rgb_mean=rgb_mean,
                 rgb_std=rgb_std,
@@ -601,10 +636,12 @@ def _build_dataset(
             return DatasetClass(
                 npz_path,
                 size=size,
+                resize_mode=resize_mode,
                 augment=augment,
                 rgb_mean=rgb_mean,
                 rgb_std=rgb_std,
                 do_normalize=do_normalize,
+                multichannel=multichannel,
             )
         else:
             raise ValueError(f"Unsupported array dataset: {dataset_name}")
@@ -642,6 +679,10 @@ def main():
                              'Sizes are automatically rounded to multiples of 16 '
                              '(ViT patch size). Aligns with the official DINOv3 '
                              'segmentation crop_size=512 strategy.')
+    parser.add_argument('--resize-mode', choices=['stretch', 'pad'], default='stretch',
+                        help='How to fit images into --img-size: stretch keeps the '
+                             'historical square resize; pad preserves aspect ratio '
+                             'with long-side resize and ignores padded semantic pixels.')
     parser.add_argument('--layers',     type=int, nargs='+', default=None,
                         help='Specific layer indices to extract (e.g. --layers 4 11 17 23). '
                              'Default (not set): last layer only (n=1), matching the official '
@@ -660,6 +701,12 @@ def main():
                         help='Save each extraction batch as a separate npz entry. '
                              'This avoids a large final np.concatenate step and is '
                              'recommended for multi-layer feature tensors.')
+    parser.add_argument('--multichannel', action='store_true',
+                        help='ADDITIVE multichannel path: feed the dataset\'s TRUE channels '
+                             '(no 3ch collapse) + channel mask to spatial multi-channel stems. '
+                             'Effective for stem_type=dualroute/residual_mc '
+                             'backbones + datasets with a multichannel loader (currently tissuenet). '
+                             'Default off keeps the RGB path byte-for-byte.')
     args = parser.parse_args()
 
     # -----------------------------------------------------------------------
@@ -721,25 +768,46 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Build dataset
-    logger.info(f"Building dataset: {args.dataset} / {args.split}  img_size={img_size}")
-    dataset = _build_dataset(args.dataset, args.data_root, args.split, img_size)
+    logger.info(
+        f"Building dataset: {args.dataset} / {args.split}  "
+        f"img_size={img_size}  resize_mode={args.resize_mode}"
+    )
+    dataset = _build_dataset(
+        args.dataset,
+        args.data_root,
+        args.split,
+        img_size,
+        resize_mode=args.resize_mode,
+        multichannel=args.multichannel,
+    )
     logger.info(f"Dataset size: {len(dataset)}")
+    if args.multichannel:
+        logger.info("MULTICHANNEL mode ON for %s (dataset returns true channels).", args.dataset)
 
     cfg_tag = Path(args.train_config).stem
 
     # Load backbone
+    from .model_utils import load_dinov3_backbone
     backbone = load_dinov3_backbone(
         args.checkpoint,
         train_config_path=args.train_config,
         device=device,
         freeze=True,
     )
+    if args.multichannel and not _is_spatial_multichannel_stem(backbone):
+        logger.warning(
+            "--multichannel requested but backbone stem_type=%s (not a spatial multi-channel stem); "
+            "channels fall back to the standard collapse path.",
+            getattr(backbone, "stem_type", None),
+        )
 
     # Save path includes layer strategy and img_size for clarity.
     os.makedirs(args.output_dir, exist_ok=True)
+    mc_tag = "_mc" if args.multichannel else ""
     out_path = os.path.join(
         args.output_dir,
-        f"{args.dataset}_{args.split}_{cfg_tag}_{layers_tag}_s{img_size}.npz"
+        f"{args.dataset}_{args.split}_{cfg_tag}_{layers_tag}"
+        f"{_resize_cache_tag(args.resize_mode)}_s{img_size}{mc_tag}.npz"
     )
     n_layers_scalar = (len(layers_to_extract) if isinstance(layers_to_extract, list)
                        else layers_to_extract)
@@ -758,6 +826,7 @@ def main():
             embed_dim=backbone.embed_dim,
             n_layers_scalar=n_layers_scalar,
             compressed=not args.no_compress_cache,
+            multichannel=args.multichannel,
         )
         return
 
@@ -770,6 +839,7 @@ def main():
         device=device,
         desc=f'{args.dataset}/{args.split}',
         return_chunks=False,
+        multichannel=args.multichannel,
     )
 
     save_cache(

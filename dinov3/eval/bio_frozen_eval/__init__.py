@@ -3,9 +3,13 @@
 In-repo, self-contained port of the external `benchmark_model/` harness that
 produced the reported ``benchmark_results_*.md`` numbers. The classification,
 regression and multilabel probes are sklearn (StandardScaler + LogisticRegression
-/ Ridge / OneVsRest) on L2-normalised frozen DINOv3 features with a deterministic
-80/20 split (seed 0) — replacing the older torch-SGD probes in
-``dinov3/eval/bio_classification`` so others reproduce the published numbers.
+/ Ridge / OneVsRest) on L2-normalised frozen DINOv3 features. They use official
+test splits when available, committed group-aware splits for source-linked
+datasets, and a deterministic 80/20 split (seed 0) only as a fallback. The older
+torch-SGD bio-classification linear probe has been removed so classification runs
+produce only the published-number protocol. Classification defaults to the
+2026-06-23 five-dataset resolution ablation table where available, with 224px as
+the fallback/manual size.
 
 Entry points:
 - ``python -m dinov3.eval.bio_frozen_eval.run_classification`` — cls / reg / multilabel

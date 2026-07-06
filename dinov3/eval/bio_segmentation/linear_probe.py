@@ -137,6 +137,7 @@ class OnlineLinearSegmenter(nn.Module):
 def semantic_to_instance(
     sem_pred: np.ndarray,
     fg_classes: Optional[List[int]] = None,
+    ignore_index: int = 255,
 ) -> np.ndarray:
     """
     Convert a semantic class map to an instance map using connected components.
@@ -144,16 +145,18 @@ def semantic_to_instance(
     Args:
         sem_pred  : (H, W) predicted class map.
         fg_classes: which class IDs to treat as foreground (default: all >0).
+        ignore_index: label value excluded from foreground/background instance scoring.
 
     Returns:
         (H, W) instance map (0 = background, 1..N = instance IDs).
     """
     if fg_classes is None:
-        fg_mask = sem_pred > 0
+        fg_mask = (sem_pred > 0) & (sem_pred != ignore_index)
     else:
         fg_mask = np.zeros_like(sem_pred, dtype=bool)
         for c in fg_classes:
             fg_mask |= (sem_pred == c)
+        fg_mask &= (sem_pred != ignore_index)
 
     inst_map, _ = scipy_label(fg_mask)
     return inst_map.astype(np.int32)
@@ -279,6 +282,62 @@ def train_one_epoch_online(
     return total_loss / max(n, 1)
 
 
+def _compute_class_weights(
+    sem_masks,
+    num_classes: int,
+    ignore_index: int,
+    mode: str = "none",
+    beta: float = 0.999,
+) -> Tuple[Optional[torch.Tensor], List[float], List[int]]:
+    """Compute normalized semantic CE weights from cached train masks."""
+    mode = (mode or "none").lower()
+    counts = np.zeros(num_classes, dtype=np.int64)
+
+    chunks = sem_masks if isinstance(sem_masks, list) else [sem_masks]
+    for chunk in chunks:
+        flat = np.asarray(chunk).reshape(-1)
+        valid = (flat != ignore_index) & (flat >= 0) & (flat < num_classes)
+        if valid.any():
+            counts += np.bincount(
+                flat[valid].astype(np.int64),
+                minlength=num_classes,
+            )[:num_classes]
+
+    if mode == "none":
+        return None, [1.0] * num_classes, counts.tolist()
+
+    present = counts > 0
+    if not present.any():
+        raise ValueError("Cannot compute class weights: no valid labeled pixels found.")
+
+    weights = np.zeros(num_classes, dtype=np.float64)
+    if mode == "inverse":
+        weights[present] = 1.0 / np.maximum(counts[present].astype(np.float64), 1.0)
+    elif mode == "sqrt_inverse":
+        weights[present] = 1.0 / np.sqrt(np.maximum(counts[present].astype(np.float64), 1.0))
+    elif mode == "median_frequency":
+        freqs = counts[present].astype(np.float64) / counts[present].sum()
+        weights[present] = np.median(freqs) / np.maximum(
+            counts[present].astype(np.float64) / counts[present].sum(),
+            1e-12,
+        )
+    elif mode == "effective_number":
+        beta = float(beta)
+        if not (0.0 < beta < 1.0):
+            raise ValueError(f"class_weight_beta must be in (0, 1), got {beta}.")
+        effective_num = 1.0 - np.power(beta, counts[present].astype(np.float64))
+        weights[present] = (1.0 - beta) / np.maximum(effective_num, 1e-12)
+    else:
+        raise ValueError(
+            f"Unknown class weight mode {mode!r}. "
+            "Use none, inverse, sqrt_inverse, median_frequency, or effective_number."
+        )
+
+    # Keep the loss scale close to unweighted CE while preserving ratios.
+    weights[present] /= weights[present].mean()
+    return torch.tensor(weights, dtype=torch.float32), weights.tolist(), counts.tolist()
+
+
 # ============================================================================
 # Evaluation
 # ============================================================================
@@ -291,6 +350,7 @@ def evaluate_cached(
     orig_size:     Tuple[int, int],
     device:        torch.device,
     class_names:   Optional[List[str]] = None,
+    ignore_index:  int = 255,
     semantic_only: bool = False,
 ) -> Dict[str, float]:
     """Evaluate on cached features; returns full metric dict."""
@@ -313,21 +373,41 @@ def evaluate_cached(
         logits    = head(feat, out_size=orig_size)
         pred_sem  = logits.argmax(dim=1).cpu().numpy()
 
+        sem_i = sem.numpy()
         for i in range(len(pred_sem)):
-            all_pred_sem.append(pred_sem[i])
-            all_gt_sem.append(sem[i].numpy())
+            gt_sem_i = sem_i[i]
+            pred_sem_i = pred_sem[i]
+            all_pred_sem.append(pred_sem_i)
+            all_gt_sem.append(gt_sem_i)
             if semantic_only:
                 continue
-            pred_inst = semantic_to_instance(pred_sem[i])
+
+            # Padded pixels are ignored for loss/semantic metrics and must not
+            # become false-positive connected components in instance metrics.
+            invalid = gt_sem_i == ignore_index
+            if invalid.any():
+                pred_for_inst = pred_sem_i.copy()
+                pred_for_inst[invalid] = 0
+            else:
+                pred_for_inst = pred_sem_i
+            pred_inst = semantic_to_instance(pred_for_inst, ignore_index=ignore_index)
             all_pred_inst.append(pred_inst)
             if has_inst and inst_gt is not None:
-                all_gt_inst.append(inst_gt[i])
+                gt_inst_i = inst_gt[i]
+                if invalid.any():
+                    gt_inst_i = gt_inst_i.copy()
+                    gt_inst_i[invalid] = 0
+                all_gt_inst.append(gt_inst_i)
             else:
-                all_gt_inst.append(semantic_to_instance(sem[i].numpy()))
+                all_gt_inst.append(semantic_to_instance(gt_sem_i, ignore_index=ignore_index))
 
     # Semantic metrics
     sem_metrics = accumulate_semantic_metrics(
-        all_pred_sem, all_gt_sem, num_classes=num_classes, class_names=class_names
+        all_pred_sem,
+        all_gt_sem,
+        num_classes=num_classes,
+        class_names=class_names,
+        ignore_index=ignore_index,
     )
     if semantic_only:
         return sem_metrics
@@ -344,6 +424,7 @@ def evaluate_online(
     num_classes: int,
     device:      torch.device,
     class_names: Optional[List[str]] = None,
+    ignore_index: int = 255,
 ) -> Dict[str, float]:
     """Evaluate the full online model."""
     model.eval()
@@ -359,16 +440,30 @@ def evaluate_online(
         logits   = model(imgs)
         pred_sem = logits.argmax(dim=1).cpu().numpy()
 
+        sem_i = sem.numpy()
         for i in range(len(pred_sem)):
-            all_pred_sem.append(pred_sem[i])
-            all_gt_sem.append(sem[i].numpy())
-            pred_inst = semantic_to_instance(pred_sem[i])
+            gt_sem_i = sem_i[i]
+            pred_sem_i = pred_sem[i]
+            all_pred_sem.append(pred_sem_i)
+            all_gt_sem.append(gt_sem_i)
+
+            invalid = gt_sem_i == ignore_index
+            if invalid.any():
+                pred_for_inst = pred_sem_i.copy()
+                pred_for_inst[invalid] = 0
+            else:
+                pred_for_inst = pred_sem_i
+            pred_inst = semantic_to_instance(pred_for_inst, ignore_index=ignore_index)
             all_pred_inst.append(pred_inst)
-            gt_inst   = semantic_to_instance(sem[i].numpy())
+            gt_inst = semantic_to_instance(gt_sem_i, ignore_index=ignore_index)
             all_gt_inst.append(gt_inst)
 
     sem_metrics  = accumulate_semantic_metrics(
-        all_pred_sem, all_gt_sem, num_classes=num_classes, class_names=class_names
+        all_pred_sem,
+        all_gt_sem,
+        num_classes=num_classes,
+        class_names=class_names,
+        ignore_index=ignore_index,
     )
     inst_metrics = accumulate_instance_metrics(all_pred_inst, all_gt_inst)
     return {**sem_metrics, **inst_metrics}
@@ -398,6 +493,8 @@ def run_cached_linear_probe(
     train_samples: Optional[int] = None,
     train_fraction: Optional[float] = None,
     seed: int = 0,
+    class_weight_mode: str = "none",
+    class_weight_beta: float = 0.999,
 ) -> Dict[str, float]:
     """Full cached linear probe training pipeline."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -435,7 +532,29 @@ def run_cached_linear_probe(
     # Build model
     # ------------------------------------------------------------------
     head = LinearSegHead(D, num_classes, dropout).to(device)
-    criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
+    class_weights, class_weight_values, class_counts = _compute_class_weights(
+        tr_sem,
+        num_classes=num_classes,
+        ignore_index=ignore_index,
+        mode=class_weight_mode,
+        beta=class_weight_beta,
+    )
+    if class_weights is not None:
+        class_weights = class_weights.to(device)
+        weight_log = {
+            (class_names[i] if class_names and i < len(class_names) else str(i)): round(
+                float(class_weight_values[i]), 4
+            )
+            for i in range(num_classes)
+        }
+        logger.info(
+            "Using class-weighted CE mode=%s beta=%.6g weights=%s counts=%s",
+            class_weight_mode,
+            class_weight_beta,
+            weight_log,
+            class_counts,
+        )
+    criterion = nn.CrossEntropyLoss(weight=class_weights, ignore_index=ignore_index)
     optimizer = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
@@ -478,6 +597,7 @@ def run_cached_linear_probe(
         if epoch % eval_every == 0 or epoch == epochs:
             val_metrics = evaluate_cached(
                 head, val_loader, num_classes, orig_size, device, class_names,
+                ignore_index=ignore_index,
                 # Validation during training only needs mIoU/mDice to select the
                 # best head. Instance metrics are computed once for the final
                 # reported val/test results, avoiding repeated slow AJI/AP passes.
@@ -502,6 +622,7 @@ def run_cached_linear_probe(
     results = {
         'val': evaluate_cached(
             head, val_loader, num_classes, orig_size, device, class_names,
+            ignore_index=ignore_index,
             semantic_only=semantic_only,
         ),
         '_meta': {
@@ -509,6 +630,10 @@ def run_cached_linear_probe(
             'used_train_samples': len(tr_ds),
             'train_fraction': None if train_fraction is None else float(train_fraction),
             'seed': int(seed),
+            'class_weight_mode': class_weight_mode,
+            'class_weight_beta': float(class_weight_beta),
+            'class_weights': class_weight_values,
+            'class_counts': class_counts,
         },
     }
 
@@ -519,6 +644,7 @@ def run_cached_linear_probe(
         te_loader = DataLoader(te_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
         results['test'] = evaluate_cached(
             head, te_loader, num_classes, orig_size, device, class_names,
+            ignore_index=ignore_index,
             semantic_only=semantic_only,
         )
 
@@ -584,7 +710,14 @@ def run_online_linear_probe(
         scheduler.step()
 
         if epoch % 5 == 0 or epoch == epochs:
-            val_metrics = evaluate_online(model, val_loader, num_classes, device, class_names)
+            val_metrics = evaluate_online(
+                model,
+                val_loader,
+                num_classes,
+                device,
+                class_names,
+                ignore_index=ignore_index,
+            )
             miou = val_metrics['mIoU']
             logger.info(
                 f"Epoch {epoch:3d}/{epochs}  loss={loss:.4f}  "
@@ -600,13 +733,27 @@ def run_online_linear_probe(
     try:
         te_ds     = _build_dataset(dataset_name, data_root, 'test', img_size)
         te_loader = DataLoader(te_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-        test_metrics = evaluate_online(model, te_loader, num_classes, device, class_names)
+        test_metrics = evaluate_online(
+            model,
+            te_loader,
+            num_classes,
+            device,
+            class_names,
+            ignore_index=ignore_index,
+        )
     except Exception as e:
         logger.warning(f"Test split not available: {e}")
         test_metrics = {}
 
     results = {
-        'val':  evaluate_online(model, val_loader, num_classes, device, class_names),
+        'val':  evaluate_online(
+            model,
+            val_loader,
+            num_classes,
+            device,
+            class_names,
+            ignore_index=ignore_index,
+        ),
         'test': test_metrics,
     }
     out_json = os.path.join(output_dir, 'results.json')
@@ -648,6 +795,7 @@ DATASET_CONFIGS = {
     # existing
     'cellpose': {'num_classes': 2,  'class_names': ['background', 'cell']},
     'csc':      {'num_classes': 2,  'class_names': ['background', 'cell']},
+    'multimodal_cellseg': {'num_classes': 2, 'class_names': ['background', 'cell']},
 }
 
 
@@ -683,6 +831,12 @@ def main():
                         help='Cached mode only: train on a deterministic fraction of train images.')
     parser.add_argument('--seed', type=int, default=0,
                         help='Random seed for deterministic cached train subsets.')
+    parser.add_argument('--class-weight-mode', default='none',
+                        choices=['none', 'inverse', 'sqrt_inverse',
+                                 'median_frequency', 'effective_number'],
+                        help='Cached mode only: class-balanced semantic CE weighting.')
+    parser.add_argument('--class-weight-beta', type=float, default=0.999,
+                        help='Beta for effective_number class weighting.')
 
     # Cached mode
     parser.add_argument('--use-cached-features', action='store_true',
@@ -738,6 +892,8 @@ def main():
             train_samples = args.train_samples,
             train_fraction = args.train_fraction,
             seed = args.seed,
+            class_weight_mode = args.class_weight_mode,
+            class_weight_beta = args.class_weight_beta,
         )
     else:
         if args.data_root is None or args.checkpoint is None:

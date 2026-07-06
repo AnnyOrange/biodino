@@ -1,0 +1,76 @@
+# #1 ViT-L 双路 stem（dual-route）+ #3 内容派生通道身份 的续训配置。
+#
+# 与现有路的关系（全部增量、向后兼容）：
+#   * stem_type: dualroute  → 启用新 stem（RGB Conv2d 走 ≤3ch 联合样本 ‖
+#     channel-adaptive pooling 走独立多通道）。stem_type 为空时完全等价现状。
+#   * 数据走 packwds_chvit:（变长通道 + channel_ids），这是新 stem 唯一需要的
+#     已打通的多通道数据路；packwds_robust:/packwds:/无前缀 全部照常可用。
+#   * 从原始 DINOv3 lvd1689m 起训：ckpt 里的 patch_embed.proj 会被
+#     _remap_dualroute_patch_embed 同时灌给 rgb.proj（精确拷贝，保住 1.7B 先验）
+#     并均值派生给 pool.proj；descriptor/attention-query 为新参数，随机初始化。
+#
+# 注意：路由是数据依赖的，必须 compile: false。
+# epochs/warmup/lr 对齐 #4 robust-L（15ep / warmup3 / lr1e-4）做公平对照。
+
+train:
+  dataset_path: "packwds_chvit:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar"
+  batch_size_per_gpu: 32         # 实测 bs16 仅 ~12.7G/32G；bs32≈21G 稳妥（max_channels=3，显存≈RGB）。bs64 大概率 OOM
+  num_workers: 10
+  OFFICIAL_EPOCH_LENGTH: 1025
+  output_dir: ./outputs/bio_continue_vitl16_dualroute
+  compile: false                 # ★ 路由数据依赖，必须关 compile
+
+student:
+  arch: vit_large
+  patch_size: 16
+  ffn_layer: mlp
+  ffn_ratio: 4.0
+  drop_path_rate: 0.25
+  in_chans: 3
+  enable_channelvit: false
+  stem_type: dualroute           # ★ 启用 #1 双路 stem
+  n_storage_tokens: 4
+  mask_k_bias: true
+  # 从原始 DINOv3（lvd1689m）起训：公平对照（与 #4-RGB/#5 同起点），且避免
+  # 从 packwds_robust 训出的 #4 续训时与 packwds_chvit 数据的归一化错配。
+  # remap helper 同样适用：patch_embed.proj → rgb.proj 精确拷贝 + pool.proj 均值派生。
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+
+teacher:
+  in_chans: 3
+  enable_channelvit: false
+  stem_type: dualroute           # teacher 与 student 同构
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+
+optim:
+  epochs: 15                     # 对齐 #4 robust-L / bio_continue_l 做公平对照
+  optimizer: adamw
+  lr: 1.0e-4
+  min_lr: 1.0e-6
+  warmup_epochs: 3               # 对齐 #4（15ep → warmup 3）
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 8 # 4 卡 × 32 × 8 = global 1024（1024 不能被 6 整除→用 4 卡）
+
+crops:
+  # 复用 #4 robust per-channel 归一化统计（多通道路为近似；stem 内会按通道再标准化，稳健）。
+  rgb_mean:
+    - 0.514666
+    - 0.488834
+    - 0.498267
+  rgb_std:
+    - 0.338707
+    - 0.339202
+    - 0.336091
+
+evaluation:
+  eval_period_iterations: 0      # 短 run，最后单独评
+
+checkpointing:
+  period: 1025
+  max_to_keep: null   # null = 保留全部 ckpt(keep_last_n_checkpoints 遇 None 直接 return);设整数则只留最后 N 个

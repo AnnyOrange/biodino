@@ -104,11 +104,21 @@ def make_dataset(
                                subset from actually present channels and returns
                                channel ids; no dataset-level zero padding/copying.
                                Optional suffix: ``::sample_channels=K`` caps
-                               the number of sampled channels per sample.
+                               the number of sampled channels per sample;
+                               ``::min_channels=K`` filters out low-channel
+                               samples before augmentation.
+        - ``packwds_chvit_robust:`` → ``packwds_chvit`` plus per-channel
+                               percentile normalization. Optional suffix:
+                               ``::min_channels=K,sample_channels=N,pct=low,high``.
         - ``packwds_robust:`` → like ``packwds:`` but per-channel percentile
                                normalization + single-channel replication
                                (grayscale → replicated, not zero-filled).
                                Optional suffix ``::pct=low,high`` (default 1,99).
+        - ``mixwds_robust:``  → weighted random mix of multiple
+                               ``packwds_robust`` sources. Entries are
+                               ``weight=shard_spec`` separated by ``||``;
+                               optional suffix ``::pct=low,high`` applies to
+                               all sources.
 
     Args:
         dataset_str: Dataset descriptor string.
@@ -121,6 +131,30 @@ def make_dataset(
         The created dataset.
     """
     logger.info(f'using dataset: "{dataset_str}"')
+
+    if dataset_str.startswith("mixwds_robust:"):
+        return _make_weighted_packed_robust_webdataset(
+            dataset_str[len("mixwds_robust:") :],
+            transform,
+            target_channels=target_channels,
+            shuffle_buffer=wds_shuffle_buffer,
+        )
+
+    if dataset_str.startswith("mixwds:"):
+        return _make_weighted_packed_webdataset(
+            dataset_str[len("mixwds:") :],
+            transform,
+            target_channels=target_channels,
+            shuffle_buffer=wds_shuffle_buffer,
+        )
+
+    if dataset_str.startswith("packwds_chvit_robust:"):
+        return _make_packed_channelvit_robust_webdataset(
+            dataset_str[len("packwds_chvit_robust:") :],
+            transform,
+            target_channels=target_channels,
+            shuffle_buffer=wds_shuffle_buffer,
+        )
 
     if dataset_str.startswith("packwds_robust:"):
         return _make_packed_robust_webdataset(
@@ -160,6 +194,102 @@ def make_dataset(
         dataset.transforms = transforms
 
     return dataset
+
+
+def _parse_weighted_wds_spec(shard_spec: str, *, allow_pct: bool = False):
+    p_low, p_high = 1.0, 99.0
+    if "::" in shard_spec:
+        shard_spec, opts_str = shard_spec.rsplit("::", 1)
+        opts_str = opts_str.strip()
+        if allow_pct and opts_str.startswith("pct="):
+            vals = [v.strip() for v in opts_str[len("pct=") :].split(",")]
+            if len(vals) != 2:
+                raise ValueError(f"mixwds_robust: ::pct expects 'pct=low,high', got: {opts_str}")
+            p_low, p_high = float(vals[0]), float(vals[1])
+        elif opts_str:
+            raise ValueError(f"Unknown weighted WebDataset option: {opts_str}")
+
+    entries = [entry.strip() for entry in shard_spec.split("||") if entry.strip()]
+    if not entries:
+        raise ValueError("weighted WebDataset spec is empty")
+
+    weights: List[float] = []
+    specs: List[str] = []
+    for entry in entries:
+        if "=" not in entry:
+            raise ValueError(
+                "weighted WebDataset entries must be formatted as weight=shard_spec; "
+                f"got: {entry}"
+            )
+        weight_str, spec = entry.split("=", 1)
+        weight = float(weight_str)
+        if weight < 0:
+            raise ValueError(f"weighted WebDataset weight must be >= 0, got {weight}")
+        spec = spec.strip()
+        if not spec:
+            raise ValueError(f"weighted WebDataset entry has an empty shard spec: {entry}")
+        weights.append(weight)
+        specs.append(spec)
+
+    if sum(weights) <= 0:
+        raise ValueError(f"weighted WebDataset weights must sum to > 0, got {weights}")
+    return specs, weights, p_low, p_high
+
+
+def _make_weighted_packed_webdataset(
+    shard_spec: str,
+    transform: Optional[Callable] = None,
+    target_channels: Optional[int] = None,
+    shuffle_buffer: int = 1000,
+):
+    """Create a weighted random mix of multiple ``packwds:`` sources."""
+    from .wds_pipeline import WeightedIterableDataset
+
+    specs, weights, _, _ = _parse_weighted_wds_spec(shard_spec)
+    datasets = [
+        _make_packed_webdataset(
+            spec,
+            transform,
+            target_channels=target_channels,
+            shuffle_buffer=shuffle_buffer,
+        )
+        for spec in specs
+    ]
+    logger.info("creating weighted packwds mix: weights=%s specs=%s", weights, specs)
+    return WeightedIterableDataset(datasets, weights, names=specs)
+
+
+def _make_weighted_packed_robust_webdataset(
+    shard_spec: str,
+    transform: Optional[Callable] = None,
+    target_channels: Optional[int] = None,
+    shuffle_buffer: int = 1000,
+):
+    """Create a weighted random mix of multiple ``packwds_robust:`` sources."""
+    from .wds_pipeline import WeightedIterableDataset
+
+    specs, weights, p_low, p_high = _parse_weighted_wds_spec(shard_spec, allow_pct=True)
+    if not (0.0 <= p_low < p_high <= 100.0):
+        raise ValueError(
+            f"mixwds_robust: pct must satisfy 0 <= low < high <= 100, got {p_low},{p_high}"
+        )
+    datasets = [
+        _make_packed_robust_webdataset(
+            f"{spec}::pct={p_low},{p_high}",
+            transform,
+            target_channels=target_channels,
+            shuffle_buffer=shuffle_buffer,
+        )
+        for spec in specs
+    ]
+    logger.info(
+        "creating weighted packwds_robust mix: weights=%s pct=[%s,%s] specs=%s",
+        weights,
+        p_low,
+        p_high,
+        specs,
+    )
+    return WeightedIterableDataset(datasets, weights, names=specs)
 
 
 def _make_packed_webdataset(
@@ -231,19 +361,23 @@ def _make_packed_channelvit_webdataset(
     """Create a true ChannelViT pipeline for packed multi-channel shards.
 
     ``target_channels`` is interpreted as the channel embedding table capacity
-    / maximum accepted channel id count.  ``sample_channels`` optionally caps
-    the number of real channels sampled per sample.  Samples with fewer
-    channels are kept with their actual channel count.
+    / maximum accepted channel id count. ``sample_channels`` optionally caps
+    the number of real channels sampled per sample. ``min_channels`` can filter
+    out low-channel samples; otherwise samples with fewer channels are kept
+    with their actual channel count.
     """
     from .wds_pipeline import WdsConfig, build_packed_channelvit_wds_pipeline
 
     sample_channels = None
+    min_channels = 1
     if "::" in shard_spec:
         shard_spec, opts_str = shard_spec.rsplit("::", 1)
         for opt in [o.strip() for o in opts_str.split(",") if o.strip()]:
             key, value = opt.split("=", 1)
             if key == "sample_channels":
                 sample_channels = int(value)
+            elif key == "min_channels":
+                min_channels = int(value)
             else:
                 raise ValueError(f"Unknown packwds_chvit option: {key}")
 
@@ -261,6 +395,14 @@ def _make_packed_channelvit_webdataset(
             f"packwds_chvit sample_channels ({sample_channels}) must be <= "
             f"target_channels/student.in_chans ({max_channels})"
         )
+    if min_channels <= 0 or min_channels > max_channels:
+        raise ValueError(
+            f"packwds_chvit min_channels ({min_channels}) must be in [1, {max_channels}]"
+        )
+    if sample_channels is not None and sample_channels < min_channels:
+        raise ValueError(
+            f"packwds_chvit sample_channels ({sample_channels}) must be >= min_channels ({min_channels})"
+        )
 
     config = WdsConfig(
         shard_urls=shard_urls,
@@ -271,11 +413,113 @@ def _make_packed_channelvit_webdataset(
         config,
         transform=transform,
         sample_channels=sample_channels,
+        min_channels=min_channels,
     )
     logger.info(
-        "Packed ChannelViT WebDataset pipeline created (max_channels=%d, sample_channels=%s)",
+        "Packed ChannelViT WebDataset pipeline created (max_channels=%d, min_channels=%d, sample_channels=%s)",
         max_channels,
+        min_channels,
         sample_channels if sample_channels is not None else "all-present",
+    )
+    return pipeline
+
+
+def _parse_chvit_robust_options(shard_spec: str):
+    sample_channels = None
+    min_channels = 1
+    p_low, p_high = 1.0, 99.0
+    if "::" not in shard_spec:
+        return shard_spec, sample_channels, min_channels, p_low, p_high
+
+    shard_spec, opts_str = shard_spec.rsplit("::", 1)
+    parts = [o.strip() for o in opts_str.split(",") if o.strip()]
+    i = 0
+    while i < len(parts):
+        opt = parts[i]
+        if opt.startswith("sample_channels="):
+            sample_channels = int(opt.split("=", 1)[1])
+            i += 1
+        elif opt.startswith("min_channels="):
+            min_channels = int(opt.split("=", 1)[1])
+            i += 1
+        elif opt.startswith("pct="):
+            if i + 1 >= len(parts):
+                raise ValueError(
+                    f"packwds_chvit_robust: ::pct expects 'pct=low,high', got: {opts_str}"
+                )
+            p_low = float(opt.split("=", 1)[1])
+            p_high = float(parts[i + 1])
+            i += 2
+        else:
+            raise ValueError(f"Unknown packwds_chvit_robust option: {opt}")
+    return shard_spec, sample_channels, min_channels, p_low, p_high
+
+
+def _make_packed_channelvit_robust_webdataset(
+    shard_spec: str,
+    transform: Optional[Callable] = None,
+    target_channels: Optional[int] = None,
+    shuffle_buffer: int = 1000,
+):
+    """Create a true ChannelViT/DualRoute pipeline with robust normalization.
+
+    ``target_channels`` is the maximum accepted channel id count. The optional
+    ``sample_channels`` cap is useful for memory or ablations; ``min_channels``
+    can filter out low-channel samples. By default all present channels up to
+    ``target_channels`` are returned.
+    """
+    from .wds_pipeline import WdsConfig, build_packed_channelvit_robust_wds_pipeline
+
+    shard_spec, sample_channels, min_channels, p_low, p_high = _parse_chvit_robust_options(shard_spec)
+    if not (0.0 <= p_low < p_high <= 100.0):
+        raise ValueError(
+            f"packwds_chvit_robust: pct must satisfy 0 <= low < high <= 100, got {p_low},{p_high}"
+        )
+
+    raw_patterns = [s.strip() for s in shard_spec.split(";") if s.strip()]
+    shard_urls: List[str] = _expand_shard_patterns(raw_patterns)
+    if not shard_urls:
+        raise FileNotFoundError(
+            f"packwds_chvit_robust: no tar shards found matching: {shard_spec}\n"
+            "Check that the output directory exists and the pattern is correct."
+        )
+
+    max_channels = target_channels or 8
+    if sample_channels is not None and sample_channels > max_channels:
+        raise ValueError(
+            f"packwds_chvit_robust sample_channels ({sample_channels}) must be <= "
+            f"target_channels/student.in_chans ({max_channels})"
+        )
+    if min_channels <= 0 or min_channels > max_channels:
+        raise ValueError(
+            f"packwds_chvit_robust min_channels ({min_channels}) must be in [1, {max_channels}]"
+        )
+    if sample_channels is not None and sample_channels < min_channels:
+        raise ValueError(
+            "packwds_chvit_robust sample_channels "
+            f"({sample_channels}) must be >= min_channels ({min_channels})"
+        )
+
+    config = WdsConfig(
+        shard_urls=shard_urls,
+        shuffle_buffer=shuffle_buffer,
+        target_channels=max_channels,
+    )
+    pipeline = build_packed_channelvit_robust_wds_pipeline(
+        config,
+        transform=transform,
+        sample_channels=sample_channels,
+        min_channels=min_channels,
+        p_low=p_low,
+        p_high=p_high,
+    )
+    logger.info(
+        "Packed ChannelViT ROBUST WebDataset pipeline created (max_channels=%d, min_channels=%d, sample_channels=%s, pct=[%s,%s])",
+        max_channels,
+        min_channels,
+        sample_channels if sample_channels is not None else "all-present",
+        p_low,
+        p_high,
     )
     return pipeline
 

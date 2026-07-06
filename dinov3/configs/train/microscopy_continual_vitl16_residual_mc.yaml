@@ -1,0 +1,81 @@
+# ViT-L/16 conservative residual multi-channel stem.
+#
+# Stem:
+#   output = official_rgb_patch_embed(ch0,ch1,ch2) + alpha * extra_branch(ch3+)
+#   alpha is initialized to 1e-3; missing RGB slots are zero-filled.
+#
+# This keeps C<=3 close to the RGB path and lets true channels 4+ help through
+# a small residual instead of a hard RGB-vs-pool route decision.
+
+train:
+  dataset_path: "packwds_chvit_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar::pct=1,99"
+  batch_size_per_gpu: 16
+  num_workers: 10
+  OFFICIAL_EPOCH_LENGTH: 1025
+  output_dir: ./outputs/bio_continue_vitl16_residual_mc
+  compile: false
+
+student:
+  arch: vit_large
+  patch_size: 16
+  ffn_layer: mlp
+  ffn_ratio: 4.0
+  drop_path_rate: 0.25
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: residual_mc
+  n_storage_tokens: 4
+  mask_k_bias: true
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+
+teacher:
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: residual_mc
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+
+optim:
+  epochs: 15
+  optimizer: adamw
+  lr: 1.0e-4
+  min_lr: 1.0e-6
+  warmup_epochs: 3
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 8
+
+crops:
+  # Decoder already returns float32 [0,1] after percentile normalization.
+  float_input: true
+  # First 3 stats intentionally stay identical to the robust RGB-L baseline so
+  # C<=3 keeps the same data path; ch4+ stats are present-channel robust stats.
+  rgb_mean:
+    - 0.514666
+    - 0.488834
+    - 0.498267
+    - 0.226684
+    - 0.232035
+    - 0.166374
+    - 0.483261
+    - 0.523779
+  rgb_std:
+    - 0.338707
+    - 0.339202
+    - 0.336091
+    - 0.280818
+    - 0.278247
+    - 0.235296
+    - 0.196605
+    - 0.137569
+
+evaluation:
+  eval_period_iterations: 0
+
+checkpointing:
+  period: 1025
+  max_to_keep: null

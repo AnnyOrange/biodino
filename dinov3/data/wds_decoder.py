@@ -350,13 +350,15 @@ def decode_packed_channelvit_sample(
     *,
     max_channels: int,
     sample_channels: Optional[int] = None,
+    min_channels: int = 1,
 ) -> Optional[dict[str, Tensor]]:
     """Decode a packed sample for true ChannelViT training.
 
     Unlike ``decode_packed_sample``, this function never pads missing channels
-    with zeros and never copies channels.  It samples a fixed-size subset from
-    the channels actually present in the sample, returning both the image tensor
-    and the corresponding 0-based channel ids.
+    with zeros and never copies channels. It can filter samples with too few
+    channels, then optionally samples a fixed-size subset from the channels
+    actually present in the sample, returning both the image tensor and the
+    corresponding 0-based channel ids.
     """
     import re
 
@@ -367,6 +369,14 @@ def decode_packed_channelvit_sample(
     if sample_channels is not None and sample_channels > max_channels:
         raise ValueError(
             f"sample_channels ({sample_channels}) must be <= max_channels ({max_channels})"
+        )
+    if min_channels <= 0:
+        raise ValueError(f"min_channels must be positive, got {min_channels}")
+    if min_channels > max_channels:
+        raise ValueError(f"min_channels ({min_channels}) must be <= max_channels ({max_channels})")
+    if sample_channels is not None and sample_channels < min_channels:
+        raise ValueError(
+            f"sample_channels ({sample_channels}) must be >= min_channels ({min_channels})"
         )
 
     ch_key_re = re.compile(r"^ch(\d+)\.tiff?$", re.IGNORECASE)
@@ -386,6 +396,8 @@ def decode_packed_channelvit_sample(
         return None
 
     available_channels = sorted(channel_bytes.keys())
+    if len(available_channels) < min_channels:
+        return None
     if sample_channels is not None and len(available_channels) > sample_channels:
         selected_channels = sorted(random.sample(available_channels, sample_channels))
     else:
@@ -411,6 +423,96 @@ def decode_packed_channelvit_sample(
             )
             return None
         decoded.append(tensor[0])
+        channel_ids.append(ch_num - 1)
+
+    if not decoded:
+        return None
+
+    return {
+        "image": torch.stack(decoded, dim=0).to(torch.float32),
+        "channel_ids": torch.tensor(channel_ids, dtype=torch.long),
+    }
+
+
+def decode_packed_channelvit_sample_robust(
+    sample: dict,
+    *,
+    max_channels: int,
+    sample_channels: Optional[int] = None,
+    min_channels: int = 1,
+    p_low: float = 1.0,
+    p_high: float = 99.0,
+) -> Optional[dict[str, Tensor]]:
+    """Robust-normalization variant of ``decode_packed_channelvit_sample``.
+
+    This keeps the true multi-channel ChannelViT/DualRoute contract (only real
+    channels are returned, with their channel ids) while applying the #4
+    percentile normalization independently to each selected channel.
+    """
+    import re
+
+    if max_channels <= 0:
+        raise ValueError(f"max_channels must be positive, got {max_channels}")
+    if sample_channels is not None and sample_channels <= 0:
+        raise ValueError(f"sample_channels must be positive, got {sample_channels}")
+    if sample_channels is not None and sample_channels > max_channels:
+        raise ValueError(
+            f"sample_channels ({sample_channels}) must be <= max_channels ({max_channels})"
+        )
+    if min_channels <= 0:
+        raise ValueError(f"min_channels must be positive, got {min_channels}")
+    if min_channels > max_channels:
+        raise ValueError(f"min_channels ({min_channels}) must be <= max_channels ({max_channels})")
+    if sample_channels is not None and sample_channels < min_channels:
+        raise ValueError(
+            f"sample_channels ({sample_channels}) must be >= min_channels ({min_channels})"
+        )
+
+    ch_key_re = re.compile(r"^ch(\d+)\.tiff?$", re.IGNORECASE)
+    channel_bytes: dict[int, bytes] = {}
+    for key, value in sample.items():
+        m = ch_key_re.match(key)
+        if m and isinstance(value, (bytes, bytearray)):
+            ch_num = int(m.group(1))
+            if 1 <= ch_num <= max_channels:
+                channel_bytes[ch_num] = value
+
+    if not channel_bytes:
+        logger.debug(
+            "packed ChannelViT robust sample %s skipped: no channels present",
+            sample.get("__key__", "?"),
+        )
+        return None
+
+    available_channels = sorted(channel_bytes.keys())
+    if len(available_channels) < min_channels:
+        return None
+    if sample_channels is not None and len(available_channels) > sample_channels:
+        selected_channels = sorted(random.sample(available_channels, sample_channels))
+    else:
+        selected_channels = available_channels
+
+    decoded: list[Tensor] = []
+    channel_ids: list[int] = []
+    expected_hw: tuple[int, int] | None = None
+
+    for ch_num in selected_channels:
+        tensor = decode_tiff_bytes(channel_bytes[ch_num], target_channels=1)
+        if tensor is None:
+            logger.debug("packed ChannelViT robust sample: failed to decode ch%d", ch_num)
+            continue
+        _, h, w = tensor.shape
+        if expected_hw is None:
+            expected_hw = (h, w)
+        elif expected_hw != (h, w):
+            logger.warning(
+                "packed ChannelViT robust sample %s skipped: channel spatial mismatch %s vs %s",
+                sample.get("__key__", "?"),
+                expected_hw,
+                (h, w),
+            )
+            return None
+        decoded.append(_robust_per_channel(tensor[0], p_low, p_high))
         channel_ids.append(ch_num - 1)
 
     if not decoded:

@@ -11,7 +11,18 @@ import torch
 import torch.nn.init
 from torch import Tensor, nn
 
-from dinov3.layers import LayerScale, Mlp, PatchEmbed, PatchEmbedPerChannel, RMSNorm, RopePositionEmbedding, SelfAttentionBlock, SwiGLUFFN
+from dinov3.layers import (
+    DualRouteStem,
+    LayerScale,
+    Mlp,
+    PatchEmbed,
+    PatchEmbedPerChannel,
+    ResidualMultiChannelStem,
+    RMSNorm,
+    RopePositionEmbedding,
+    SelfAttentionBlock,
+    SwiGLUFFN,
+)
 from dinov3.utils import named_apply
 
 logger = logging.getLogger("dinov3")
@@ -50,7 +61,7 @@ def init_weights_vit(module: nn.Module, name: str = ""):
         module.reset_parameters()
     if isinstance(module, LayerScale):
         module.reset_parameters()
-    if isinstance(module, (PatchEmbed, PatchEmbedPerChannel)):
+    if isinstance(module, (PatchEmbed, PatchEmbedPerChannel, DualRouteStem, ResidualMultiChannelStem)):
         module.reset_parameters()
     if isinstance(module, RMSNorm):
         module.reset_parameters()
@@ -87,6 +98,7 @@ class DinoVisionTransformer(nn.Module):
         untie_cls_and_patch_norms: bool = False,
         untie_global_and_local_cls_norm: bool = False,
         enable_channelvit: bool = False,
+        stem_type: str | None = None,
         device: Any | None = None,
         **ignored_kwargs,
     ):
@@ -102,10 +114,33 @@ class DinoVisionTransformer(nn.Module):
         self.num_heads = num_heads
         self.patch_size = patch_size
         self.enable_channelvit = enable_channelvit
+        self.stem_type = stem_type
         self.in_chans = in_chans
 
-        # Branch logic: ChannelViT vs standard DINOv3
-        if self.enable_channelvit:
+        # Branch logic: dual-route stem vs ChannelViT vs standard DINOv3
+        if self.stem_type in ("residual_mc", "rgb_extra_residual"):
+            # Conservative multi-channel stem: keep official RGB PatchEmbed for
+            # channels 0/1/2 and add a tiny residual from channels 3+.
+            self.patch_embed = ResidualMultiChannelStem(
+                img_size=img_size,
+                patch_size=patch_size,
+                embed_dim=embed_dim,
+            )
+            self.channel_embed = None
+            logger.info("Residual multi-channel stem enabled (RGB base + extra residual)")
+        elif self.stem_type == "dualroute":
+            # #1 dual-route stem: RGB Conv2d (joint <=3ch) || channel-adaptive
+            # pooling (independent multichannel). Returns RGB-shaped tokens, so
+            # the rest of the ViT is unchanged. channel_embed (ChannelViT vocab)
+            # is not used here; identity comes from content (#3) inside the stem.
+            self.patch_embed = DualRouteStem(
+                img_size=img_size,
+                patch_size=patch_size,
+                embed_dim=embed_dim,
+            )
+            self.channel_embed = None
+            logger.info("Dual-route stem enabled (RGB Conv2d || content-pool)")
+        elif self.enable_channelvit:
             # ChannelViT mode: use PatchEmbedPerChannel
             self.patch_embed = PatchEmbedPerChannel(
                 img_size=img_size,
@@ -261,8 +296,14 @@ class DinoVisionTransformer(nn.Module):
         B, C, H, W = x.shape
         
         # Patch embedding
-        x = self.patch_embed(x)
-        
+        if self.stem_type in ("dualroute", "residual_mc", "rgb_extra_residual"):
+            # Multi-channel stems consume channel metadata; they return
+            # RGB-shaped (B, H', W', D), so the standard (else) branch below
+            # applies unchanged (token count == H'*W', no channel explosion).
+            x = self.patch_embed(x, channel_ids=channel_ids, channel_valid_mask=channel_valid_mask)
+        else:
+            x = self.patch_embed(x)
+
         if self.enable_channelvit:
             # === ChannelViT logic ===
             # x from PatchEmbedPerChannel: (B, embed_dim, C, H', W')

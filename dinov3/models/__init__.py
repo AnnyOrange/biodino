@@ -57,6 +57,7 @@ def build_model(args, only_teacher=False, img_size=224, device=None):
             untie_global_and_local_cls_norm=args.untie_global_and_local_cls_norm,
             in_chans=getattr(args, "in_chans", 3),
             enable_channelvit=getattr(args, "enable_channelvit", False),
+            stem_type=getattr(args, "stem_type", None),
             device=device,
         )
         teacher = vits.__dict__[args.arch](**vit_kwargs)

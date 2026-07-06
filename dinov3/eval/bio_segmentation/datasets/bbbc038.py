@@ -35,7 +35,7 @@ import numpy as np
 
 import torch
 from dinov3.utils.bio_io import read_bio_image_as_numpy, _normalize_to_float32
-from .base import BioSegDataset
+from .base import BioSegDataset, resize_image_and_masks
 
 logger = logging.getLogger(__name__)
 
@@ -114,13 +114,20 @@ class BBBC038Dataset(BioSegDataset):
         # Only resize when a fixed output size is requested (feature-extractor
         # caching mode).  For Mask2Former, size=None keeps native resolution so
         # that sliding-window evaluation sees the full-resolution image.
+        valid_mask = None
         if self.size is not None:
-            h, w = self.size
-            img      = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
-            inst_map = cv2.resize(inst_map.astype(np.float32), (w, h),
-                                  interpolation=cv2.INTER_NEAREST).astype(np.int64)
+            img, resized_masks, valid_mask = resize_image_and_masks(
+                img,
+                [inst_map.astype(np.int64)],
+                self.size,
+                mode=self.resize_mode,
+                mask_pad_values=[0],
+            )
+            inst_map = resized_masks[0].astype(np.int64)
 
         sem_map = (inst_map > 0).astype(np.int64)
+        if valid_mask is not None:
+            sem_map[~valid_mask] = 255
 
         if self.augment:
             if np.random.rand() > 0.5:

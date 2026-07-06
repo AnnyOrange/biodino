@@ -40,6 +40,8 @@ from torch.utils.data import Dataset
 from dinov3.eval.bio_segmentation.constants import MICRO_RGB_MEAN, MICRO_RGB_STD
 from dinov3.utils.bio_io import _normalize_to_float32, read_bio_image_as_numpy
 
+from .base import resize_image_and_masks
+
 logger = logging.getLogger(__name__)
 
 
@@ -98,6 +100,7 @@ class LIVECellDataset(Dataset):
         coco_json: str,
         img_root: str,
         size: Optional[Tuple[int, int]] = None,
+        resize_mode: str = "stretch",
         augment: bool = False,
         rgb_mean=MICRO_RGB_MEAN,
         rgb_std=MICRO_RGB_STD,
@@ -108,6 +111,8 @@ class LIVECellDataset(Dataset):
             coco_json : path to the COCO annotation JSON file for this split.
             img_root  : root directory containing image files.
             size      : (H, W) to resize to, or None to keep native resolution.
+            resize_mode: "stretch" for direct resize, "pad" for keep-aspect
+                         long-side resize plus centered padding.
             augment   : random horizontal/vertical flips.
             rgb_mean / rgb_std / do_normalize : fixed ImageNet-style normalisation after [0,1].
         """
@@ -116,6 +121,7 @@ class LIVECellDataset(Dataset):
 
         self.img_root = img_root
         self.size = size
+        self.resize_mode = resize_mode
         self.augment = augment
         self.do_normalize = do_normalize
         self.rgb_mean = torch.tensor(rgb_mean, dtype=torch.float32).view(3, 1, 1)
@@ -167,12 +173,19 @@ class LIVECellDataset(Dataset):
         inst_map = _build_instance_map(anns, orig_h, orig_w)
 
         # Resize only when a fixed output size is requested
+        valid_mask = None
         if self.size is not None:
-            h, w     = self.size
-            img      = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
-            inst_map = cv2.resize(inst_map.astype(np.float32), (w, h),
-                                  interpolation=cv2.INTER_NEAREST).astype(np.int64)
+            img, resized_masks, valid_mask = resize_image_and_masks(
+                img,
+                [inst_map.astype(np.int64)],
+                self.size,
+                mode=self.resize_mode,
+                mask_pad_values=[0],
+            )
+            inst_map = resized_masks[0].astype(np.int64)
         sem_map = (inst_map > 0).astype(np.int64)
+        if valid_mask is not None:
+            sem_map[~valid_mask] = 255
 
         # Augment
         if self.augment:
@@ -206,7 +219,7 @@ class LIVECellDataset(Dataset):
 
     def get_binary_mask(self, idx: int) -> np.ndarray:
         """Binary foreground mask (0/1) at output size."""
-        _, inst_t = self[idx]
+        _, _, inst_t = self[idx]
         return (inst_t.numpy() > 0).astype(np.int64)
 
 
