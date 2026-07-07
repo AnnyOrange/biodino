@@ -99,6 +99,7 @@ class DinoVisionTransformer(nn.Module):
         untie_global_and_local_cls_norm: bool = False,
         enable_channelvit: bool = False,
         stem_type: str | None = None,
+        residual_mc_extra_scale_init: float = 1e-3,
         device: Any | None = None,
         **ignored_kwargs,
     ):
@@ -118,16 +119,25 @@ class DinoVisionTransformer(nn.Module):
         self.in_chans = in_chans
 
         # Branch logic: dual-route stem vs ChannelViT vs standard DINOv3
-        if self.stem_type in ("residual_mc", "rgb_extra_residual"):
+        if self.stem_type in ("residual_mc", "rgb_extra_residual", "residual_mc_v2", "rgb_extra_residual_v2"):
             # Conservative multi-channel stem: keep official RGB PatchEmbed for
             # channels 0/1/2 and add a tiny residual from channels 3+.
+            rgb_fill_mode = (
+                "repeat_low" if self.stem_type in ("residual_mc_v2", "rgb_extra_residual_v2") else "zero"
+            )
             self.patch_embed = ResidualMultiChannelStem(
                 img_size=img_size,
                 patch_size=patch_size,
                 embed_dim=embed_dim,
+                extra_scale_init=residual_mc_extra_scale_init,
+                rgb_fill_mode=rgb_fill_mode,
             )
             self.channel_embed = None
-            logger.info("Residual multi-channel stem enabled (RGB base + extra residual)")
+            logger.info(
+                "Residual multi-channel stem enabled (RGB base + extra residual, fill=%s, extra_scale_init=%s)",
+                rgb_fill_mode,
+                residual_mc_extra_scale_init,
+            )
         elif self.stem_type == "dualroute":
             # #1 dual-route stem: RGB Conv2d (joint <=3ch) || channel-adaptive
             # pooling (independent multichannel). Returns RGB-shaped tokens, so
@@ -296,7 +306,7 @@ class DinoVisionTransformer(nn.Module):
         B, C, H, W = x.shape
         
         # Patch embedding
-        if self.stem_type in ("dualroute", "residual_mc", "rgb_extra_residual"):
+        if self.stem_type in ("dualroute", "residual_mc", "rgb_extra_residual", "residual_mc_v2", "rgb_extra_residual_v2"):
             # Multi-channel stems consume channel metadata; they return
             # RGB-shaped (B, H', W', D), so the standard (else) branch below
             # applies unchanged (token count == H'*W', no channel explosion).

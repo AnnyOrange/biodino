@@ -11,7 +11,9 @@ channels beyond RGB contribute through a small residual branch:
     out = RGBPatchEmbed(ch0, ch1, ch2) + alpha * ExtraBranch(ch3...)
 
 The output shape is the same as standard PatchEmbed, ``(B, H', W', D)``, so the
-Transformer, RoPE, masking, and dense evaluators stay unchanged.
+Transformer, RoPE, masking, and dense evaluators stay unchanged.  The v2 mode
+keeps the same shape and parameter names, but repeats low-channel samples into
+the RGB path instead of leaving missing RGB slots as zeros.
 """
 
 from __future__ import annotations
@@ -39,8 +41,11 @@ class ResidualMultiChannelStem(nn.Module):
       * Without ``channel_ids``: positions 0/1/2 are RGB slots, positions >= 3
         are extra channels.
 
-    Missing RGB slots are zero-filled, matching the conservative RGB packing
-    path: 1ch -> [x,0,0], 2ch -> [x1,x2,0].
+    ``rgb_fill_mode`` controls missing RGB slots:
+      * ``zero`` keeps the v1 conservative behavior:
+        1ch -> [x,0,0], 2ch -> [x1,x2,0].
+      * ``repeat_low`` repeats/tile low-channel samples (<=3 valid channels)
+        into RGB slots: 1ch -> [x,x,x], 2ch -> [x1,x2,x1].
     """
 
     def __init__(
@@ -49,12 +54,16 @@ class ResidualMultiChannelStem(nn.Module):
         patch_size: Union[int, Tuple[int, int]] = 16,
         embed_dim: int = 768,
         extra_scale_init: float = 1e-3,
+        rgb_fill_mode: str = "zero",
         **ignored,
     ):
         super().__init__()
+        if rgb_fill_mode not in {"zero", "repeat_low"}:
+            raise ValueError(f"Unsupported rgb_fill_mode={rgb_fill_mode!r}; expected 'zero' or 'repeat_low'")
         self.patch_size = make_2tuple(patch_size)
         self.embed_dim = embed_dim
         self.extra_scale_init = float(extra_scale_init)
+        self.rgb_fill_mode = rgb_fill_mode
         self.rgb = PatchEmbed(
             img_size=img_size,
             patch_size=patch_size,
@@ -98,7 +107,7 @@ class ResidualMultiChannelStem(nn.Module):
             return channel_ids
         raise ValueError(f"channel_ids must be 1D or 2D, got shape={tuple(channel_ids.shape)}")
 
-    def _build_rgb_input(self, x: Tensor, valid_mask: Tensor, channel_ids: Tensor) -> Tensor:
+    def _build_rgb_input_zero(self, x: Tensor, valid_mask: Tensor, channel_ids: Tensor) -> Tensor:
         B, _, H, W = x.shape
         rgb_in = x.new_zeros(B, 3, H, W)
         for slot in range(3):
@@ -111,6 +120,27 @@ class ResidualMultiChannelStem(nn.Module):
             has_slot = match.any(dim=1)
             if has_slot.any():
                 rgb_in[has_slot, slot] = x[has_slot, src_idx[has_slot]]
+        return rgb_in
+
+    def _build_rgb_input(self, x: Tensor, valid_mask: Tensor, channel_ids: Tensor) -> Tensor:
+        rgb_in = self._build_rgb_input_zero(x, valid_mask, channel_ids)
+        if self.rgb_fill_mode == "zero":
+            return rgb_in
+
+        # v2: low-channel microscopy samples should still hit the pretrained
+        # RGB path.  For samples with <=3 real channels, tile channels by their
+        # sample order rather than treating absent physical RGB ids as zeros.
+        # Higher-channel samples keep the conservative physical-id mapping and
+        # let ch>=3 flow through the residual branch.
+        valid_counts = valid_mask.sum(dim=1)
+        low_rows = ((valid_counts > 0) & (valid_counts <= 3)).nonzero(as_tuple=False).flatten()
+        for b in low_rows.tolist():
+            valid_idx = valid_mask[b].nonzero(as_tuple=False).flatten()
+            if valid_idx.numel() == 0:
+                continue
+            repeats = (3 + int(valid_idx.numel()) - 1) // int(valid_idx.numel())
+            tiled_idx = valid_idx.repeat(repeats)[:3]
+            rgb_in[b] = x[b, tiled_idx]
         return rgb_in
 
     def _extra_tokens(self, x: Tensor, extra_mask: Tensor) -> Tensor:

@@ -100,7 +100,8 @@ student:
   untie_global_and_local_cls_norm: false  # If true, use separate norms for local and global crop CLS token during training
   in_chans: 3
   enable_channelvit: false
-  stem_type: null  # null/"auto" = standard PatchEmbed or enable_channelvit; "dualroute" = hard RGB/pool switch; "residual_mc" = RGB base + ch4+ residual
+  stem_type: null  # null/"auto" = standard PatchEmbed or enable_channelvit; "dualroute" = hard RGB/pool switch; "residual_mc" = RGB base + ch4+ residual; "residual_mc_v2" = repeat low-channel RGB fill + residual
+  residual_mc_extra_scale_init: 0.001
   pos_embed_type: rope
   pos_embed_rope_base: 100.0
   pos_embed_rope_min_period: null
@@ -121,6 +122,7 @@ teacher:
   in_chans: 3
   enable_channelvit: false
   stem_type: null
+  residual_mc_extra_scale_init: 0.001
 distillation:  # teacher
   enabled: false
   full_cfg_path: ""
