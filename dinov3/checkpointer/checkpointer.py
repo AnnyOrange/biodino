@@ -120,6 +120,24 @@ def _add_zero_channel_embed_if_missing(chkpt: dict, model_state: dict) -> None:
         )
 
 
+def _checkpoint_tensor_initial_value(target_tensor, fallback: float):
+    """Return the model-initialized tensor value when available, else fallback."""
+    target_shape = _checkpoint_tensor_shape(target_tensor)
+    if target_shape is None:
+        return None
+    dtype = getattr(target_tensor, "dtype", torch.float32)
+    try:
+        if hasattr(target_tensor, "to_local"):
+            local = target_tensor.to_local()
+            if isinstance(local, torch.Tensor) and not local.is_meta:
+                return local.detach().cpu().clone().to(dtype=dtype)
+        if isinstance(target_tensor, torch.Tensor) and not target_tensor.is_meta:
+            return target_tensor.detach().cpu().clone().to(dtype=dtype)
+    except Exception:
+        pass
+    return torch.full(target_shape, fallback, dtype=dtype)
+
+
 def _remap_dualroute_patch_embed(chkpt: dict, model_state: dict) -> None:
     """Bootstrap a #1 dual-route stem from a standard PatchEmbed checkpoint.
 
@@ -206,18 +224,16 @@ def _remap_residual_multichannel_patch_embed(chkpt: dict, model_state: dict) -> 
     if extra_w_key in model_state and extra_w_key not in chkpt and src_w.ndim == 4:
         chkpt[extra_w_key] = src_w.float().mean(dim=1, keepdim=True).to(src_w.dtype)
     if extra_scale_key in model_state and extra_scale_key not in chkpt:
-        target = model_state[extra_scale_key]
-        target_shape = _checkpoint_tensor_shape(target)
-        if target_shape is not None:
-            dtype = getattr(target, "dtype", torch.float32)
-            chkpt[extra_scale_key] = torch.full(target_shape, 1e-3, dtype=dtype)
+        init_value = _checkpoint_tensor_initial_value(model_state[extra_scale_key], fallback=1e-3)
+        if init_value is not None:
+            chkpt[extra_scale_key] = init_value
 
     # Drop the now-orphaned standard-stem keys (no target in residual_mc).
     chkpt.pop(src_w_key, None)
     chkpt.pop(src_b_key, None)
     logger.info(
         "[CKPT] remapped standard PatchEmbed -> residual multi-channel stem "
-        "(rgb=exact copy, extra=channel-mean, scale=1e-3): %s",
+        "(rgb=exact copy, extra=channel-mean, scale=model-init): %s",
         src_w_key,
     )
 

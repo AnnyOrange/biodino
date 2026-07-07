@@ -58,6 +58,7 @@ def build_model(args, only_teacher=False, img_size=224, device=None):
             in_chans=getattr(args, "in_chans", 3),
             enable_channelvit=getattr(args, "enable_channelvit", False),
             stem_type=getattr(args, "stem_type", None),
+            residual_mc_extra_scale_init=getattr(args, "residual_mc_extra_scale_init", 1e-3),
             device=device,
         )
         teacher = vits.__dict__[args.arch](**vit_kwargs)
