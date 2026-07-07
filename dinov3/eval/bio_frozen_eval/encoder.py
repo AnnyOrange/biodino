@@ -27,10 +27,12 @@ __all__ = [
     "extract_features",
     "completed",
     "pil_collate",
+    "CHANNEL_POLICIES",
 ]
 
 ROBUST_MC_MEAN = (0.514666, 0.488834, 0.498267)
 ROBUST_MC_STD = (0.338707, 0.339202, 0.336091)
+CHANNEL_POLICIES = ("auto", "native", "first3", "compact3", "zerofill3", "mean3", "sample3_tta")
 
 
 def _free_tcp_port() -> int:
@@ -131,7 +133,14 @@ class Dinov3CkptEncoder:
         autocast_dtype: torch.dtype,
         image_size: int = 224,
         resize_size: int = 256,
+        channel_policy: str = "auto",
+        channel_tta_samples: int = 8,
+        channel_policy_seed: int = 0,
     ):
+        if channel_policy not in CHANNEL_POLICIES:
+            raise ValueError(f"Unknown channel_policy={channel_policy!r}; expected one of {CHANNEL_POLICIES}")
+        if channel_tta_samples <= 0:
+            raise ValueError(f"channel_tta_samples must be positive, got {channel_tta_samples}")
         self.device = torch.device(device)
         maybe_init_dist_for_dcp(checkpoint)
         backbone = load_dinov3_backbone(str(checkpoint), str(train_config), device=self.device, freeze=True)
@@ -143,6 +152,10 @@ class Dinov3CkptEncoder:
         self.resize_size = resize_size
         self.transform = make_classification_eval_transform(resize_size=resize_size, crop_size=image_size)
         self.mc_mean, self.mc_std = _load_multichannel_stats(train_config)
+        self.channel_policy = channel_policy
+        self.channel_tta_samples = int(channel_tta_samples)
+        self.channel_rng = torch.Generator(device="cpu")
+        self.channel_rng.manual_seed(int(channel_policy_seed))
 
     @torch.inference_mode()
     def encode_pil(self, images: list) -> np.ndarray:
@@ -177,15 +190,71 @@ class Dinov3CkptEncoder:
         return (x - mean) / std
 
     @staticmethod
-    def _collapse_to_three_channels(x: torch.Tensor) -> torch.Tensor:
-        channels = int(x.shape[1])
-        if channels == 3:
-            return x
-        if channels == 1:
-            return x.repeat(1, 3, 1, 1)
-        if channels == 2:
-            return torch.cat([x, x[:, -1:]], dim=1)
-        return x[:, :3]
+    def _real_channel_indices(valid_row: torch.Tensor, total_channels: int) -> torch.Tensor:
+        idx = valid_row.nonzero(as_tuple=False).flatten()
+        if idx.numel() == 0:
+            idx = torch.arange(total_channels, dtype=torch.long)[:1]
+        return idx.cpu()
+
+    def _collapse_to_three_channels_once(
+        self,
+        x: torch.Tensor,
+        valid: torch.Tensor,
+        policy: str,
+    ) -> torch.Tensor:
+        if policy == "auto":
+            policy = "first3"
+        if policy == "native":
+            raise ValueError("channel_policy='native' requires a true multichannel backbone")
+        if policy == "sample3_tta":
+            policy = "sample3"
+
+        bsz, total_channels, height, width = x.shape
+        out = x.new_zeros(bsz, 3, height, width)
+        for i in range(bsz):
+            real_idx = self._real_channel_indices(valid[i], total_channels)
+            n_real = int(real_idx.numel())
+            if policy == "zerofill3":
+                take = real_idx[:3]
+                out[i, : int(take.numel())] = x[i, take.to(x.device)]
+                continue
+            if policy == "mean3":
+                mean = x[i, real_idx.to(x.device)].mean(dim=0, keepdim=True)
+                out[i] = mean.expand(3, -1, -1)
+                continue
+            if policy in {"first3", "compact3"}:
+                take = real_idx[:3]
+                if take.numel() < 3:
+                    pad = take[-1:].expand(3 - take.numel())
+                    take = torch.cat([take, pad], dim=0)
+                out[i] = x[i, take.to(x.device)]
+                continue
+            if policy == "sample3":
+                if n_real >= 3:
+                    perm = torch.randperm(n_real, generator=self.channel_rng)[:3]
+                    take = real_idx[perm]
+                else:
+                    draw = torch.randint(n_real, (3,), generator=self.channel_rng)
+                    take = real_idx[draw]
+                out[i] = x[i, take.to(x.device)]
+                continue
+            raise ValueError(f"Unknown channel collapse policy: {policy}")
+        return out
+
+    def _encode_collapsed_batch(self, batch: torch.Tensor, valid: torch.Tensor, policy: str) -> torch.Tensor:
+        if policy == "sample3_tta":
+            features = []
+            for _ in range(self.channel_tta_samples):
+                x = self._collapse_to_three_channels_once(batch, valid, "sample3_tta")
+                x = self._normalize_tensor_batch(x).to(self.device, non_blocking=True)
+                feat = self.model(x).float()
+                features.append(torch.nn.functional.normalize(feat, dim=1))
+            return torch.nn.functional.normalize(torch.stack(features, dim=0).mean(dim=0), dim=1)
+
+        x = self._collapse_to_three_channels_once(batch, valid, policy)
+        x = self._normalize_tensor_batch(x).to(self.device, non_blocking=True)
+        feat = self.model(x).float()
+        return torch.nn.functional.normalize(feat, dim=1)
 
     @torch.inference_mode()
     def encode_tensor(self, images: list[torch.Tensor]) -> np.ndarray:
@@ -210,16 +279,16 @@ class Dinov3CkptEncoder:
             "residual_mc",
             "rgb_extra_residual",
         } or getattr(backbone, "enable_channelvit", False)
-        if true_multichannel:
+        if true_multichannel and self.channel_policy in {"auto", "native"}:
             x = self._normalize_tensor_batch(batch).to(self.device, non_blocking=True)
             valid = valid.to(self.device, non_blocking=True)
             channel_ids = torch.arange(max_channels, dtype=torch.long, device=self.device)
             feat = self.model(x, channel_ids=channel_ids, channel_valid_mask=valid).float()
+            feat = torch.nn.functional.normalize(feat, dim=1)
         else:
-            x = self._collapse_to_three_channels(batch)
-            x = self._normalize_tensor_batch(x).to(self.device, non_blocking=True)
-            feat = self.model(x).float()
-        feat = torch.nn.functional.normalize(feat, dim=1)
+            if self.channel_policy == "native":
+                raise ValueError("channel_policy='native' was requested for a non-multichannel backbone")
+            feat = self._encode_collapsed_batch(batch, valid, self.channel_policy)
         return feat.cpu().numpy().astype(np.float16)
 
     @torch.inference_mode()
@@ -278,6 +347,8 @@ def completed(
     image_size: int | None = None,
     resize_size: int | None = None,
     split: str | None = None,
+    channel_policy: str | None = None,
+    channel_tta_samples: int | None = None,
 ) -> bool:
     """True if (dataset/model/protocol) already has an error-free row in summary.csv."""
     import csv
@@ -300,9 +371,13 @@ def completed(
                         elif split != "internal-80-20":
                             continue
                     if image_size is None:
-                        return True
+                        if _row_matches_channel_policy(row, channel_policy, channel_tta_samples):
+                            return True
+                        continue
                     row_image_size = row.get("image_size")
                     row_resize_size = row.get("resize_size")
+                    if not _row_matches_channel_policy(row, channel_policy, channel_tta_samples):
+                        continue
                     if not row_image_size and image_size == 224 and resize_size in (None, 256):
                         return True
                     if row_image_size == str(image_size) and row_resize_size == str(resize_size):
@@ -310,3 +385,19 @@ def completed(
     except Exception:
         return False
     return False
+
+
+def _row_matches_channel_policy(
+    row: dict,
+    channel_policy: str | None,
+    channel_tta_samples: int | None,
+) -> bool:
+    if channel_policy in (None, "", "auto"):
+        return True
+    row_policy = row.get("channel_policy")
+    if row_policy != channel_policy:
+        return False
+    if channel_policy == "sample3_tta" and channel_tta_samples is not None:
+        row_tta = row.get("channel_tta_samples")
+        return row_tta in ("", None) or row_tta == str(channel_tta_samples)
+    return True

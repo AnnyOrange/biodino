@@ -945,6 +945,7 @@ class SSLMetaArch(nn.Module):
             mean=cfg.crops.rgb_mean,
             std=cfg.crops.rgb_std,
             float_input=getattr(cfg.crops, "float_input", False),
+            augmentation_policy=getattr(cfg.crops, "augmentation_policy", "dinov3"),
         )
 
     def get_maybe_fused_params_for_submodel(self, m: nn.Module):

@@ -23,9 +23,15 @@ Optional env vars:
   SEGMENTATION_PROTOCOL=best        best | manual. best uses the dataset-specific final protocol.
   SEGMENTATION_MULTICHANNEL=0       1 passes --multichannel to the segmentation pipeline
                                    (meaningful for dualroute + TissueNet true channels).
+  SEGMENTATION_CHANNEL_POLICY=auto  auto | native | first3 | compact3 | zerofill3 | mean3 | sample3_tta.
+  SEGMENTATION_CHANNEL_TTA_SAMPLES=8
+  SEGMENTATION_CHANNEL_POLICY_SEED=0
   LAYER_PRESET=last1               manual protocol only: last1 | even4 | last4 | layerwise.
   NUM_WORKERS=4
   FROZEN_BATCH_SIZE=64             Feature-extraction batch size for the frozen probes.
+  FROZEN_CHANNEL_POLICY=auto        auto | native | first3 | compact3 | zerofill3 | mean3 | sample3_tta.
+  FROZEN_CHANNEL_TTA_SAMPLES=8
+  FROZEN_CHANNEL_POLICY_SEED=0
   AUTOCAST_DTYPE=bf16              bf16 | fp16 | fp32 for frozen feature extraction.
   CLASSIFICATION_RESOLUTION_PROTOCOL=best
                                    best | manual. best uses the 2026-06-23 5-dataset ablation table.
@@ -75,18 +81,31 @@ JOBS_PER_GPU="${JOBS_PER_GPU:-1}"
 TASKS="${TASKS:-segmentation classification regression detection retrieval}"
 SEGMENTATION_PROTOCOL="${SEGMENTATION_PROTOCOL:-best}"
 SEGMENTATION_MULTICHANNEL="${SEGMENTATION_MULTICHANNEL:-0}"
+SEGMENTATION_CHANNEL_POLICY="${SEGMENTATION_CHANNEL_POLICY:-auto}"
+SEGMENTATION_CHANNEL_TTA_SAMPLES="${SEGMENTATION_CHANNEL_TTA_SAMPLES:-8}"
+SEGMENTATION_CHANNEL_POLICY_SEED="${SEGMENTATION_CHANNEL_POLICY_SEED:-0}"
 LAYER_PRESET="${LAYER_PRESET:-last1}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 
-SEGMENTATION_DATASETS="${SEGMENTATION_DATASETS:-bbbc038 conic monuseg pannuke tissuenet}"
+# Full supported default suite. Override *_DATASETS for cheap checkpoint sweeps.
+DEFAULT_SEGMENTATION_DATASETS="bbbc038 conic monuseg pannuke tissuenet livecell multimodal_cellseg cellpose"
+DEFAULT_CLASSIFICATION_DATASETS="bloodmnist pathmnist tissuemnist breastmnist organamnist organcmnist organsmnist dermamnist octmnist pneumoniamnist retinamnist chestmnist bbbc048-cellcycle cyclops-protein-loc midog25-atypical pcam nct-crc-he lc25000 chammi-allen-task1 chammi-allen-task2 chammi-cp-task1 chammi-cp-task2 chammi-cp-task3 chammi-cp-task4 chammi-hpa-task1 chammi-hpa-task2 chammi-hpa-task3"
+DEFAULT_REGRESSION_DATASETS="bbbc013 bbbc005"
+DEFAULT_RETRIEVAL_DATASETS="lc25000 nct-crc-he-100 nct-crc-he-1k crc-val-he-7k"
+DEFAULT_DETECTION_DATASETS="livecell"
+
+SEGMENTATION_DATASETS="${SEGMENTATION_DATASETS:-$DEFAULT_SEGMENTATION_DATASETS}"
 # Names must match the dinov3.eval.bio_frozen_eval registry (chestmnist = multilabel).
-CLASSIFICATION_DATASETS="${CLASSIFICATION_DATASETS:-bloodmnist bbbc048-cellcycle cyclops-protein-loc midog25-atypical chestmnist}"
-REGRESSION_DATASETS="${REGRESSION_DATASETS:-bbbc013}"
-RETRIEVAL_DATASETS="${RETRIEVAL_DATASETS:-lc25000 nct-crc-he-1k crc-val-he-7k}"
-DETECTION_DATASETS="${DETECTION_DATASETS:-livecell}"
+CLASSIFICATION_DATASETS="${CLASSIFICATION_DATASETS:-$DEFAULT_CLASSIFICATION_DATASETS}"
+REGRESSION_DATASETS="${REGRESSION_DATASETS:-$DEFAULT_REGRESSION_DATASETS}"
+RETRIEVAL_DATASETS="${RETRIEVAL_DATASETS:-$DEFAULT_RETRIEVAL_DATASETS}"
+DETECTION_DATASETS="${DETECTION_DATASETS:-$DEFAULT_DETECTION_DATASETS}"
 
 # Frozen cls/reg/multilabel/retrieval probes use the canonical sklearn protocol.
 FROZEN_BATCH_SIZE="${FROZEN_BATCH_SIZE:-64}"
+FROZEN_CHANNEL_POLICY="${FROZEN_CHANNEL_POLICY:-auto}"
+FROZEN_CHANNEL_TTA_SAMPLES="${FROZEN_CHANNEL_TTA_SAMPLES:-8}"
+FROZEN_CHANNEL_POLICY_SEED="${FROZEN_CHANNEL_POLICY_SEED:-0}"
 AUTOCAST_DTYPE="${AUTOCAST_DTYPE:-bf16}"
 CLASSIFICATION_RESOLUTION_PROTOCOL="${CLASSIFICATION_RESOLUTION_PROTOCOL:-best}"
 CLASSIFICATION_IMAGE_SIZE="${CLASSIFICATION_IMAGE_SIZE:-224}"
@@ -117,6 +136,9 @@ cmd=(
   --retrieval-datasets $RETRIEVAL_DATASETS
   --detection-datasets $DETECTION_DATASETS
   --frozen-batch-size "$FROZEN_BATCH_SIZE"
+  --frozen-channel-policy "$FROZEN_CHANNEL_POLICY"
+  --frozen-channel-tta-samples "$FROZEN_CHANNEL_TTA_SAMPLES"
+  --frozen-channel-policy-seed "$FROZEN_CHANNEL_POLICY_SEED"
   --autocast-dtype "$AUTOCAST_DTYPE"
   --classification-resolution-protocol "$CLASSIFICATION_RESOLUTION_PROTOCOL"
   --classification-image-size "$CLASSIFICATION_IMAGE_SIZE"
@@ -124,6 +146,9 @@ cmd=(
   --seed "$SEED"
   --train-fraction "$TRAIN_FRACTION"
   --segmentation-protocol "$SEGMENTATION_PROTOCOL"
+  --segmentation-channel-policy "$SEGMENTATION_CHANNEL_POLICY"
+  --segmentation-channel-tta-samples "$SEGMENTATION_CHANNEL_TTA_SAMPLES"
+  --segmentation-channel-policy-seed "$SEGMENTATION_CHANNEL_POLICY_SEED"
   --layer-preset "$LAYER_PRESET"
   --seg-feature-batch-size "$SEG_FEATURE_BATCH_SIZE"
   --seg-feature-num-workers "$SEG_FEATURE_NUM_WORKERS"
@@ -157,6 +182,8 @@ echo "[run_bio_benchmark_all] Benchmark root: $BENCHMARK_ROOT"
 echo "[run_bio_benchmark_all] Output: $OUTPUT_DIR"
 echo "[run_bio_benchmark_all] Segmentation protocol: $SEGMENTATION_PROTOCOL"
 echo "[run_bio_benchmark_all] Segmentation multichannel: $SEGMENTATION_MULTICHANNEL"
+echo "[run_bio_benchmark_all] Segmentation channel policy: $SEGMENTATION_CHANNEL_POLICY"
+echo "[run_bio_benchmark_all] Frozen channel policy: $FROZEN_CHANNEL_POLICY"
 echo "[run_bio_benchmark_all] Classification resolution protocol: $CLASSIFICATION_RESOLUTION_PROTOCOL"
 echo "[run_bio_benchmark_all] Command:"
 printf ' %q' "${cmd[@]}"
