@@ -91,6 +91,119 @@ class ChannelAgnosticRandomSolarize(nn.Module):
         return torch.where(img >= threshold, inverted, img)
 
 
+class BioSafeIntensityJitter(nn.Module):
+    """Microscopy-friendly per-channel intensity perturbation.
+
+    This keeps marker identity intact: no RGB hue/saturation, no channel mixing,
+    and only mild per-channel gain/offset/contrast/gamma changes.
+    """
+
+    def __init__(
+        self,
+        brightness: float = 0.20,
+        contrast: float = 0.25,
+        gamma: tuple[float, float] = (0.85, 1.20),
+        offset: float = 0.03,
+        p: float = 0.8,
+    ):
+        super().__init__()
+        self.brightness = brightness
+        self.contrast = contrast
+        self.gamma = gamma
+        self.offset = offset
+        self.p = p
+
+    def forward(self, img: Tensor) -> Tensor:
+        if random.random() > self.p:
+            return img
+        was_uint8 = not img.is_floating_point()
+        if was_uint8:
+            img = img.to(torch.float32) / 255.0
+
+        C = img.shape[-3]
+        if self.brightness > 0 and random.random() < 0.8:
+            factors = 1.0 + (torch.rand(C, 1, 1, device=img.device) * 2 - 1) * self.brightness
+            img = img * factors
+        if self.offset > 0 and random.random() < 0.5:
+            offsets = (torch.rand(C, 1, 1, device=img.device) * 2 - 1) * self.offset
+            img = img + offsets
+        if self.contrast > 0 and random.random() < 0.8:
+            means = img.mean(dim=(-2, -1), keepdim=True)
+            factors = 1.0 + (torch.rand(C, 1, 1, device=img.device) * 2 - 1) * self.contrast
+            img = (img - means) * factors + means
+        if self.gamma is not None and random.random() < 0.5:
+            lo, hi = self.gamma
+            gammas = torch.empty(C, 1, 1, device=img.device).uniform_(lo, hi)
+            img = img.clamp(0.0, 1.0).pow(gammas)
+
+        img = img.clamp(0.0, 1.0)
+        if was_uint8:
+            img = (img * 255.0).to(torch.uint8)
+        return img
+
+
+class ChannelAgnosticGaussianNoise(nn.Module):
+    """Add mild sensor-like noise without changing channel semantics."""
+
+    def __init__(self, sigma_min: float = 0.005, sigma_max: float = 0.025, p: float = 0.25):
+        super().__init__()
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
+        self.p = p
+
+    def forward(self, img: Tensor) -> Tensor:
+        if random.random() > self.p:
+            return img
+        was_uint8 = not img.is_floating_point()
+        if was_uint8:
+            img = img.to(torch.float32) / 255.0
+        sigma = random.uniform(self.sigma_min, self.sigma_max)
+        img = (img + torch.randn_like(img) * sigma).clamp(0.0, 1.0)
+        if was_uint8:
+            img = (img * 255.0).to(torch.uint8)
+        return img
+
+
+class ChannelDropout(nn.Module):
+    """Zero a small random subset of channels while keeping at least one."""
+
+    def __init__(self, drop_prob: float = 0.15, p: float = 0.10):
+        super().__init__()
+        self.drop_prob = drop_prob
+        self.p = p
+
+    def forward(self, img: Tensor) -> Tensor:
+        if random.random() > self.p:
+            return img
+        C = img.shape[-3]
+        if C <= 1:
+            return img
+        keep = torch.rand(C, 1, 1, device=img.device) >= self.drop_prob
+        if not bool(keep.any()):
+            keep[random.randrange(C)] = True
+        out = img * keep.to(dtype=img.dtype)
+        if bool((img != 0).any()) and not bool((out != 0).any()):
+            nonzero_channels = (img != 0).flatten(-2).any(dim=-1)
+            candidates = nonzero_channels.nonzero(as_tuple=False).flatten()
+            keep.zero_()
+            keep[int(candidates[random.randrange(int(candidates.numel()))])] = True
+            out = img * keep.to(dtype=img.dtype)
+        return out
+
+
+class RandomRot90(nn.Module):
+    """Random 90-degree rotation for orientation-agnostic microscopy views."""
+
+    def __init__(self, p: float = 0.5):
+        super().__init__()
+        self.p = p
+
+    def forward(self, img: Tensor) -> Tensor:
+        if random.random() > self.p:
+            return img
+        return torch.rot90(img, k=random.randint(1, 3), dims=(-2, -1))
+
+
 # ---------------------------------------------------------------------------
 # Main augmentation class
 # ---------------------------------------------------------------------------
@@ -113,6 +226,7 @@ class DataAugmentationDINO(object):
         mean=IMAGENET_DEFAULT_MEAN,
         std=IMAGENET_DEFAULT_STD,
         float_input=False,
+        augmentation_policy="dinov3",
     ):
         self.global_crops_scale = global_crops_scale
         self.local_crops_scale = local_crops_scale
@@ -128,8 +242,15 @@ class DataAugmentationDINO(object):
         self.mean = mean
         self.std = std
         self.float_input = float_input
+        self.augmentation_policy = (augmentation_policy or "dinov3").lower()
         self._logged_channel_stats_adapt = False
         self._active_channel_ids = None
+
+        if self.augmentation_policy not in {"dinov3", "bio_safe"}:
+            raise ValueError(
+                f"Unsupported augmentation_policy={augmentation_policy!r}; "
+                "expected 'dinov3' or 'bio_safe'."
+            )
 
         solarize_threshold = 0.5 if float_input else 128
 
@@ -148,21 +269,21 @@ class DataAugmentationDINO(object):
         logger.info(f"share_color_jitter: {share_color_jitter}")
         logger.info(f"horizontal flips: {horizontal_flips}")
         logger.info(f"float_input: {float_input} (solarize threshold: {solarize_threshold})")
+        logger.info(f"augmentation_policy: {self.augmentation_policy}")
         logger.info("Using channel-agnostic color augmentations (supports 1-N channels)")
         logger.info("###################################")
 
         global_crop_max_size = max(global_crops_size, gram_teacher_crops_size if gram_teacher_crops_size else 0)
 
-        self.geometric_augmentation_global = v2.Compose(
-            [
-                v2.RandomResizedCrop(
-                    global_crop_max_size,
-                    scale=global_crops_scale,
-                    interpolation=v2.InterpolationMode.BICUBIC,
-                ),
-                v2.RandomHorizontalFlip(p=0.5 if horizontal_flips else 0.0),
-            ]
-        )
+        global_geometric_transforms = [
+            v2.RandomResizedCrop(
+                global_crop_max_size,
+                scale=global_crops_scale,
+                interpolation=v2.InterpolationMode.BICUBIC,
+            ),
+            v2.RandomHorizontalFlip(p=0.5 if horizontal_flips else 0.0),
+        ]
+        self.geometric_augmentation_global = v2.Compose(global_geometric_transforms)
 
         resize_global = nn.Identity()
         self.resize_global_post_transf = nn.Identity()
@@ -183,33 +304,64 @@ class DataAugmentationDINO(object):
                 interpolation=v2.InterpolationMode.BICUBIC,
             )
 
-        self.geometric_augmentation_local = v2.Compose(
-            [
-                v2.RandomResizedCrop(
-                    local_crops_size,
-                    scale=local_crops_scale,
-                    interpolation=v2.InterpolationMode.BICUBIC,
-                ),
-                v2.RandomHorizontalFlip(p=0.5 if horizontal_flips else 0.0),
-            ]
-        )
+        local_geometric_transforms = [
+            v2.RandomResizedCrop(
+                local_crops_size,
+                scale=local_crops_scale,
+                interpolation=v2.InterpolationMode.BICUBIC,
+            ),
+            v2.RandomHorizontalFlip(p=0.5 if horizontal_flips else 0.0),
+        ]
+        self.geometric_augmentation_local = v2.Compose(local_geometric_transforms)
 
-        # Channel-agnostic color distortions
-        color_jittering = v2.Compose(
-            [
-                ChannelAgnosticColorJitter(brightness=0.4, contrast=0.4, p=0.8),
-                ChannelAgnosticRandomGrayscale(p=0.2),
-            ]
-        )
+        if self.augmentation_policy == "bio_safe":
+            color_jittering = v2.Compose(
+                [
+                    BioSafeIntensityJitter(
+                        brightness=0.20,
+                        contrast=0.25,
+                        gamma=(0.85, 1.20),
+                        offset=0.03,
+                        p=0.8,
+                    ),
+                    ChannelAgnosticGaussianNoise(sigma_min=0.005, sigma_max=0.025, p=0.25),
+                    ChannelDropout(drop_prob=0.15, p=0.10),
+                ]
+            )
+            mild_global_blur = v2.RandomApply(
+                [v2.GaussianBlur(kernel_size=5, sigma=(0.1, 1.0))],
+                p=0.15,
+            )
+            mild_local_blur = v2.RandomApply(
+                [v2.GaussianBlur(kernel_size=3, sigma=(0.1, 0.7))],
+                p=0.10,
+            )
+            global_transfo1_extra = mild_global_blur
+            global_transfo2_extra = mild_global_blur
+            local_transfo_extra = mild_local_blur
+        else:
+            # Channel-agnostic color distortions matching the DINO-style policy.
+            color_jittering = v2.Compose(
+                [
+                    ChannelAgnosticColorJitter(brightness=0.4, contrast=0.4, p=0.8),
+                    ChannelAgnosticRandomGrayscale(p=0.2),
+                ]
+            )
 
-        global_transfo1_extra = GaussianBlur(p=1.0)
-        global_transfo2_extra = v2.Compose(
-            [
-                GaussianBlur(p=0.1),
-                ChannelAgnosticRandomSolarize(threshold=solarize_threshold, p=0.2),
-            ]
+            global_transfo1_extra = GaussianBlur(p=1.0)
+            global_transfo2_extra = v2.Compose(
+                [
+                    GaussianBlur(p=0.1),
+                    ChannelAgnosticRandomSolarize(threshold=solarize_threshold, p=0.2),
+                ]
+            )
+            local_transfo_extra = GaussianBlur(p=0.5)
+
+        post_crop_spatial = (
+            v2.Compose([v2.RandomVerticalFlip(p=0.5), RandomRot90(p=0.5)])
+            if self.augmentation_policy == "bio_safe"
+            else nn.Identity()
         )
-        local_transfo_extra = GaussianBlur(p=0.5)
 
         if float_input:
             pre_norm_clamp = v2.Lambda(lambda x: x.clamp(0.0, 1.0))
@@ -227,17 +379,23 @@ class DataAugmentationDINO(object):
 
         if self.share_color_jitter:
             self.color_jittering = color_jittering
-            self.global_transfo1 = v2.Compose([resize_global, global_transfo1_extra, self.normalize])
-            self.global_transfo2 = v2.Compose([resize_global, global_transfo2_extra, self.normalize])
-            self.local_transfo = v2.Compose([local_transfo_extra, self.normalize])
-        else:
             self.global_transfo1 = v2.Compose(
-                [resize_global, color_jittering, global_transfo1_extra, self.normalize]
+                [resize_global, post_crop_spatial, global_transfo1_extra, self.normalize]
             )
             self.global_transfo2 = v2.Compose(
-                [resize_global, color_jittering, global_transfo2_extra, self.normalize]
+                [resize_global, post_crop_spatial, global_transfo2_extra, self.normalize]
             )
-            self.local_transfo = v2.Compose([color_jittering, local_transfo_extra, self.normalize])
+            self.local_transfo = v2.Compose([post_crop_spatial, local_transfo_extra, self.normalize])
+        else:
+            self.global_transfo1 = v2.Compose(
+                [resize_global, post_crop_spatial, color_jittering, global_transfo1_extra, self.normalize]
+            )
+            self.global_transfo2 = v2.Compose(
+                [resize_global, post_crop_spatial, color_jittering, global_transfo2_extra, self.normalize]
+            )
+            self.local_transfo = v2.Compose(
+                [post_crop_spatial, color_jittering, local_transfo_extra, self.normalize]
+            )
 
     # ------------------------------------------------------------------
 

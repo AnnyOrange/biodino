@@ -15,6 +15,59 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 
 logger = logging.getLogger("dinov3.bio_benchmark")
 
+CHANNEL_POLICIES = ("auto", "native", "first3", "compact3", "zerofill3", "mean3", "sample3_tta")
+
+DEFAULT_CLASSIFICATION_DATASETS = [
+    "bloodmnist",
+    "pathmnist",
+    "tissuemnist",
+    "breastmnist",
+    "organamnist",
+    "organcmnist",
+    "organsmnist",
+    "dermamnist",
+    "octmnist",
+    "pneumoniamnist",
+    "retinamnist",
+    "chestmnist",
+    "bbbc048-cellcycle",
+    "cyclops-protein-loc",
+    "midog25-atypical",
+    "pcam",
+    "nct-crc-he",
+    "lc25000",
+    "chammi-allen-task1",
+    "chammi-allen-task2",
+    "chammi-cp-task1",
+    "chammi-cp-task2",
+    "chammi-cp-task3",
+    "chammi-cp-task4",
+    "chammi-hpa-task1",
+    "chammi-hpa-task2",
+    "chammi-hpa-task3",
+]
+DEFAULT_REGRESSION_DATASETS = ["bbbc013", "bbbc005"]
+DEFAULT_RETRIEVAL_DATASETS = ["lc25000", "nct-crc-he-100", "nct-crc-he-1k", "crc-val-he-7k"]
+DEFAULT_DETECTION_DATASETS = ["livecell"]
+DEFAULT_SEGMENTATION_DATASETS = [
+    "bbbc038",
+    "conic",
+    "monuseg",
+    "pannuke",
+    "tissuenet",
+    "livecell",
+    "multimodal_cellseg",
+    "cellpose",
+]
+
+
+def _channel_policy_tag(channel_policy: str, channel_tta_samples: int) -> str:
+    if channel_policy == "auto":
+        return ""
+    if channel_policy == "sample3_tta":
+        return f"_cpsample3tta{channel_tta_samples}"
+    return f"_cp{channel_policy}"
+
 
 @dataclass(frozen=True)
 class Job:
@@ -138,6 +191,7 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
 
             for seg_datasets, use_multichannel in seg_job_specs:
                 seg_run_name = f"{args.run_name}_mc" if use_multichannel else args.run_name
+                seg_run_name = f"{seg_run_name}{_channel_policy_tag(args.segmentation_channel_policy, args.segmentation_channel_tta_samples)}"
                 gpu = next(gpu_iter)
                 cmd = [
                     py, "-m", "dinov3.eval.bio_segmentation.scripts.run_linear_probe_pipeline",
@@ -157,6 +211,9 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
                     "--probe-batch-size", str(args.seg_probe_batch_size),
                     "--probe-num-workers", str(args.seg_probe_num_workers),
                     "--probe-eval-every", str(args.seg_probe_epochs if not args.smoke else 1),
+                    "--channel-policy", args.segmentation_channel_policy,
+                    "--channel-tta-samples", str(args.segmentation_channel_tta_samples),
+                    "--channel-policy-seed", str(args.segmentation_channel_policy_seed),
                     "--gpu", gpu,
                 ]
                 if args.smoke:
@@ -180,6 +237,9 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
             "--num-workers", str(args.num_workers),
             "--train-fraction", str(args.train_fraction),
             "--seed", str(args.seed),
+            "--channel-policy", args.frozen_channel_policy,
+            "--channel-tta-samples", str(args.frozen_channel_tta_samples),
+            "--channel-policy-seed", str(args.frozen_channel_policy_seed),
         ]
         frozen_cap: List[str] = []
         if args.smoke:
@@ -243,6 +303,9 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
                     "--batch-size", str(args.frozen_batch_size),
                     "--num-workers", str(args.num_workers),
                     "--seed", str(args.seed),
+                    "--channel-policy", args.frozen_channel_policy,
+                    "--channel-tta-samples", str(args.frozen_channel_tta_samples),
+                    "--channel-policy-seed", str(args.frozen_channel_policy_seed),
                 ]
                 if args.smoke:
                     # clustering needs more than n_clusters samples; keep a floor.
@@ -271,11 +334,11 @@ def parse_args(argv=None):
     # the sklearn frozen-feature probes in dinov3.eval.bio_frozen_eval. Dataset
     # names must match the bio_frozen_eval registry (e.g. cyclops-protein-loc /
     # bbbc048-cellcycle, not cyclops / bbbc048).
-    parser.add_argument("--classification-datasets", nargs="+", default=["bloodmnist", "bbbc048-cellcycle", "cyclops-protein-loc", "midog25-atypical", "chestmnist"])
-    parser.add_argument("--regression-datasets", nargs="+", default=["bbbc013"])
-    parser.add_argument("--retrieval-datasets", nargs="+", default=["lc25000", "nct-crc-he-1k", "crc-val-he-7k"])
-    parser.add_argument("--detection-datasets", nargs="+", default=["livecell"])
-    parser.add_argument("--segmentation-datasets", nargs="+", default=["bbbc038", "conic", "monuseg", "pannuke", "tissuenet"])
+    parser.add_argument("--classification-datasets", nargs="+", default=DEFAULT_CLASSIFICATION_DATASETS)
+    parser.add_argument("--regression-datasets", nargs="+", default=DEFAULT_REGRESSION_DATASETS)
+    parser.add_argument("--retrieval-datasets", nargs="+", default=DEFAULT_RETRIEVAL_DATASETS)
+    parser.add_argument("--detection-datasets", nargs="+", default=DEFAULT_DETECTION_DATASETS)
+    parser.add_argument("--segmentation-datasets", nargs="+", default=DEFAULT_SEGMENTATION_DATASETS)
     # frozen-probe (classification / regression / multilabel / retrieval) settings
     parser.add_argument(
         "--probe-backend",
@@ -286,6 +349,24 @@ def parse_args(argv=None):
     parser.add_argument("--frozen-batch-size", type=int, default=64, help="Feature-extraction batch size for frozen-probe tasks.")
     parser.add_argument("--frozen-n-last-blocks", type=int, default=1)
     parser.add_argument("--autocast-dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
+    parser.add_argument(
+        "--frozen-channel-policy",
+        default="auto",
+        choices=CHANNEL_POLICIES,
+        help="Channel handling for frozen classification/regression/retrieval tensor datasets.",
+    )
+    parser.add_argument(
+        "--frozen-channel-tta-samples",
+        type=int,
+        default=8,
+        help="Number of channel draws for frozen --frozen-channel-policy sample3_tta.",
+    )
+    parser.add_argument(
+        "--frozen-channel-policy-seed",
+        type=int,
+        default=0,
+        help="Seed for frozen stochastic channel policies.",
+    )
     parser.add_argument("--classification-resolution-protocol", default="best", choices=["manual", "best"])
     parser.add_argument("--classification-image-size", type=int, default=224, help="Manual/fallback final square crop size for classification/multilabel frozen features.")
     parser.add_argument("--classification-resize-size", type=int, default=0, help="Optional pre-crop resize size for classification; 0 keeps the ImageNet eval ratio.")
@@ -294,6 +375,24 @@ def parse_args(argv=None):
     # segmentation / detection dense linear probe (repo code in bio_segmentation / bio_detection)
     parser.add_argument("--segmentation-protocol", default="best", choices=["manual", "best"])
     parser.add_argument("--segmentation-multichannel", action="store_true", help="Pass --multichannel to the segmentation linear-probe pipeline.")
+    parser.add_argument(
+        "--segmentation-channel-policy",
+        default="auto",
+        choices=CHANNEL_POLICIES,
+        help="Channel handling for segmentation feature extraction. auto preserves the current RGB path, or native with --segmentation-multichannel and a multichannel stem.",
+    )
+    parser.add_argument(
+        "--segmentation-channel-tta-samples",
+        type=int,
+        default=8,
+        help="Number of channel draws for segmentation --segmentation-channel-policy sample3_tta.",
+    )
+    parser.add_argument(
+        "--segmentation-channel-policy-seed",
+        type=int,
+        default=0,
+        help="Seed for segmentation stochastic channel policies.",
+    )
     parser.add_argument("--layer-preset", default="last1")
     parser.add_argument("--seg-feature-batch-size", type=int, default=32)
     parser.add_argument("--seg-feature-num-workers", type=int, default=4)

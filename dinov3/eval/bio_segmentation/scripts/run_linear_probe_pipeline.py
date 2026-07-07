@@ -31,6 +31,7 @@ SUPPORTED_DATASETS = (
     "pannuke",
     "tissuenet",
 )
+CHANNEL_POLICIES = ("auto", "native", "first3", "compact3", "zerofill3", "mean3", "sample3_tta")
 
 DEFAULT_IMG_SIZE_BY_DATASET = {
     "bbbc038": 512,
@@ -228,6 +229,14 @@ def _resolve_layers_tag(layers: Sequence[int] | None) -> str:
 
 def _resize_cache_tag(resize_mode: str) -> str:
     return "" if resize_mode == "stretch" else f"_{resize_mode}"
+
+
+def _channel_policy_cache_tag(channel_policy: str, channel_tta_samples: int) -> str:
+    if channel_policy == "auto":
+        return ""
+    if channel_policy == "sample3_tta":
+        return f"_cpsample3tta{channel_tta_samples}"
+    return f"_cp{channel_policy}"
 
 
 def _infer_arch_depth(train_config: Path) -> Tuple[str, int]:
@@ -584,6 +593,26 @@ def main() -> None:
              "Only meaningful for stem_type=dualroute/residual_mc + a multichannel-capable "
              "dataset (currently tissuenet).",
     )
+    parser.add_argument(
+        "--channel-policy",
+        default="auto",
+        choices=CHANNEL_POLICIES,
+        help="Channel handling for feature extraction. auto preserves the current path; "
+             "native requires --multichannel plus a native-capable backbone; RGB policies "
+             "collapse true channels to 3-channel inputs.",
+    )
+    parser.add_argument(
+        "--channel-tta-samples",
+        type=int,
+        default=8,
+        help="Number of channel draws for --channel-policy sample3_tta.",
+    )
+    parser.add_argument(
+        "--channel-policy-seed",
+        type=int,
+        default=0,
+        help="Seed for stochastic channel policies such as sample3_tta.",
+    )
 
     # Linear probe settings
     parser.add_argument("--probe-epochs", type=int, default=50)
@@ -620,6 +649,8 @@ def main() -> None:
     parser.add_argument("--run-name", default=None, help="Subdir tag (default: train-config stem)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.channel_tta_samples <= 0:
+        parser.error("--channel-tta-samples must be positive")
 
     _check_datasets(args.datasets)
 
@@ -633,6 +664,9 @@ def main() -> None:
     run_name = args.run_name or cfg_stem
     if args.multichannel:
         run_name = f"{run_name}_mc"   # keep mc cache + results separate from the RGB run
+    channel_tag = _channel_policy_cache_tag(args.channel_policy, args.channel_tta_samples)
+    if channel_tag:
+        run_name = f"{run_name}{channel_tag}"
     try:
         dataset_jobs = _resolve_dataset_jobs(
             datasets=args.datasets,
@@ -680,6 +714,12 @@ def main() -> None:
     logger.info("Selected ckpt iters: %s", selected_iters)
     logger.info("Train config: %s", train_config)
     logger.info("run_name=%s protocol=%s", run_name, args.protocol)
+    logger.info(
+        "channel_policy=%s channel_tta_samples=%d channel_policy_seed=%d",
+        args.channel_policy,
+        args.channel_tta_samples,
+        args.channel_policy_seed,
+    )
     logger.info(
         "Dataset jobs: %s",
         [
@@ -781,6 +821,12 @@ def main() -> None:
                         str(args.feature_batch_size),
                         "--num-workers",
                         str(args.feature_num_workers),
+                        "--channel-policy",
+                        args.channel_policy,
+                        "--channel-tta-samples",
+                        str(args.channel_tta_samples),
+                        "--channel-policy-seed",
+                        str(args.channel_policy_seed),
                     ]
                     if job.layers:
                         feature_cmd.extend(["--layers", *[str(x) for x in job.layers]])
@@ -794,9 +840,10 @@ def main() -> None:
 
             resize_tag = _resize_cache_tag(job.resize_mode)
             mc_tag = "_mc" if args.multichannel else ""   # matches feature_extractor out_path suffix
-            train_cache = cache_dir / f"{dataset}_train_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}.npz"
-            val_cache = cache_dir / f"{dataset}_val_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}.npz"
-            test_cache = cache_dir / f"{dataset}_test_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}.npz"
+            channel_file_tag = _channel_policy_cache_tag(args.channel_policy, args.channel_tta_samples)
+            train_cache = cache_dir / f"{dataset}_train_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}.npz"
+            val_cache = cache_dir / f"{dataset}_val_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}.npz"
+            test_cache = cache_dir / f"{dataset}_test_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}.npz"
 
             if not args.dry_run:
                 required_caches = (train_cache, val_cache) if args.skip_test_eval else (train_cache, val_cache, test_cache)

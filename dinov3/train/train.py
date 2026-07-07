@@ -6,10 +6,12 @@
 import argparse
 import copy
 import gc
+import json
 import logging
 import math
 import os
 import sys
+import time
 from functools import partial
 from pathlib import Path
 
@@ -111,6 +113,114 @@ def _log_nan_debug_batch(data, logger):
     for name in ("collated_global_crops", "collated_local_crops", "collated_gram_teacher_crops"):
         if name in data:
             logger.warning("NaN debug %s", _summarize_nan_tensor(name, data[name], sample_keys=sample_keys))
+
+
+def _to_jsonable_scalar(value):
+    if isinstance(value, DTensor):
+        value = value.full_tensor()
+    if torch.is_tensor(value):
+        value = value.detach()
+        if value.numel() == 1:
+            return value.item()
+        return value.cpu().tolist()
+    if OmegaConf.is_config(value):
+        return OmegaConf.to_container(value, resolve=True)
+    return value
+
+
+def _as_int_list(value):
+    value = _to_jsonable_scalar(value)
+    if isinstance(value, (list, tuple)):
+        return [int(v) for v in value]
+    return [int(value)]
+
+
+def _estimate_patch_tokens_per_image(cfg):
+    try:
+        patch_size = int(cfg.student.patch_size)
+        global_crop_sizes = _as_int_list(cfg.crops.global_crops_size)
+        local_crop_sizes = _as_int_list(cfg.crops.local_crops_size)
+        if len(global_crop_sizes) != 1 or len(local_crop_sizes) != 1:
+            return None
+        global_tokens = 2 * (global_crop_sizes[0] / patch_size) ** 2
+        local_tokens = int(cfg.crops.local_crops_number) * (local_crop_sizes[0] / patch_size) ** 2
+        tokens = global_tokens + local_tokens
+        return int(tokens) if float(tokens).is_integer() else tokens
+    except Exception:
+        return None
+
+
+def _build_raw_loss_static_fields(cfg, accum_steps, real_global_batch_size, effective_global_batch_size):
+    dataset_path = str(cfg.train.dataset_path)
+    patch_tokens_per_image = _estimate_patch_tokens_per_image(cfg)
+    fields = {
+        "output_dir": str(cfg.train.output_dir),
+        "dataset_path": dataset_path,
+        "dataset_type": dataset_path.split(":", 1)[0],
+        "augmentation_policy": str(getattr(cfg.crops, "augmentation_policy", "dinov3")),
+        "decoder_rgb_mean": _to_jsonable_scalar(cfg.crops.rgb_mean),
+        "decoder_rgb_std": _to_jsonable_scalar(cfg.crops.rgb_std),
+        "arch": str(cfg.student.arch),
+        "patch_size": int(cfg.student.patch_size),
+        "global_crops_size": _to_jsonable_scalar(cfg.crops.global_crops_size),
+        "local_crops_size": _to_jsonable_scalar(cfg.crops.local_crops_size),
+        "local_crops_number": int(cfg.crops.local_crops_number),
+        "accum_steps": int(accum_steps),
+        "real_global_batch_size": int(real_global_batch_size),
+        "effective_global_batch_size": int(effective_global_batch_size),
+        "official_epoch_length": int(cfg.train.OFFICIAL_EPOCH_LENGTH),
+        "patch_tokens_per_image_estimate": patch_tokens_per_image,
+    }
+    return fields
+
+
+def _append_raw_loss_metrics(
+    raw_metrics_file,
+    static_fields,
+    cfg,
+    iteration,
+    micro_steps_completed_in_run,
+    lr,
+    wd,
+    mom,
+    last_layer_lr,
+    total_loss,
+    metrics_dict,
+):
+    if not distributed.is_main_process():
+        return
+
+    optimizer_updates_completed = int(iteration + 1)
+    effective_global_batch_size = int(static_fields["effective_global_batch_size"])
+    samples_seen = optimizer_updates_completed * effective_global_batch_size
+    tokens_per_image = static_fields.get("patch_tokens_per_image_estimate")
+    tokens_seen = samples_seen * tokens_per_image if tokens_per_image is not None else None
+    official_epoch_length = int(cfg.train.OFFICIAL_EPOCH_LENGTH)
+
+    row = dict(static_fields)
+    row.update(
+        {
+            "time_unix": time.time(),
+            "optimizer_update": int(iteration),
+            "optimizer_updates_completed": optimizer_updates_completed,
+            "micro_steps_completed_in_run": int(micro_steps_completed_in_run),
+            "micro_steps_completed_estimate": optimizer_updates_completed * int(static_fields["accum_steps"]),
+            "epoch_float": optimizer_updates_completed / official_epoch_length,
+            "epoch_index": int(iteration // official_epoch_length),
+            "samples_seen": samples_seen,
+            "image_visits": samples_seen,
+            "patch_tokens_seen_estimate": tokens_seen,
+            "lr": _to_jsonable_scalar(lr),
+            "wd": _to_jsonable_scalar(wd),
+            "mom": _to_jsonable_scalar(mom),
+            "last_layer_lr": _to_jsonable_scalar(last_layer_lr),
+            "total_loss": _to_jsonable_scalar(total_loss),
+        }
+    )
+    row.update({k: _to_jsonable_scalar(v) for k, v in metrics_dict.items()})
+
+    with open(raw_metrics_file, "a") as f:
+        f.write(json.dumps(row, sort_keys=True) + "\n")
 
 
 def get_args_parser(add_help: bool = True):
@@ -521,6 +631,15 @@ def do_train(cfg, model, resume=False):
     # Metric logging
     logger.info("Starting training from iteration %d", start_iter)
     metrics_file = os.path.join(cfg.train.output_dir, "training_metrics.json")
+    raw_metrics_file = os.path.join(cfg.train.output_dir, "raw_loss_metrics.jsonl")
+    raw_loss_static_fields = _build_raw_loss_static_fields(
+        cfg=cfg,
+        accum_steps=accum_steps,
+        real_global_batch_size=real_global_batch_size,
+        effective_global_batch_size=effective_global_batch_size,
+    )
+    if distributed.is_main_process():
+        logger.info("Raw per-update loss metrics will be written to %s", raw_metrics_file)
     metric_logger = MetricLogger(delimiter="  ", output_file=metrics_file)
     # Manual garbage collection
     gc.disable()
@@ -672,6 +791,19 @@ def do_train(cfg, model, resume=False):
         metric_logger.update(real_global_batch_size=real_global_batch_size)
         metric_logger.update(effective_global_batch_size=effective_global_batch_size)
         metric_logger.update(total_loss=total_loss, **metrics_dict)
+        _append_raw_loss_metrics(
+            raw_metrics_file=raw_metrics_file,
+            static_fields=raw_loss_static_fields,
+            cfg=cfg,
+            iteration=iteration,
+            micro_steps_completed_in_run=micro_step,
+            lr=lr,
+            wd=wd,
+            mom=mom,
+            last_layer_lr=last_layer_lr,
+            total_loss=total_loss,
+            metrics_dict=metrics_dict,
+        )
 
         if (
             cfg.evaluation.eval_period_iterations > 0

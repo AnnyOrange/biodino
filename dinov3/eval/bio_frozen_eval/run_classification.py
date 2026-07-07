@@ -34,7 +34,7 @@ import gc
 import json
 from pathlib import Path
 
-from .encoder import Dinov3CkptEncoder, completed, extract_features, parse_autocast_dtype
+from .encoder import CHANNEL_POLICIES, Dinov3CkptEncoder, completed, extract_features, parse_autocast_dtype
 from .group_keys import GROUP_SPLIT_DATASETS
 from .make_group_splits import group_split_indices
 from .probes import (
@@ -85,7 +85,7 @@ CSV_FIELDS = [
     "label_accuracy", "micro_f1", "macro_auc", "micro_auc",
     "macro_average_precision", "micro_average_precision",
     "mae", "r2", "spearman", "feature_file",
-    "image_size", "resize_size",
+    "image_size", "resize_size", "channel_policy", "channel_tta_samples",
     "checkpoint", "train_config", "error",
 ]
 
@@ -120,10 +120,21 @@ def resolve_image_size(dataset_name: str, protocol: str, manual_image_size: int)
     raise ValueError(f"Unknown --resolution-protocol {protocol!r}")
 
 
-def feature_cache_stem(model_name: str, image_size: int, resize_size: int) -> str:
-    if image_size == 224 and resize_size == 256:
-        return model_name
-    return f"{model_name}_s{image_size}_r{resize_size}"
+def feature_cache_stem(
+    model_name: str,
+    image_size: int,
+    resize_size: int,
+    channel_policy: str = "auto",
+    channel_tta_samples: int = 8,
+) -> str:
+    parts = [model_name]
+    if image_size != 224 or resize_size != 256:
+        parts.append(f"s{image_size}_r{resize_size}")
+    if channel_policy != "auto":
+        parts.append(f"cp{channel_policy}")
+        if channel_policy == "sample3_tta":
+            parts.append(f"tta{channel_tta_samples}")
+    return "_".join(parts)
 
 
 def parse_args(argv=None):
@@ -144,6 +155,29 @@ def parse_args(argv=None):
     p.add_argument("--n-last-blocks", type=int, default=1)
     p.add_argument("--no-avgpool", action="store_true")
     p.add_argument("--autocast-dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
+    p.add_argument(
+        "--channel-policy",
+        default="auto",
+        choices=CHANNEL_POLICIES,
+        help=(
+            "How tensor multichannel eval samples are fed to the backbone. "
+            "auto = native for multichannel stems, first3 for RGB stems; "
+            "native requires a multichannel stem; first3/compact3/zerofill3/mean3/sample3_tta "
+            "collapse C,H,W tensors to RGB-compatible 3,H,W inputs."
+        ),
+    )
+    p.add_argument(
+        "--channel-tta-samples",
+        type=int,
+        default=8,
+        help="Number of channel draws for --channel-policy sample3_tta.",
+    )
+    p.add_argument(
+        "--channel-policy-seed",
+        type=int,
+        default=0,
+        help="Seed for stochastic channel policies such as sample3_tta.",
+    )
     p.add_argument(
         "--resolution-protocol",
         default="best",
@@ -219,6 +253,9 @@ def main(argv=None) -> int:
             autocast_dtype=autocast_dtype,
             image_size=image_size,
             resize_size=resize_size,
+            channel_policy=args.channel_policy,
+            channel_tta_samples=args.channel_tta_samples,
+            channel_policy_seed=args.channel_policy_seed,
         )
         current_encoder_key = key
         return current_encoder
@@ -235,6 +272,8 @@ def main(argv=None) -> int:
                 image_size,
                 resize_size,
                 split_label,
+                args.channel_policy,
+                args.channel_tta_samples,
             )
             and not args.overwrite_results
         ):
@@ -246,7 +285,13 @@ def main(argv=None) -> int:
             f"image_size={image_size} resize_size={resize_size}",
             flush=True,
         )
-        stem = feature_cache_stem(model_name, image_size, resize_size)
+        stem = feature_cache_stem(
+            model_name,
+            image_size,
+            resize_size,
+            args.channel_policy,
+            args.channel_tta_samples,
+        )
         feature_file = out_root / "features" / dataset_name / f"{stem}.npz"
         try:
             encoder = get_encoder(image_size, resize_size)
@@ -313,6 +358,8 @@ def main(argv=None) -> int:
                 "feature_file": str(feature_file),
                 "image_size": image_size,
                 "resize_size": resize_size,
+                "channel_policy": args.channel_policy,
+                "channel_tta_samples": args.channel_tta_samples,
                 "checkpoint": str(checkpoint),
                 "train_config": str(train_config),
                 **result.to_dict(),
@@ -327,6 +374,8 @@ def main(argv=None) -> int:
                 "feature_file": str(feature_file),
                 "image_size": image_size,
                 "resize_size": resize_size,
+                "channel_policy": args.channel_policy,
+                "channel_tta_samples": args.channel_tta_samples,
                 "checkpoint": str(checkpoint),
                 "train_config": str(train_config),
                 "error": f"{type(exc).__name__}: {exc}",

@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .encoder import Dinov3CkptEncoder, completed, extract_features, parse_autocast_dtype
+from .encoder import CHANNEL_POLICIES, Dinov3CkptEncoder, completed, extract_features, parse_autocast_dtype
 from .retrieval_clustering import build_retrieval_dataset, clustering_metrics, retrieval_metrics
 
 DATASET_CHOICES = ["lc25000", "nct-crc-he-100", "nct-crc-he-1k", "crc-val-he-7k"]
@@ -35,7 +35,7 @@ CSV_FIELDS = [
     "recall_at_1", "recall_at_5", "recall_at_10",
     "map_at_1", "map_at_5", "map_at_10", "mrr",
     "cluster_accuracy", "ari", "nmi", "silhouette_cosine",
-    "feature_file", "checkpoint", "train_config", "error",
+    "feature_file", "channel_policy", "channel_tta_samples", "checkpoint", "train_config", "error",
 ]
 
 
@@ -65,6 +65,9 @@ def parse_args(argv=None):
     p.add_argument("--n-last-blocks", type=int, default=1)
     p.add_argument("--no-avgpool", action="store_true")
     p.add_argument("--autocast-dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
+    p.add_argument("--channel-policy", default="auto", choices=CHANNEL_POLICIES)
+    p.add_argument("--channel-tta-samples", type=int, default=8)
+    p.add_argument("--channel-policy-seed", type=int, default=0)
     p.add_argument("--overwrite-features", action="store_true")
     p.add_argument("--overwrite-results", action="store_true")
     return p.parse_args(argv)
@@ -87,13 +90,30 @@ def main(argv=None) -> int:
         n_last_blocks=args.n_last_blocks,
         use_avgpool=not args.no_avgpool,
         autocast_dtype=autocast_dtype,
+        channel_policy=args.channel_policy,
+        channel_tta_samples=args.channel_tta_samples,
+        channel_policy_seed=args.channel_policy_seed,
     )
 
     for dataset_name in args.datasets:
-        if completed(summary_path, dataset_name, model_name) and not args.overwrite_results:
+        if (
+            completed(
+                summary_path,
+                dataset_name,
+                model_name,
+                channel_policy=args.channel_policy,
+                channel_tta_samples=args.channel_tta_samples,
+            )
+            and not args.overwrite_results
+        ):
             print(f"[skip] {model_name} {dataset_name} already in {summary_path}", flush=True)
             continue
-        feature_file = out_root / "features" / dataset_name / f"{model_name}.npz"
+        feature_stem = model_name
+        if args.channel_policy != "auto":
+            feature_stem += f"_cp{args.channel_policy}"
+            if args.channel_policy == "sample3_tta":
+                feature_stem += f"_tta{args.channel_tta_samples}"
+        feature_file = out_root / "features" / dataset_name / f"{feature_stem}.npz"
         try:
             dataset, classes = build_retrieval_dataset(
                 dataset_name, max_samples=args.max_samples, benchmark_root=args.benchmark_root
@@ -110,6 +130,8 @@ def main(argv=None) -> int:
                 "dataset": dataset_name,
                 "task": "retrieval_clustering",
                 "feature_file": str(feature_file),
+                "channel_policy": args.channel_policy,
+                "channel_tta_samples": args.channel_tta_samples,
                 "checkpoint": str(checkpoint),
                 "train_config": str(train_config),
                 "n_samples": int(len(labels)),
@@ -123,6 +145,8 @@ def main(argv=None) -> int:
                 "dataset": dataset_name,
                 "task": "retrieval_clustering",
                 "feature_file": str(feature_file),
+                "channel_policy": args.channel_policy,
+                "channel_tta_samples": args.channel_tta_samples,
                 "checkpoint": str(checkpoint),
                 "train_config": str(train_config),
                 "error": f"{type(exc).__name__}: {exc}",

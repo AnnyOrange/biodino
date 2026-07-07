@@ -87,6 +87,8 @@ DATASET_DEFAULT_IMG_SIZES: Dict[str, int] = {
 }
 logger = logging.getLogger('feature_extractor')
 
+CHANNEL_POLICIES = ("auto", "native", "first3", "compact3", "zerofill3", "mean3", "sample3_tta")
+
 
 def _is_spatial_multichannel_stem(backbone: nn.Module) -> bool:
     return getattr(backbone, "stem_type", None) in {"dualroute", "residual_mc", "rgb_extra_residual"}
@@ -95,6 +97,15 @@ def _is_spatial_multichannel_stem(backbone: nn.Module) -> bool:
 def _resize_cache_tag(resize_mode: str) -> str:
     """Keep legacy cache names for stretch; disambiguate pad experiments."""
     return "" if resize_mode == "stretch" else f"_{resize_mode}"
+
+
+def _channel_policy_cache_tag(channel_policy: str, channel_tta_samples: int) -> str:
+    """Keep legacy cache names for auto; disambiguate explicit channel policies."""
+    if channel_policy == "auto":
+        return ""
+    if channel_policy == "sample3_tta":
+        return f"_cpsample3tta{channel_tta_samples}"
+    return f"_cp{channel_policy}"
 
 
 # ============================================================================
@@ -146,6 +157,57 @@ def _prepare_input_channels(imgs: torch.Tensor, backbone: nn.Module) -> torch.Te
         return torch.cat([imgs, padding], dim=1)
 
     return imgs[:, :expected]
+
+
+def _collapse_to_three_channels_once(
+    imgs: torch.Tensor,
+    policy: str,
+    channel_rng: Optional[torch.Generator] = None,
+) -> torch.Tensor:
+    """Collapse a normalized ``[B,C,H,W]`` segmentation batch to RGB slots.
+
+    Segmentation datasets already return normalized tensors, so these policies
+    operate after dataset normalization.  ``compact3`` and ``first3`` are
+    equivalent for dense tensors without an explicit missing-channel mask.
+    """
+    if policy == "sample3_tta":
+        policy = "sample3"
+    if policy in {"auto", "native"}:
+        raise ValueError(f"channel policy {policy!r} is not a 3-channel collapse policy")
+
+    bsz, channels, height, width = imgs.shape
+    if channels <= 0:
+        raise ValueError("Cannot collapse a tensor with zero channels")
+
+    out = imgs.new_zeros(bsz, 3, height, width)
+    if policy == "mean3":
+        mean = imgs.mean(dim=1, keepdim=True)
+        return mean.expand(-1, 3, -1, -1).contiguous()
+
+    if policy == "zerofill3":
+        take = min(3, channels)
+        out[:, :take] = imgs[:, :take]
+        return out
+
+    if policy in {"first3", "compact3"}:
+        take = torch.arange(min(3, channels), device=imgs.device)
+        if take.numel() < 3:
+            pad = take[-1:].expand(3 - take.numel())
+            take = torch.cat([take, pad], dim=0)
+        return imgs.index_select(1, take)
+
+    if policy == "sample3":
+        for i in range(bsz):
+            if channels >= 3:
+                perm = torch.randperm(channels, generator=channel_rng)[:3]
+                take = perm.to(device=imgs.device)
+            else:
+                draw = torch.randint(channels, (3,), generator=channel_rng)
+                take = draw.to(device=imgs.device)
+            out[i] = imgs[i, take]
+        return out
+
+    raise ValueError(f"Unknown channel collapse policy: {policy!r}")
 
 
 def _channelvit_spatial_features(
@@ -208,26 +270,67 @@ def _build_channel_metadata(imgs: torch.Tensor) -> Tuple[torch.Tensor, torch.Ten
     return channel_ids, channel_valid_mask
 
 
-def _backbone_spatial_features(backbone, imgs, n_layers, multichannel: bool):
-    """Single source of truth for the backbone forward used by both extract paths.
-
-    Default (RGB) path is unchanged: collapse channels to backbone.in_chans, then either the
-    ChannelViT aggregation or the standard get_intermediate_layers. The NEW multichannel path
-    (only for the dual-route stem) skips the 3ch collapse and passes channel_ids/valid_mask so
-    the dual-route stem routes through its (already-trained) pool path. Returns a list of
-    [B, D, H_p, W_p] tensors."""
-    if multichannel and _is_spatial_multichannel_stem(backbone):
-        cid, cmask = _build_channel_metadata(imgs)          # real channels, NO collapse
-        return backbone.get_intermediate_layers(
-            imgs, n=n_layers, reshape=True, return_class_token=False,
-            channel_ids=cid, channel_valid_mask=cmask,
-        )
+def _forward_prepared_spatial_features(backbone, imgs, n_layers):
     imgs = _prepare_input_channels(imgs, backbone)
     if getattr(backbone, "enable_channelvit", False):
         return _channelvit_spatial_features(backbone, imgs, n_layers)
     return backbone.get_intermediate_layers(
         imgs, n=n_layers, reshape=True, return_class_token=False,
     )
+
+
+def _backbone_spatial_features(
+    backbone,
+    imgs,
+    n_layers,
+    multichannel: bool,
+    channel_policy: str = "auto",
+    channel_tta_samples: int = 8,
+    channel_rng: Optional[torch.Generator] = None,
+):
+    """Single source of truth for the backbone forward used by both extract paths.
+
+    ``auto`` preserves the historical RGB path unless ``--multichannel`` is set
+    for a spatial MC stem.  Explicit RGB policies collapse the batch to three
+    channels before the standard backbone path.  ``native`` requires
+    ``--multichannel`` and a native-capable backbone.
+    """
+    if channel_policy not in CHANNEL_POLICIES:
+        raise ValueError(f"Unknown channel_policy={channel_policy!r}; expected one of {CHANNEL_POLICIES}")
+    if channel_tta_samples <= 0:
+        raise ValueError(f"channel_tta_samples must be positive, got {channel_tta_samples}")
+
+    true_spatial_mc = multichannel and _is_spatial_multichannel_stem(backbone)
+    true_channelvit_mc = multichannel and bool(getattr(backbone, "enable_channelvit", False))
+
+    if channel_policy == "native":
+        if not (true_spatial_mc or true_channelvit_mc):
+            raise ValueError("--channel-policy native requires --multichannel and a multichannel-capable backbone")
+    if true_spatial_mc and channel_policy in {"auto", "native"}:
+        cid, cmask = _build_channel_metadata(imgs)          # real channels, NO collapse
+        return backbone.get_intermediate_layers(
+            imgs, n=n_layers, reshape=True, return_class_token=False,
+            channel_ids=cid, channel_valid_mask=cmask,
+        )
+    if true_channelvit_mc and channel_policy in {"auto", "native"}:
+        return _forward_prepared_spatial_features(backbone, imgs, n_layers)
+
+    if channel_policy == "sample3_tta":
+        accum: Optional[List[torch.Tensor]] = None
+        for _ in range(channel_tta_samples):
+            collapsed = _collapse_to_three_channels_once(imgs, "sample3_tta", channel_rng)
+            outputs = _forward_prepared_spatial_features(backbone, collapsed, n_layers)
+            if accum is None:
+                accum = [feat.float() for feat in outputs]
+            else:
+                for j, feat in enumerate(outputs):
+                    accum[j] += feat.float()
+        assert accum is not None
+        return tuple(feat / float(channel_tta_samples) for feat in accum)
+
+    if channel_policy not in {"auto", "native"}:
+        imgs = _collapse_to_three_channels_once(imgs, channel_policy, channel_rng)
+    return _forward_prepared_spatial_features(backbone, imgs, n_layers)
 
 
 def extract_features(
@@ -240,6 +343,9 @@ def extract_features(
     desc:        str = 'Extracting',
     return_chunks: bool = False,
     multichannel: bool = False,
+    channel_policy: str = "auto",
+    channel_tta_samples: int = 8,
+    channel_policy_seed: int = 0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Run the backbone over every sample in *dataset* and collect:
@@ -269,6 +375,8 @@ def extract_features(
     """
     backbone = backbone.to(device)
     backbone.eval()
+    channel_rng = torch.Generator(device="cpu")
+    channel_rng.manual_seed(int(channel_policy_seed))
 
     loader = DataLoader(
         dataset,
@@ -302,7 +410,15 @@ def extract_features(
         # multichannel path (dual-route only): keep real channels + channel mask.
         # -------------------------------------------------------------------
         with torch.autocast(device_type='cuda', enabled=True, dtype=torch.float16):
-            feats_list = _backbone_spatial_features(backbone, imgs, n_layers, multichannel)
+            feats_list = _backbone_spatial_features(
+                backbone,
+                imgs,
+                n_layers,
+                multichannel,
+                channel_policy=channel_policy,
+                channel_tta_samples=channel_tta_samples,
+                channel_rng=channel_rng,
+            )
             # Each element: [B, C, H_p, W_p] – concatenate along channel axis
             feats = torch.cat(feats_list, dim=1).float()  # [B, D, H_p, W_p]
 
@@ -409,6 +525,9 @@ def extract_features_to_cache(
     n_layers_scalar: int,
     compressed: bool = False,
     multichannel: bool = False,
+    channel_policy: str = "auto",
+    channel_tta_samples: int = 8,
+    channel_policy_seed: int = 0,
 ) -> None:
     """
     Streaming chunked cache writer.
@@ -420,6 +539,8 @@ def extract_features_to_cache(
     """
     backbone = backbone.to(device)
     backbone.eval()
+    channel_rng = torch.Generator(device="cpu")
+    channel_rng.manual_seed(int(channel_policy_seed))
 
     loader = DataLoader(
         dataset,
@@ -456,7 +577,15 @@ def extract_features_to_cache(
                 imgs = imgs.to(device)
 
                 with torch.autocast(device_type='cuda', enabled=True, dtype=torch.float16):
-                    feats_list = _backbone_spatial_features(backbone, imgs, n_layers, multichannel)
+                    feats_list = _backbone_spatial_features(
+                        backbone,
+                        imgs,
+                        n_layers,
+                        multichannel,
+                        channel_policy=channel_policy,
+                        channel_tta_samples=channel_tta_samples,
+                        channel_rng=channel_rng,
+                    )
                     feats = torch.cat(feats_list, dim=1).float()
 
                 feat_np = feats.half().cpu().numpy()
@@ -707,7 +836,29 @@ def main():
                              'Effective for stem_type=dualroute/residual_mc '
                              'backbones + datasets with a multichannel loader (currently tissuenet). '
                              'Default off keeps the RGB path byte-for-byte.')
+    parser.add_argument(
+        '--channel-policy',
+        default='auto',
+        choices=CHANNEL_POLICIES,
+        help='How to feed tensor channels into the backbone. auto preserves the current path; '
+             'native requires --multichannel plus a native-capable backbone; first3/compact3/'
+             'zerofill3/mean3/sample3_tta collapse true channels to RGB-compatible inputs.',
+    )
+    parser.add_argument(
+        '--channel-tta-samples',
+        type=int,
+        default=8,
+        help='Number of channel draws for --channel-policy sample3_tta.',
+    )
+    parser.add_argument(
+        '--channel-policy-seed',
+        type=int,
+        default=0,
+        help='Seed for stochastic channel policies such as sample3_tta.',
+    )
     args = parser.parse_args()
+    if args.channel_tta_samples <= 0:
+        parser.error("--channel-tta-samples must be positive")
 
     # -----------------------------------------------------------------------
     # Determine which layers to extract.
@@ -783,6 +934,12 @@ def main():
     logger.info(f"Dataset size: {len(dataset)}")
     if args.multichannel:
         logger.info("MULTICHANNEL mode ON for %s (dataset returns true channels).", args.dataset)
+    logger.info(
+        "Channel policy: %s (tta_samples=%d seed=%d)",
+        args.channel_policy,
+        args.channel_tta_samples,
+        args.channel_policy_seed,
+    )
 
     cfg_tag = Path(args.train_config).stem
 
@@ -794,20 +951,27 @@ def main():
         device=device,
         freeze=True,
     )
-    if args.multichannel and not _is_spatial_multichannel_stem(backbone):
+    if args.multichannel and not (_is_spatial_multichannel_stem(backbone) or getattr(backbone, "enable_channelvit", False)):
         logger.warning(
-            "--multichannel requested but backbone stem_type=%s (not a spatial multi-channel stem); "
+            "--multichannel requested but backbone stem_type=%s and enable_channelvit=%s "
+            "(not a native multi-channel backbone); "
             "channels fall back to the standard collapse path.",
             getattr(backbone, "stem_type", None),
+            getattr(backbone, "enable_channelvit", False),
         )
+    if args.channel_policy == "native" and not (
+        args.multichannel and (_is_spatial_multichannel_stem(backbone) or getattr(backbone, "enable_channelvit", False))
+    ):
+        parser.error("--channel-policy native requires --multichannel and a multichannel-capable backbone")
 
     # Save path includes layer strategy and img_size for clarity.
     os.makedirs(args.output_dir, exist_ok=True)
     mc_tag = "_mc" if args.multichannel else ""
+    channel_tag = _channel_policy_cache_tag(args.channel_policy, args.channel_tta_samples)
     out_path = os.path.join(
         args.output_dir,
         f"{args.dataset}_{args.split}_{cfg_tag}_{layers_tag}"
-        f"{_resize_cache_tag(args.resize_mode)}_s{img_size}{mc_tag}.npz"
+        f"{_resize_cache_tag(args.resize_mode)}_s{img_size}{mc_tag}{channel_tag}.npz"
     )
     n_layers_scalar = (len(layers_to_extract) if isinstance(layers_to_extract, list)
                        else layers_to_extract)
@@ -827,6 +991,9 @@ def main():
             n_layers_scalar=n_layers_scalar,
             compressed=not args.no_compress_cache,
             multichannel=args.multichannel,
+            channel_policy=args.channel_policy,
+            channel_tta_samples=args.channel_tta_samples,
+            channel_policy_seed=args.channel_policy_seed,
         )
         return
 
@@ -840,6 +1007,9 @@ def main():
         desc=f'{args.dataset}/{args.split}',
         return_chunks=False,
         multichannel=args.multichannel,
+        channel_policy=args.channel_policy,
+        channel_tta_samples=args.channel_tta_samples,
+        channel_policy_seed=args.channel_policy_seed,
     )
 
     save_cache(

@@ -48,8 +48,17 @@ optim:
   freeze_last_layer_epochs: 1
   scaling_rule: fixed
   gradient_accumulation_steps: 2
+  lr_reference_effective_batch_size: 1024
+  expected_effective_batch_size: 1024
+  batch_lr_mismatch_policy: warn
 
 crops:
+  # Only switches non-crop augmentations; crop scales/counts stay inherited
+  # from ssl_default_config unless explicitly overridden elsewhere.
+  augmentation_policy: bio_safe
+  # Match the original DINOv3 pretrain crop sizes; independent of augmentation_policy.
+  global_crops_size: 256
+  local_crops_size: 112
   rgb_mean:
     - 0.511375
     - 0.598449

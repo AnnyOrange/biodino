@@ -165,6 +165,7 @@ crops:
   localcrops_subset_of_globalcrops: false
   share_color_jitter: false
   horizontal_flips: true
+  augmentation_policy: dinov3  # dinov3 or bio_safe
   gram_teacher_no_distortions: false  # If True, no distortions are applied to gram teacher crops
   float_input: false  # Set true when decoders already output float32 [0,1] tensors
   rgb_mean:
