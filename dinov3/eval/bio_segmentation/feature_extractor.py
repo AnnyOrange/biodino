@@ -91,7 +91,13 @@ CHANNEL_POLICIES = ("auto", "native", "first3", "compact3", "zerofill3", "mean3"
 
 
 def _is_spatial_multichannel_stem(backbone: nn.Module) -> bool:
-    return getattr(backbone, "stem_type", None) in {"dualroute", "residual_mc", "rgb_extra_residual"}
+    return getattr(backbone, "stem_type", None) in {
+        "dualroute",
+        "residual_mc",
+        "rgb_extra_residual",
+        "residual_mc_v2",
+        "rgb_extra_residual_v2",
+    }
 
 
 def _resize_cache_tag(resize_mode: str) -> str:

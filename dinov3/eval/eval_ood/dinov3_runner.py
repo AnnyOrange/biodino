@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import logging
 import os
 import socket
@@ -16,11 +15,11 @@ import torch
 from torch.utils.data import DataLoader
 from omegaconf import OmegaConf
 
-from dinov3.data.transforms import make_classification_eval_transform
 from dinov3.configs import get_default_config
 from dinov3.models import build_model_from_cfg
 from dinov3.checkpointer import init_model_from_checkpoint_for_evals
-from dinov3.eval.bio_classification.common import LinearFeatureModel, parse_autocast_dtype
+from dinov3.eval.bio_classification.common import parse_autocast_dtype
+from dinov3.eval.bio_frozen_eval.encoder import CHANNEL_POLICIES, Dinov3CkptEncoder
 from dinov3.eval.bio_segmentation.model_utils import load_dinov3_backbone
 from dinov3.eval.eval_ood.datasets import (
     CryoParticleDataset,
@@ -161,7 +160,7 @@ def load_local_backbone_fast(
 
 def _collate(batch):
     images, labels, metas = zip(*batch)
-    return torch.stack(images), np.asarray(labels), list(metas)
+    return list(images), np.asarray(labels), list(metas)
 
 
 class Dinov3OODEncoder:
@@ -177,25 +176,33 @@ class Dinov3OODEncoder:
         resize_size: int,
         crop_size: int,
         checkpoint_key: str | None,
+        channel_policy: str,
+        channel_tta_samples: int,
+        channel_policy_seed: int,
     ):
-        self.device = torch.device(device)
-        maybe_init_dist_for_dcp(checkpoint)
-        backbone = load_local_backbone_fast(checkpoint, train_config, device=self.device, checkpoint_key=checkpoint_key)
-        self.model = LinearFeatureModel(
-            backbone,
+        if checkpoint_key not in {None, "model"}:
+            raise ValueError("The shared frozen encoder currently supports checkpoint_key='model' only")
+        self.encoder = Dinov3CkptEncoder(
+            checkpoint=checkpoint,
+            train_config=train_config,
+            device=device,
             n_last_blocks=n_last_blocks,
             use_avgpool=use_avgpool,
             autocast_dtype=autocast_dtype,
-        ).to(self.device)
-        self.model.eval()
-        self.transform = make_classification_eval_transform(resize_size=resize_size, crop_size=crop_size)
+            image_size=crop_size,
+            resize_size=resize_size,
+            channel_policy=channel_policy,
+            channel_tta_samples=channel_tta_samples,
+            channel_policy_seed=channel_policy_seed,
+        )
+        # Keep PIL/tensor inputs untransformed in workers. The shared encoder
+        # applies the same resize, normalization, and channel policy as the
+        # classification/retrieval frozen probes.
+        self.transform = None
 
     @torch.inference_mode()
-    def encode_batch(self, images: torch.Tensor) -> np.ndarray:
-        images = images.to(self.device, non_blocking=True)
-        features = self.model(images).float()
-        features = torch.nn.functional.normalize(features, dim=1)
-        return features.cpu().numpy().astype(np.float32)
+    def encode_batch(self, images: list) -> np.ndarray:
+        return self.encoder.encode_images(images).astype(np.float32)
 
 
 def extract_features(
@@ -344,6 +351,9 @@ def run_one(args) -> dict[str, Any]:
         resize_size=args.resize_size,
         crop_size=args.crop_size,
         checkpoint_key=args.checkpoint_key,
+        channel_policy=args.channel_policy,
+        channel_tta_samples=args.channel_tta_samples,
+        channel_policy_seed=args.channel_policy_seed,
     )
     row: dict[str, Any] = {
         "model": model_name,
@@ -353,6 +363,8 @@ def run_one(args) -> dict[str, Any]:
         "use_avgpool": not args.no_avgpool,
         "resize_size": int(args.resize_size),
         "crop_size": int(args.crop_size),
+        "channel_policy": args.channel_policy,
+        "channel_tta_samples": int(args.channel_tta_samples),
         "xray_input_mode": args.xray_input_mode,
         "xray_slices_per_volume": int(args.xray_slices_per_volume),
         "cryo_invert": bool(args.cryo_invert),
@@ -450,6 +462,9 @@ def parse_args(argv=None):
     parser.add_argument("--no-avgpool", action="store_true")
     parser.add_argument("--autocast-dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
     parser.add_argument("--checkpoint-key", default="model", help="Top-level key for consolidated .pth checkpoints; local training runs use 'model'.")
+    parser.add_argument("--channel-policy", default="auto", choices=CHANNEL_POLICIES)
+    parser.add_argument("--channel-tta-samples", type=int, default=8)
+    parser.add_argument("--channel-policy-seed", type=int, default=0)
     parser.add_argument("--resize-size", type=int, default=256)
     parser.add_argument("--crop-size", type=int, default=224)
     parser.add_argument("--percentile-low", type=float, default=0.5)

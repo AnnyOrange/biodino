@@ -34,6 +34,8 @@ import gc
 import json
 from pathlib import Path
 
+import numpy as np
+
 from .encoder import CHANNEL_POLICIES, Dinov3CkptEncoder, completed, extract_features, parse_autocast_dtype
 from .group_keys import GROUP_SPLIT_DATASETS
 from .make_group_splits import group_split_indices
@@ -45,7 +47,7 @@ from .probes import (
     run_regression_probe,
     run_regression_probe_split,
 )
-from .registry import ALL_DATASETS, NATIVE_TEST_SPLIT_DATASETS, build_dataset
+from .registry import ALL_DATASETS, NATIVE_TEST_SPLIT_DATASETS, UNSUPPORTED_OFFICIAL_SPLIT_DATASETS, build_dataset
 
 
 def _probe_split_for_task(task: str):
@@ -59,11 +61,22 @@ def _probe_split_for_task(task: str):
 
 def split_protocol_for_dataset(dataset_name: str) -> str:
     """Return the published evaluation split protocol label for a dataset."""
+    if dataset_name in UNSUPPORTED_OFFICIAL_SPLIT_DATASETS:
+        return "unsupported-open-set-official"
     if dataset_name in NATIVE_TEST_SPLIT_DATASETS:
         return "official-test"
     if dataset_name in GROUP_SPLIT_DATASETS:
         return "group-split"
     return "internal-80-20"
+
+
+def capped_split_protocol_label(base: str, max_samples: int | None, max_per_class: int | None) -> str:
+    parts = [base]
+    if max_samples is not None:
+        parts.append(f"ms{max_samples}")
+    if max_per_class is not None:
+        parts.append(f"mpc{max_per_class}")
+    return "-".join(parts)
 
 
 # Best image sizes from
@@ -126,6 +139,8 @@ def feature_cache_stem(
     resize_size: int,
     channel_policy: str = "auto",
     channel_tta_samples: int = 8,
+    max_samples: int | None = None,
+    max_per_class: int | None = None,
 ) -> str:
     parts = [model_name]
     if image_size != 224 or resize_size != 256:
@@ -134,7 +149,46 @@ def feature_cache_stem(
         parts.append(f"cp{channel_policy}")
         if channel_policy == "sample3_tta":
             parts.append(f"tta{channel_tta_samples}")
+    if max_samples is not None:
+        parts.append(f"ms{max_samples}")
+    if max_per_class is not None:
+        parts.append(f"mpc{max_per_class}")
     return "_".join(parts)
+
+
+def _validate_explicit_split_labels(task: str, y_train, y_test, dataset_name: str) -> None:
+    """Reject official splits that the closed-set probe cannot score correctly."""
+    if task == "classification":
+        train_labels = {int(x) for x in np.asarray(y_train).reshape(-1)}
+        test_labels = {int(x) for x in np.asarray(y_test).reshape(-1)}
+        if len(train_labels) < 2:
+            raise ValueError(
+                f"{dataset_name}: official train split has fewer than 2 classes: {sorted(train_labels)}"
+            )
+        missing = sorted(test_labels - train_labels)
+        if missing:
+            raise ValueError(
+                f"{dataset_name}: official test labels are absent from official train labels: {missing}. "
+                "This is an open-set/transfer split and is not valid for the closed-set supervised probe."
+            )
+        return
+
+    if task == "multilabel_classification":
+        y_train = np.asarray(y_train)
+        y_test = np.asarray(y_test)
+        if y_train.ndim != 2 or y_test.ndim != 2:
+            raise ValueError(
+                f"{dataset_name}: expected 2-D multilabel arrays, got {y_train.shape}/{y_test.shape}"
+            )
+        if y_train.shape[1] != y_test.shape[1]:
+            raise ValueError(f"{dataset_name}: train/test multilabel dimensions differ: {y_train.shape}/{y_test.shape}")
+        train_positive = y_train.astype(bool).any(axis=0)
+        test_positive = y_test.astype(bool).any(axis=0)
+        missing = np.flatnonzero(test_positive & ~train_positive).tolist()
+        if missing:
+            raise ValueError(
+                f"{dataset_name}: official test positive label columns are absent from official train: {missing}"
+            )
 
 
 def parse_args(argv=None):
@@ -224,6 +278,8 @@ def main(argv=None) -> int:
     summary_path = out_root / "summary.csv"
     current_encoder_key = None
     current_encoder = None
+    failed_datasets: list[str] = []
+    multi_dataset_run = len(args.datasets) > 1
 
     print(f"[ckpt] {model_name} checkpoint={checkpoint}", flush=True)
 
@@ -262,6 +318,20 @@ def main(argv=None) -> int:
 
     for dataset_name in args.datasets:
         split_label = split_protocol_for_dataset(dataset_name)
+        capped_subset = args.max_samples is not None or args.max_per_class is not None
+        if capped_subset and dataset_name not in UNSUPPORTED_OFFICIAL_SPLIT_DATASETS:
+            # Capped runs are smoke/debug subsets. Keep them separate from
+            # reportable full-dataset protocols in summaries and feature caches.
+            base_split = (
+                "subset-official-test"
+                if dataset_name in NATIVE_TEST_SPLIT_DATASETS
+                else "subset-internal-80-20"
+            )
+            split_label = capped_split_protocol_label(
+                base_split,
+                args.max_samples,
+                args.max_per_class,
+            )
         image_size = resolve_image_size(dataset_name, args.resolution_protocol, args.image_size)
         resize_size = resolve_resize_size(image_size, args.resize_size)
         if (
@@ -291,9 +361,17 @@ def main(argv=None) -> int:
             resize_size,
             args.channel_policy,
             args.channel_tta_samples,
+            args.max_samples,
+            args.max_per_class,
         )
         feature_file = out_root / "features" / dataset_name / f"{stem}.npz"
         try:
+            if dataset_name in UNSUPPORTED_OFFICIAL_SPLIT_DATASETS:
+                raise ValueError(
+                    f"{dataset_name} has an official CHAMMI split whose test labels are absent from Train. "
+                    "It is excluded from the default closed-set supervised suite; implement a dedicated "
+                    "open-set/transfer protocol before reporting this task."
+                )
             encoder = get_encoder(image_size, resize_size)
             if dataset_name in NATIVE_TEST_SPLIT_DATASETS:
                 # Datasets with a publication-standard train/test split: extract
@@ -317,9 +395,10 @@ def main(argv=None) -> int:
                     args.overwrite_features, model_name,
                     save_features=not args.no_save_features, save_paths=args.save_paths,
                 )
+                _validate_explicit_split_labels(task, y_train, y_test, dataset_name)
                 result = _probe_split_for_task(task)(x_train, y_train, x_test, y_test)
                 feature_file = train_ff
-            elif dataset_name in GROUP_SPLIT_DATASETS:
+            elif dataset_name in GROUP_SPLIT_DATASETS and split_label == "group-split":
                 # No official test split: fixed, documented, leakage-safe group split
                 # (splits/<dataset>.json). Extract whole-set features once, then probe
                 # on the source-grouped train/test partition.
@@ -365,6 +444,7 @@ def main(argv=None) -> int:
                 **result.to_dict(),
             }
         except Exception as exc:
+            failed_datasets.append(dataset_name)
             row = {
                 "model": model_name,
                 "dataset": dataset_name,
@@ -382,8 +462,19 @@ def main(argv=None) -> int:
             }
             print(f"[error] {model_name} {dataset_name}: {row['error']}", flush=True)
         append_csv(summary_path, row)
-        (out_root / "last_result.json").write_text(json.dumps(row, indent=2))
+        result_name = "failed_result.json" if row.get("error") else "last_result.json"
+        result_dir = out_root / dataset_name if multi_dataset_run else out_root
+        result_dir.mkdir(parents=True, exist_ok=True)
+        result_path = result_dir / result_name
+        result_path.write_text(json.dumps(row, indent=2))
+        if row.get("error"):
+            (result_dir / "last_result.json").unlink(missing_ok=True)
+        if not row.get("error") and not failed_datasets:
+            (result_dir / "failed_result.json").unlink(missing_ok=True)
         print(json.dumps(row, indent=2), flush=True)
+    if failed_datasets:
+        print(f"[failed] datasets={failed_datasets}", flush=True)
+        return 1
     return 0
 
 

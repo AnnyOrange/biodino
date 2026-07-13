@@ -199,9 +199,9 @@ def plot_storage(rows: list[dict], path: Path) -> None:
     colors = [COLORS["raw"], COLORS["lossless"], COLORS["uint8"]]
 
     fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11, 4.8), dpi=180)
-    fig.patch.set_facecolor("#FAF7F0")
+    fig.patch.set_facecolor("white")
     for ax in (ax0, ax1):
-        ax.set_facecolor("#FAF7F0")
+        ax.set_facecolor("white")
         ax.grid(axis="y", alpha=0.25)
         ax.spines[["top", "right"]].set_visible(False)
 
@@ -232,7 +232,7 @@ def plot_storage(rows: list[dict], path: Path) -> None:
 
     fig.suptitle("Compression: uint16 vs lossless uint16 vs uint8", fontsize=15, fontweight="bold", y=1.02)
     fig.tight_layout()
-    fig.savefig(path, bbox_inches="tight")
+    fig.savefig(path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
@@ -244,19 +244,19 @@ def plot_downstream_bars(rows: list[dict], path: Path) -> None:
     vl = np.array([r["lossless_uint16"] for r in rows])
     v8 = np.array([r["uint8"] for r in rows])
 
-    fig, ax = plt.subplots(figsize=(15, 6.2), dpi=180)
-    fig.patch.set_facecolor("#FBFAF6")
-    ax.set_facecolor("#FBFAF6")
+    fig, ax = plt.subplots(figsize=(15, 6.8), dpi=180)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
     ax.grid(axis="y", alpha=0.25)
     ax.spines[["top", "right"]].set_visible(False)
     ax.bar(x - width, v16, width, color=COLORS["raw"], label="uint16")
     ax.bar(x, vl, width, color=COLORS["lossless"], label="lossless uint16", hatch="//", edgecolor="#2F5D50", linewidth=0.7)
     ax.bar(x + width, v8, width, color=COLORS["uint8"], label="uint8")
-    ax.set_title("Downstream scores: uint16 / lossless uint16 / uint8", fontsize=15, fontweight="bold")
+    ax.set_title("Downstream scores: uint16 / lossless uint16 / uint8", fontsize=15, fontweight="bold", pad=42)
     ax.set_ylabel("Score points; retrieval and clustering metrics are x100")
     ax.set_xticks(x, labels, rotation=45, ha="right", fontsize=8.5)
     ax.set_ylim(45, 101)
-    ax.legend(ncols=3, frameon=False, loc="upper center", bbox_to_anchor=(0.5, 1.08))
+    ax.legend(ncols=3, frameon=False, loc="upper center", bbox_to_anchor=(0.5, 1.045))
     ax.text(
         0.01,
         0.03,
@@ -266,7 +266,7 @@ def plot_downstream_bars(rows: list[dict], path: Path) -> None:
         color=COLORS["muted"],
     )
     fig.tight_layout()
-    fig.savefig(path, bbox_inches="tight")
+    fig.savefig(path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
@@ -277,8 +277,8 @@ def plot_downstream_delta(rows: list[dict], path: Path) -> None:
     y = np.arange(len(rows))
 
     fig, ax = plt.subplots(figsize=(9.5, 7.5), dpi=180)
-    fig.patch.set_facecolor("#F7F4ED")
-    ax.set_facecolor("#F7F4ED")
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
     ax.grid(axis="x", alpha=0.25)
     ax.spines[["top", "right", "left"]].set_visible(False)
     ax.axvline(0, color="#111827", lw=1.2)
@@ -298,9 +298,9 @@ def plot_downstream_delta(rows: list[dict], path: Path) -> None:
         Patch(facecolor=COLORS["positive"], label="uint8 higher"),
         Patch(facecolor=COLORS["negative"], label="uint16 higher"),
     ]
-    ax.legend(handles=legend, frameon=False, loc="lower right")
+    ax.legend(handles=legend, frameon=False, loc="upper right")
     fig.tight_layout()
-    fig.savefig(path, bbox_inches="tight")
+    fig.savefig(path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 

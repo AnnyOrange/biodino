@@ -9,7 +9,12 @@ from __future__ import annotations
 import argparse
 
 from dinov3.eval.bio_frozen_eval.encoder import Dinov3CkptEncoder, ROBUST_MC_MEAN, ROBUST_MC_STD
-from dinov3.eval.bio_frozen_eval.registry import CHAMMI_DATASETS, NATIVE_TEST_SPLIT_DATASETS, build_dataset
+from dinov3.eval.bio_frozen_eval.registry import (
+    CHAMMI_CLOSED_SET_DATASETS,
+    NATIVE_TEST_SPLIT_DATASETS,
+    UNSUPPORTED_OFFICIAL_SPLIT_DATASETS,
+    build_dataset,
+)
 
 
 def main() -> int:
@@ -19,9 +24,12 @@ def main() -> int:
     parser.add_argument("--resize-size", type=int, default=256)
     args = parser.parse_args()
 
-    missing_native = sorted(CHAMMI_DATASETS - NATIVE_TEST_SPLIT_DATASETS)
+    missing_native = sorted(CHAMMI_CLOSED_SET_DATASETS - NATIVE_TEST_SPLIT_DATASETS)
     if missing_native:
-        raise AssertionError(f"CHAMMI datasets missing native split registration: {missing_native}")
+        raise AssertionError(f"closed-set CHAMMI datasets missing native split registration: {missing_native}")
+    bad_native = sorted(UNSUPPORTED_OFFICIAL_SPLIT_DATASETS & NATIVE_TEST_SPLIT_DATASETS)
+    if bad_native:
+        raise AssertionError(f"open-set CHAMMI datasets must not use closed-set native probe: {bad_native}")
 
     enc = Dinov3CkptEncoder.__new__(Dinov3CkptEncoder)
     enc.image_size = args.image_size
@@ -29,7 +37,7 @@ def main() -> int:
     enc.mc_mean = ROBUST_MC_MEAN
     enc.mc_std = ROBUST_MC_STD
 
-    for name in sorted(CHAMMI_DATASETS):
+    for name in sorted(CHAMMI_CLOSED_SET_DATASETS | UNSUPPORTED_OFFICIAL_SPLIT_DATASETS):
         train, task = build_dataset(name, "train", max_samples=1, max_per_class=None, benchmark_root=args.benchmark_root)
         test, _ = build_dataset(name, "test", max_samples=1, max_per_class=None, benchmark_root=args.benchmark_root)
         for split_name, dataset in [("train", train), ("test", test)]:

@@ -23,6 +23,7 @@ TASK_DIRS = {
 }
 
 RESULT_FILES = {"last_result.json", "results.json", "results_bio_detection.json"}
+UNSUPPORTED_RESULT_DATASETS = {"chammi-cp-task4", "chammi-hpa-task3"}
 PRUNE_DIRS = {
     ".git",
     ".heavy_slots",
@@ -285,9 +286,15 @@ def row_from_result(path: Path, eval_root: Path) -> Optional[Dict[str, Any]]:
         return None
     if not isinstance(data, dict):
         return None
+    if data.get("error"):
+        return None
 
     task = parsed["task"]
     dataset = str(data.get("dataset") or parsed["dataset"])
+    # Older sweeps may contain open-set CHAMMI rows. They are not valid
+    # closed-set supervised-probe results, so keep them out of aggregates.
+    if task == "classification" and dataset in UNSUPPORTED_RESULT_DATASETS:
+        return None
     checkpoint_path = resolve_relocated_output_path(str(data.get("checkpoint", "") or ""))
     train_config = resolve_relocated_output_path(str(data.get("train_config", "") or ""))
     train_run = train_run_from_data(data)
