@@ -81,6 +81,8 @@ def main(argv=None) -> int:
     autocast_dtype = parse_autocast_dtype(args.autocast_dtype)
     model_name = args.model_name
     summary_path = out_root / "summary.csv"
+    failed_datasets: list[str] = []
+    multi_dataset_run = len(args.datasets) > 1
 
     print(f"[ckpt] {model_name} checkpoint={checkpoint}", flush=True)
     encoder = Dinov3CkptEncoder(
@@ -140,6 +142,7 @@ def main(argv=None) -> int:
                 **clustering_metrics(features, labels, seed=args.seed),
             }
         except Exception as exc:
+            failed_datasets.append(dataset_name)
             row = {
                 "model": model_name,
                 "dataset": dataset_name,
@@ -153,8 +156,19 @@ def main(argv=None) -> int:
             }
             print(f"[error] {model_name} {dataset_name}: {row['error']}", flush=True)
         append_csv(summary_path, row)
-        (out_root / "last_result.json").write_text(json.dumps(row, indent=2))
+        result_name = "failed_result.json" if row.get("error") else "last_result.json"
+        result_dir = out_root / dataset_name if multi_dataset_run else out_root
+        result_dir.mkdir(parents=True, exist_ok=True)
+        result_path = result_dir / result_name
+        result_path.write_text(json.dumps(row, indent=2))
+        if row.get("error"):
+            (result_dir / "last_result.json").unlink(missing_ok=True)
+        if not row.get("error") and not failed_datasets:
+            (result_dir / "failed_result.json").unlink(missing_ok=True)
         print(json.dumps(row, indent=2), flush=True)
+    if failed_datasets:
+        print(f"[failed] datasets={failed_datasets}", flush=True)
+        return 1
     return 0
 
 

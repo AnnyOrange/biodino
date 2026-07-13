@@ -47,8 +47,15 @@ _CHAMMI_SPECS = {
     "chammi-cp-task4": ("CP", "Task_four"),
 }
 CHAMMI_DATASETS = set(_CHAMMI_SPECS)
+# These CHAMMI tasks have closed-set official Train -> Task_* labels and are
+# compatible with the current supervised linear-probe protocol.
+CHAMMI_CLOSED_SET_DATASETS = CHAMMI_DATASETS - {"chammi-hpa-task3", "chammi-cp-task4"}
+# Task_three for HPA and Task_four for CP intentionally use labels that do not
+# occur in Train. They need an open-set / transfer protocol, not a closed-set
+# logistic-regression probe.
+UNSUPPORTED_OFFICIAL_SPLIT_DATASETS = CHAMMI_DATASETS - CHAMMI_CLOSED_SET_DATASETS
 
-_ADDED_CLASSIFICATION = {"nct-crc-he", "lc25000", "pcam"} | CHAMMI_DATASETS
+_ADDED_CLASSIFICATION = {"nct-crc-he", "lc25000", "pcam"} | CHAMMI_CLOSED_SET_DATASETS
 CLASSIFICATION_DATASETS = sorted(_BASE_CLASSIFICATION | _ADDED_CLASSIFICATION)
 MULTILABEL_DATASETS = ["chestmnist"]
 REGRESSION_DATASETS = ["bbbc013", "bbbc005"]
@@ -57,8 +64,9 @@ ALL_DATASETS = sorted(set(CLASSIFICATION_DATASETS) | set(MULTILABEL_DATASETS) | 
 # Datasets that ship a native (publication-standard) train/test split, evaluated
 # with the explicit-split probes instead of an internal stratified 80/20.
 # MedMNIST .npz files all carry official train/val/test arrays (chestmnist is the
-# multilabel one) -> fit on official train, score on official test.
-NATIVE_TEST_SPLIT_DATASETS = {"nct-crc-he", "pcam"} | MEDMNIST_NAMES | CHAMMI_DATASETS
+# multilabel one) -> fit on official train, score on official test. Only closed-
+# set CHAMMI tasks are included here.
+NATIVE_TEST_SPLIT_DATASETS = {"nct-crc-he", "pcam"} | MEDMNIST_NAMES | CHAMMI_CLOSED_SET_DATASETS
 
 # NCT-CRC-HE parquet locations (relative to benchmark_root):
 #   train = NCT-CRC-HE-100K (NONORM, 100k tiles, 31 shards) -- the harder, stain-

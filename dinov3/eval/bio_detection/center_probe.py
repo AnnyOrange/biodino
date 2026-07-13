@@ -6,13 +6,13 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.data import DataLoader, Dataset
 
 import dinov3.distributed as distributed
 from dinov3.eval.bio_classification.common import checkpoint_stem, load_backbone, parse_autocast_dtype
@@ -89,16 +89,19 @@ class LiveCellCenterDataset(Dataset):
 
 
 class PatchFeatureModel(nn.Module):
-    def __init__(self, backbone: nn.Module, autocast_dtype: torch.dtype):
+    def __init__(self, backbone: nn.Module, autocast_dtype: torch.dtype, channel_policy: str = "auto"):
         super().__init__()
         self.backbone = backbone
         self.autocast_dtype = autocast_dtype
+        self.channel_policy = channel_policy
 
     @torch.inference_mode()
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         with torch.autocast("cuda", enabled=True, dtype=self.autocast_dtype):
-            out = self.backbone.get_intermediate_layers(images, n=1, reshape=False, return_class_token=True)[0][0]
-        return out.float().clone()
+            # reshape=True activates ChannelViT's channel-token collapse and
+            # gives every dense evaluator one feature vector per spatial patch.
+            feature_map = self.backbone.get_intermediate_layers(images, n=1, reshape=True)[0]
+        return feature_map.flatten(2).transpose(1, 2).float().contiguous()
 
 
 @torch.inference_mode()
@@ -113,7 +116,8 @@ def _estimate_pos_weight(loader: DataLoader) -> float:
 
 
 def _eval(model, head, loader, threshold: float = 0.5) -> Dict[str, float]:
-    model.eval(); head.eval()
+    model.eval()
+    head.eval()
     tp = fp = fn = tn = 0.0
     losses = []
     criterion = nn.BCEWithLogitsLoss()
@@ -151,6 +155,7 @@ def run_bio_detection_eval(
     epochs: int,
     lr: float,
     autocast_dtype: torch.dtype,
+    channel_policy: str,
     max_samples_per_split: int,
     seed: int,
 ) -> Dict[str, float | str | int]:
@@ -159,7 +164,11 @@ def run_bio_detection_eval(
         raise ValueError("Currently supported bio detection datasets: livecell")
     data_root = Path(benchmark_root) / "segmentation" / "LIVECell"
     backbone = load_backbone(repo_dir=".", arch=arch, weights=weights, checkpoint=checkpoint, train_config=train_config)
-    feature_model = PatchFeatureModel(backbone, autocast_dtype=autocast_dtype).cuda().eval()
+    feature_model = PatchFeatureModel(
+        backbone,
+        autocast_dtype=autocast_dtype,
+        channel_policy=channel_policy,
+    ).cuda().eval()
     train_ds = LiveCellCenterDataset(str(data_root), "train", image_size=image_size, max_samples=max_samples_per_split, seed=seed)
     val_ds = LiveCellCenterDataset(str(data_root), "val", image_size=image_size, max_samples=max_samples_per_split, seed=seed)
     test_ds = LiveCellCenterDataset(str(data_root), "test", image_size=image_size, max_samples=max_samples_per_split, seed=seed)
@@ -226,6 +235,7 @@ def parse_args(argv=None):
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--autocast-dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
+    parser.add_argument("--channel-policy", default="auto", choices=["auto", "native", "first3"])
     parser.add_argument("--max-samples-per-split", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
     return parser.parse_args(argv)
@@ -249,6 +259,7 @@ def main(argv=None):
         epochs=args.epochs,
         lr=args.lr,
         autocast_dtype=parse_autocast_dtype(args.autocast_dtype),
+        channel_policy=args.channel_policy,
         max_samples_per_split=args.max_samples_per_split,
         seed=args.seed,
     )
