@@ -36,6 +36,8 @@ class StubBackbone(nn.Module):
         self.patch_size = patch_size
         self.n_blocks = depth
         self.proj = nn.Conv2d(3, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.blocks = nn.ModuleList(nn.Linear(embed_dim, embed_dim) for _ in range(depth))
+        self.norm = nn.LayerNorm(embed_dim)
 
     def get_intermediate_layers(self, x, n=1, reshape=True, return_class_token=False):
         feat = self.proj(x)  # [B, D, Hp, Wp]
@@ -98,6 +100,28 @@ def test_backward():
     print(f"[ok] backward step (loss={comps['total']:.3f}, components={list(comps)})")
 
 
+def test_partial_unfreeze():
+    backbone = StubBackbone(embed_dim=32, patch_size=16, depth=12)
+    model = DINOHoVerNet(
+        backbone,
+        layers=[2, 5, 8, 11],
+        num_types=0,
+        freeze_backbone=False,
+        trainable_backbone_blocks=2,
+        feature_size=8,
+        embed_proj=16,
+    )
+    assert model.backbone_mode == "last2"
+    assert all(not p.requires_grad for p in backbone.proj.parameters())
+    assert all(not p.requires_grad for block in backbone.blocks[:-2] for p in block.parameters())
+    assert all(p.requires_grad for block in backbone.blocks[-2:] for p in block.parameters())
+    assert all(p.requires_grad for p in backbone.norm.parameters())
+    model.train()
+    assert not backbone.blocks[-3].training
+    assert backbone.blocks[-2].training and backbone.blocks[-1].training
+    print("[ok] partial unfreeze selects last 2 blocks + final norm")
+
+
 def test_postproc_splits():
     inst_gt = _two_disks()
     # FG is a single connected component:
@@ -136,6 +160,7 @@ def main():
     test_targets()
     test_shapes()
     test_backward()
+    test_partial_unfreeze()
     test_postproc_splits()
     print("\nALL SMOKE TESTS PASSED")
 

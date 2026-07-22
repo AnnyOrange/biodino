@@ -622,6 +622,12 @@ def main() -> None:
     parser.add_argument("--probe-num-workers", type=int, default=4)
     parser.add_argument("--probe-eval-every", type=int, default=5)
     parser.add_argument(
+        "--probe-seed",
+        type=int,
+        default=0,
+        help="RNG seed for the linear-probe head. Nonzero seeds use a separate seed<N> output directory.",
+    )
+    parser.add_argument(
         "--probe-class-weight-mode",
         default="none",
         choices=["none", "inverse", "sqrt_inverse", "median_frequency", "effective_number"],
@@ -787,7 +793,10 @@ def main() -> None:
                 )
 
             cache_dir = cache_root / job.cache_run_name / dataset / str(iter_id)
-            output_dir = output_root / job.output_run_name / dataset / str(iter_id)
+            output_dir = output_root / job.output_run_name
+            if args.probe_seed != 0:
+                output_dir = output_dir / f"seed{args.probe_seed}"
+            output_dir = output_dir / dataset / str(iter_id)
             cache_dir.mkdir(parents=True, exist_ok=True)
             output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -879,6 +888,8 @@ def main() -> None:
                 str(args.probe_num_workers),
                 "--eval-every",
                 str(args.probe_eval_every),
+                "--seed",
+                str(args.probe_seed),
             ]
             if not args.skip_test_eval:
                 probe_cmd.extend(["--test-cache", str(test_cache)])

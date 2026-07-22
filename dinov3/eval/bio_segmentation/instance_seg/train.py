@@ -27,7 +27,6 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
@@ -171,15 +170,38 @@ def evaluate(
 
 
 # ---------------------------------------------------------------------------
-# Best-checkpoint helpers (decoder-only for frozen backbone)
+# Best-checkpoint helpers
 # ---------------------------------------------------------------------------
 
 def _save_best(model, path: str):
-    torch.save(model.decoder.state_dict() if model.freeze_backbone else model.state_dict(), path)
+    if model.freeze_backbone:
+        # Keep the historical decoder-only format consumable by standalone evaluators.
+        torch.save(model.decoder.state_dict(), path)
+        return
+    payload = {
+        "format_version": 2,
+        "backbone_mode": model.backbone_mode,
+        "decoder": model.decoder.state_dict(),
+    }
+    trainable_names = {
+        name for name, param in model.backbone.named_parameters() if param.requires_grad
+    }
+    payload["backbone"] = {
+        name: value
+        for name, value in model.backbone.state_dict().items()
+        if name in trainable_names
+    }
+    torch.save(payload, path)
 
 
 def _load_best(model, path: str, device):
     sd = torch.load(path, map_location=device)
+    if isinstance(sd, dict) and sd.get("format_version") == 2:
+        model.decoder.load_state_dict(sd["decoder"])
+        if "backbone" in sd:
+            model.backbone.load_state_dict(sd["backbone"], strict=False)
+        return
+    # Backward compatibility with decoder-only and full-model checkpoints.
     if model.freeze_backbone:
         model.decoder.load_state_dict(sd)
     else:
@@ -222,6 +244,11 @@ def _build_instance_dataset(args, split: str, do_normalize: bool = True) -> Data
 
 
 def run(args) -> Dict:
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_types = DATASET_NUM_TYPES.get(args.dataset, 0)
     os.makedirs(args.output_dir, exist_ok=True)
@@ -232,6 +259,7 @@ def run(args) -> Dict:
         layers=args.layers,
         num_types=num_types,
         freeze_backbone=args.freeze_backbone,
+        trainable_backbone_blocks=args.unfreeze_last_blocks,
         feature_size=args.feature_size,
         embed_proj=args.embed_proj,
         device=device,
@@ -244,9 +272,12 @@ def run(args) -> Dict:
     base_val = _build_instance_dataset(args, "val", do_normalize=True)
     train_ds = RandomCropHoVerDataset(base_train, args.crop_size, num_types, seed=args.seed,
                                       aug=args.aug, mosaic_prob=args.mosaic_prob)
+    loader_generator = torch.Generator()
+    loader_generator.manual_seed(args.seed)
     tr_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
         num_workers=args.num_workers, drop_last=True,
+        generator=loader_generator,
     )
 
     criterion = HoVerNetLoss(num_types=num_types).to(device)
@@ -256,15 +287,25 @@ def run(args) -> Dict:
         # Fine-tune: decoder at --lr, backbone at a much lower --backbone-lr so the
         # pretrained features are adapted, not destroyed.
         bb_lr = args.backbone_lr if args.backbone_lr is not None else args.lr * 0.02
+        trainable_backbone = list(model.trainable_backbone_parameters())
         optimizer = torch.optim.AdamW(
             [
                 {"params": model.decoder.parameters(), "lr": args.lr},
-                {"params": model.backbone.parameters(), "lr": bb_lr},
+                {"params": trainable_backbone, "lr": bb_lr},
             ],
             weight_decay=args.weight_decay,
         )
-        logger.info("Fine-tuning: decoder lr=%.2e, backbone lr=%.2e", args.lr, bb_lr)
+        logger.info(
+            "Fine-tuning mode=%s: decoder lr=%.2e, backbone lr=%.2e, trainable backbone params=%d",
+            model.backbone_mode,
+            args.lr,
+            bb_lr,
+            sum(param.numel() for param in trainable_backbone),
+        )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    amp_dtype = {"none": None, "bf16": torch.bfloat16, "fp16": torch.float16}[args.amp_dtype]
+    amp_enabled = device.type == "cuda" and amp_dtype is not None
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled and amp_dtype == torch.float16)
 
     sel_key = "mPQ" if num_types > 0 else "bPQ"
     best_val = -1.0
@@ -275,6 +316,10 @@ def run(args) -> Dict:
         model.train()
         running = 0.0
         nb = 0
+        total_train_batches = len(tr_loader)
+        if args.max_train_batches is not None:
+            total_train_batches = min(total_train_batches, int(args.max_train_batches))
+        optimizer.zero_grad(set_to_none=True)
         pbar = tqdm(tr_loader, desc=f"Epoch {epoch}", leave=False)
         for bi, (img, np_t, hv_t, tp_t) in enumerate(pbar):
             if args.max_train_batches is not None and bi >= args.max_train_batches:
@@ -285,11 +330,16 @@ def run(args) -> Dict:
                 "hv": hv_t.to(device, non_blocking=True),
                 "tp": tp_t.to(device, non_blocking=True),
             }
-            pred = model(img)
-            loss, comps = criterion(pred, target)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_enabled):
+                pred = model(img)
+                loss, comps = criterion(pred, target)
+                scaled_loss = loss / args.grad_accum_steps
+            scaler.scale(scaled_loss).backward()
+            should_step = (bi + 1) % args.grad_accum_steps == 0 or (bi + 1) >= total_train_batches
+            if should_step:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
             running += comps["total"]
             nb += 1
             pbar.set_postfix(loss=f"{comps['total']:.3f}")
@@ -326,10 +376,19 @@ def run(args) -> Dict:
             "layers": model.layers,
             "num_types": num_types,
             "freeze_backbone": bool(args.freeze_backbone),
+            "backbone_mode": model.backbone_mode,
+            "unfreeze_last_blocks": args.unfreeze_last_blocks,
             "feature_size": args.feature_size,
             "embed_proj": args.embed_proj,
             "crop_size": args.crop_size,
             "stride": args.stride,
+            "batch_size": args.batch_size,
+            "grad_accum_steps": args.grad_accum_steps,
+            "effective_batch_size": args.batch_size * args.grad_accum_steps,
+            "decoder_lr": args.lr,
+            "backbone_lr": None if args.freeze_backbone else bb_lr,
+            "amp_dtype": args.amp_dtype,
+            "seed": args.seed,
             "select_metric": sel_key,
         },
     }
@@ -367,16 +426,24 @@ def main():
     p.add_argument("--freeze-backbone", dest="freeze_backbone", action="store_true", default=True)
     p.add_argument("--finetune", dest="freeze_backbone", action="store_false",
                    help="Fine-tune the backbone end-to-end (overrides --freeze-backbone).")
+    p.add_argument(
+        "--unfreeze-last-blocks",
+        type=int,
+        default=None,
+        help="With --finetune, update only the last N transformer blocks plus final norm.",
+    )
     p.add_argument("--feature-size", type=int, default=32)
     p.add_argument("--embed-proj", type=int, default=384)
     p.add_argument("--crop-size", type=int, default=256)
     p.add_argument("--stride", type=int, default=192)
     p.add_argument("--epochs", type=int, default=50)
     p.add_argument("--batch-size", type=int, default=8)
+    p.add_argument("--grad-accum-steps", type=int, default=1)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--backbone-lr", type=float, default=None,
                    help="Backbone LR when fine-tuning (default: lr*0.02). Ignored if frozen.")
     p.add_argument("--weight-decay", type=float, default=1e-4)
+    p.add_argument("--amp-dtype", choices=["none", "bf16", "fp16"], default="none")
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--max-eval-images", type=int, default=None,
@@ -393,6 +460,13 @@ def main():
     p.add_argument("--fg-thresh", type=float, default=0.5)
     p.add_argument("--energy-thresh", type=float, default=0.4)
     args = p.parse_args()
+
+    if args.freeze_backbone and args.unfreeze_last_blocks is not None:
+        p.error("--unfreeze-last-blocks requires --finetune")
+    if args.unfreeze_last_blocks is not None and args.unfreeze_last_blocks <= 0:
+        p.error("--unfreeze-last-blocks must be positive")
+    if args.grad_accum_steps <= 0:
+        p.error("--grad-accum-steps must be positive")
 
     if args.layers is None:
         # Resolve even-4 from backbone depth lazily inside build; here pick a

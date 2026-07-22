@@ -29,8 +29,13 @@ delta is attributable to the backbone. Run the pipeline once per backbone:
 | other bio FM | their ckpt | vs peers |
 | Cellpose / cpsam | — (`run_specialist.py`) | external reference, **same metric code** |
 
-Report **frozen** (strong-representation story; `--freeze-backbone`) **and fine-tuned**
-(`--finetune`, can-it-replace-the-specialist story).
+Report the controlled adaptation ladder with the same decoder and splits:
+
+- `frozen`: decoder-only (`--freeze-backbone`)
+- `last2` / `last4`: decoder plus the last N transformer blocks and final norm
+- `finetune`: decoder plus the complete backbone
+
+The pipeline accepts all four names through `--modes frozen last2 last4 finetune`.
 
 ## Layers are configurable
 

@@ -216,9 +216,7 @@ def extract_features(
     desc: str,
 ) -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]]]:
     if output_path.exists() and not overwrite:
-        pack = np.load(output_path, allow_pickle=True)
-        metas = pack["metas"].tolist() if "metas" in pack.files else []
-        return pack["features"].astype(np.float32), pack["labels"], metas
+        return load_feature_cache(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     loader = DataLoader(
         dataset,
@@ -247,6 +245,15 @@ def extract_features(
         metas=np.asarray(metas_all, dtype=object),
     )
     return feats, labs, metas_all
+
+
+def load_feature_cache(path: str | Path) -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]]]:
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Feature cache does not exist: {path}")
+    with np.load(path, allow_pickle=True) as pack:
+        metas = pack["metas"].tolist() if "metas" in pack.files else []
+        return pack["features"].astype(np.float32), np.asarray(pack["labels"]), metas
 
 
 def _xray_metrics(features: np.ndarray, metas: list[dict[str, Any]], *, seed: int) -> dict[str, float]:
@@ -340,21 +347,23 @@ def run_one(args) -> dict[str, Any]:
     out_dir = Path(args.output_dir) / args.model_name / str(args.ckpt_iter)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Loading %s checkpoint=%s", model_name, checkpoint)
-    encoder = Dinov3OODEncoder(
-        checkpoint=checkpoint,
-        train_config=Path(args.train_config),
-        device=args.device,
-        n_last_blocks=args.n_last_blocks,
-        use_avgpool=not args.no_avgpool,
-        autocast_dtype=parse_autocast_dtype(args.autocast_dtype),
-        resize_size=args.resize_size,
-        crop_size=args.crop_size,
-        checkpoint_key=args.checkpoint_key,
-        channel_policy=args.channel_policy,
-        channel_tta_samples=args.channel_tta_samples,
-        channel_policy_seed=args.channel_policy_seed,
-    )
+    encoder = None
+    if args.phase != "metrics":
+        logger.info("Loading %s checkpoint=%s", model_name, checkpoint)
+        encoder = Dinov3OODEncoder(
+            checkpoint=checkpoint,
+            train_config=Path(args.train_config),
+            device=args.device,
+            n_last_blocks=args.n_last_blocks,
+            use_avgpool=not args.no_avgpool,
+            autocast_dtype=parse_autocast_dtype(args.autocast_dtype),
+            resize_size=args.resize_size,
+            crop_size=args.crop_size,
+            checkpoint_key=args.checkpoint_key,
+            channel_policy=args.channel_policy,
+            channel_tta_samples=args.channel_tta_samples,
+            channel_policy_seed=args.channel_policy_seed,
+        )
     row: dict[str, Any] = {
         "model": model_name,
         "checkpoint": str(checkpoint),
@@ -372,69 +381,91 @@ def run_one(args) -> dict[str, Any]:
 
     id_features = None
     if "ood" in args.metrics:
-        id_ds = build_id_reference_dataset(
-            args.benchmark_root,
-            transform=encoder.transform,
-            dataset_names=args.id_datasets,
-            max_samples=args.id_max_samples,
-            seed=args.seed,
-        )
-        id_features, _id_labels, _id_metas = extract_features(
-            id_ds,
-            encoder,
-            output_path=out_dir / "features/id_reference.npz",
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            overwrite=args.overwrite_features,
-            desc=f"{model_name}:id",
-        )
+        id_cache = out_dir / "features/id_reference.npz"
+        if args.phase == "metrics":
+            id_features, _id_labels, _id_metas = load_feature_cache(id_cache)
+        else:
+            id_ds = build_id_reference_dataset(
+                args.benchmark_root,
+                transform=encoder.transform,
+                dataset_names=args.id_datasets,
+                max_samples=args.id_max_samples,
+                seed=args.seed,
+            )
+            id_features, _id_labels, _id_metas = extract_features(
+                id_ds,
+                encoder,
+                output_path=id_cache,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                overwrite=args.overwrite_features,
+                desc=f"{model_name}:id",
+            )
 
     if "xray" in args.tasks:
-        xray_ds = XrayTomogramSliceDataset(
-            args.ood_root,
-            transform=encoder.transform,
-            slices_per_volume=args.xray_slices_per_volume,
-            input_mode=args.xray_input_mode,
-            percentiles=(args.percentile_low, args.percentile_high),
-            max_volumes=args.xray_max_volumes,
-        )
-        xray_features, _xray_labels, xray_metas = extract_features(
-            xray_ds,
-            encoder,
-            output_path=out_dir / f"features/xray_{args.xray_input_mode}_spv{args.xray_slices_per_volume}.npz",
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            overwrite=args.overwrite_features,
-            desc=f"{model_name}:xray",
-        )
-        row.update(_xray_metrics(xray_features, xray_metas, seed=args.seed))
-        if id_features is not None:
-            row.update({f"xray_ood_{k}": v for k, v in id_vs_ood_knn(id_features, xray_features, seed=args.seed).items()})
+        xray_cache = out_dir / f"features/xray_{args.xray_input_mode}_spv{args.xray_slices_per_volume}.npz"
+        if args.phase == "metrics":
+            xray_features, _xray_labels, xray_metas = load_feature_cache(xray_cache)
+        else:
+            xray_ds = XrayTomogramSliceDataset(
+                args.ood_root,
+                transform=encoder.transform,
+                slices_per_volume=args.xray_slices_per_volume,
+                input_mode=args.xray_input_mode,
+                percentiles=(args.percentile_low, args.percentile_high),
+                max_volumes=args.xray_max_volumes,
+            )
+            xray_features, _xray_labels, xray_metas = extract_features(
+                xray_ds,
+                encoder,
+                output_path=xray_cache,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                overwrite=args.overwrite_features,
+                desc=f"{model_name}:xray",
+            )
+        if args.phase != "extract":
+            row.update(_xray_metrics(xray_features, xray_metas, seed=args.seed))
+            if id_features is not None:
+                row.update({f"xray_ood_{k}": v for k, v in id_vs_ood_knn(id_features, xray_features, seed=args.seed).items()})
 
     if "cryo" in args.tasks:
-        cryo_ds = CryoParticleDataset(
-            args.ood_root,
-            transform=encoder.transform,
-            percentiles=(args.percentile_low, args.percentile_high),
-            invert=args.cryo_invert,
-            max_projects=args.cryo_max_projects,
-            max_particles_per_project=args.cryo_max_particles_per_project,
-            max_per_class=args.cryo_max_per_class,
-            seed=args.seed,
-        )
         suffix = "inv" if args.cryo_invert else "raw"
-        cryo_features, _cryo_labels, cryo_metas = extract_features(
-            cryo_ds,
-            encoder,
-            output_path=out_dir / f"features/cryo_{suffix}_mpp{args.cryo_max_particles_per_project}.npz",
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            overwrite=args.overwrite_features,
-            desc=f"{model_name}:cryo",
+        cryo_cache = out_dir / f"features/cryo_{suffix}_mpp{args.cryo_max_particles_per_project}.npz"
+        if args.phase == "metrics":
+            cryo_features, _cryo_labels, cryo_metas = load_feature_cache(cryo_cache)
+        else:
+            cryo_ds = CryoParticleDataset(
+                args.ood_root,
+                transform=encoder.transform,
+                percentiles=(args.percentile_low, args.percentile_high),
+                invert=args.cryo_invert,
+                max_projects=args.cryo_max_projects,
+                max_particles_per_project=args.cryo_max_particles_per_project,
+                max_per_class=args.cryo_max_per_class,
+                seed=args.seed,
+            )
+            cryo_features, _cryo_labels, cryo_metas = extract_features(
+                cryo_ds,
+                encoder,
+                output_path=cryo_cache,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                overwrite=args.overwrite_features,
+                desc=f"{model_name}:cryo",
+            )
+        if args.phase != "extract":
+            row.update(_cryo_metrics(cryo_features, cryo_metas, seed=args.seed))
+            if id_features is not None:
+                row.update({f"cryo_ood_{k}": v for k, v in id_vs_ood_knn(id_features, cryo_features, seed=args.seed).items()})
+
+    if args.phase == "extract":
+        dump_json(
+            out_dir / "features_complete.json",
+            {"model": model_name, "tasks": list(args.tasks), "feature_dir": str(out_dir / "features")},
         )
-        row.update(_cryo_metrics(cryo_features, cryo_metas, seed=args.seed))
-        if id_features is not None:
-            row.update({f"cryo_ood_{k}": v for k, v in id_vs_ood_knn(id_features, cryo_features, seed=args.seed).items()})
+        logger.info("Finished feature extraction for %s", model_name)
+        return row
 
     dump_json(out_dir / "last_result.json", row)
     append_summary(Path(args.output_dir) / "summary.csv", row)
@@ -479,6 +510,12 @@ def parse_args(argv=None):
     parser.add_argument("--id-max-samples", type=int, default=3000)
     parser.add_argument("--id-datasets", nargs="+", default=["bloodmnist", "bbbc048", "cyclops"])
     parser.add_argument("--overwrite-features", action="store_true")
+    parser.add_argument(
+        "--phase",
+        default="all",
+        choices=["all", "extract", "metrics"],
+        help="Run end-to-end, cache GPU features only, or compute metrics from existing caches only.",
+    )
     return parser.parse_args(argv)
 
 

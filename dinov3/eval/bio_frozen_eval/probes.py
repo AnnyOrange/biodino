@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
+import re
 
 import numpy as np
 from scipy.stats import spearmanr
@@ -38,6 +40,107 @@ class ProbeResult:
         d.update(self.metrics)
         d.pop("metrics")
         return d
+
+
+BBBC013_COMPOUND_ROWS = {
+    "wortmannin": ("A", "B", "C", "D"),
+    "ly294002": ("E", "F", "G", "H"),
+}
+
+
+def run_bbbc013_compound_oof_probe(
+    features: np.ndarray,
+    targets: np.ndarray,
+    sample_paths: list[str | Path],
+    alpha: float = 1.0,
+) -> ProbeResult:
+    """Evaluate BBBC013 per compound with leave-one-replicate-row-out folds.
+
+    BBBC013 contains four replicated dose curves for each of two compounds.
+    Combining their raw doses is not meaningful because the compounds have
+    different dose-response curves. This protocol predicts log1p dose within
+    each compound and concatenates four held-out-row predictions per compound.
+    """
+    features = np.asarray(features)
+    targets = np.asarray(targets, dtype=float)
+    if len(features) != len(targets) or len(targets) != len(sample_paths):
+        raise ValueError(
+            "BBBC013 features, targets, and sample paths must have equal lengths "
+            f"({len(features)}, {len(targets)}, {len(sample_paths)})"
+        )
+    if np.any(targets < 0):
+        raise ValueError("BBBC013 dose targets must be non-negative for log1p")
+
+    rows: list[str] = []
+    for path in sample_paths:
+        match = re.search(r"Channel\d+-\d+-([A-H])-\d+\.BMP$", Path(path).name, re.IGNORECASE)
+        if match is None:
+            raise ValueError(f"Cannot parse BBBC013 replicate row from {Path(path).name!r}")
+        rows.append(match.group(1).upper())
+    rows_array = np.asarray(rows)
+    log_targets = np.log1p(targets)
+
+    compound_metrics: dict[str, dict[str, float]] = {}
+    all_predictions: list[np.ndarray] = []
+    all_targets: list[np.ndarray] = []
+    train_samples_per_fold: set[int] = set()
+
+    for compound, compound_rows in BBBC013_COMPOUND_ROWS.items():
+        compound_mask = np.isin(rows_array, compound_rows)
+        if int(compound_mask.sum()) != 48:
+            raise ValueError(
+                f"BBBC013 {compound} must contain 48 wells, found {int(compound_mask.sum())}"
+            )
+        predictions = np.full(len(targets), np.nan, dtype=float)
+        for held_out_row in compound_rows:
+            test_mask = rows_array == held_out_row
+            train_mask = compound_mask & ~test_mask
+            if int(test_mask.sum()) != 12 or int(train_mask.sum()) != 36:
+                raise ValueError(
+                    f"BBBC013 {compound} row {held_out_row}: expected 36 train/12 test, "
+                    f"found {int(train_mask.sum())}/{int(test_mask.sum())}"
+                )
+            reg = make_pipeline(StandardScaler(), Ridge(alpha=alpha))
+            reg.fit(features[train_mask], log_targets[train_mask])
+            predictions[test_mask] = reg.predict(features[test_mask])
+            train_samples_per_fold.add(int(train_mask.sum()))
+
+        compound_predictions = predictions[compound_mask]
+        compound_targets = log_targets[compound_mask]
+        if not np.isfinite(compound_predictions).all():
+            raise RuntimeError(f"BBBC013 {compound} OOF predictions are incomplete")
+        rho = spearmanr(compound_targets, compound_predictions).correlation
+        compound_metrics[compound] = {
+            "r2": float(r2_score(compound_targets, compound_predictions)),
+            "spearman": float(rho) if rho == rho else float("nan"),
+            "mae": float(mean_absolute_error(compound_targets, compound_predictions)),
+        }
+        all_predictions.append(compound_predictions)
+        all_targets.append(compound_targets)
+
+    metric_names = ("r2", "spearman", "mae")
+    macro = {
+        metric: float(np.mean([compound_metrics[name][metric] for name in BBBC013_COMPOUND_ROWS]))
+        for metric in metric_names
+    }
+    metrics = dict(macro)
+    for compound, values in compound_metrics.items():
+        for metric, value in values.items():
+            metrics[f"{compound}_{metric}"] = value
+    metrics.update(
+        {
+            "ridge_alpha": float(alpha),
+            "n_compounds": float(len(BBBC013_COMPOUND_ROWS)),
+            "n_folds": float(sum(len(rows) for rows in BBBC013_COMPOUND_ROWS.values())),
+            "oof_samples": float(sum(len(values) for values in all_targets)),
+        }
+    )
+    return ProbeResult(
+        task="regression",
+        n_train=min(train_samples_per_fold),
+        n_test=sum(len(values) for values in all_predictions),
+        metrics=metrics,
+    )
 
 
 def run_classification_probe(

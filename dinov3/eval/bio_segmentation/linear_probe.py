@@ -497,6 +497,16 @@ def run_cached_linear_probe(
     class_weight_beta: float = 0.999,
 ) -> Dict[str, float]:
     """Full cached linear probe training pipeline."""
+    # Seed all probe-side randomness: head initialization, dropout, and
+    # DataLoader shuffling. Previously ``seed`` only selected train subsets,
+    # so nominally identical segmentation probes could diverge substantially.
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # ------------------------------------------------------------------
@@ -579,7 +589,15 @@ def run_cached_linear_probe(
             seed,
         )
     val_ds = CachedFeatureDataset(val_feat, val_sem, val_inst)
-    tr_loader  = DataLoader(tr_ds,  batch_size=batch_size, shuffle=True,  num_workers=num_workers)
+    shuffle_generator = torch.Generator()
+    shuffle_generator.manual_seed(seed)
+    tr_loader  = DataLoader(
+        tr_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        generator=shuffle_generator,
+    )
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     # ------------------------------------------------------------------
@@ -630,6 +648,9 @@ def run_cached_linear_probe(
             'used_train_samples': len(tr_ds),
             'train_fraction': None if train_fraction is None else float(train_fraction),
             'seed': int(seed),
+            'probe_rng_seeded': True,
+            'probe_batch_size': int(batch_size),
+            'probe_epochs': int(epochs),
             'class_weight_mode': class_weight_mode,
             'class_weight_beta': float(class_weight_beta),
             'class_weights': class_weight_values,
@@ -830,7 +851,7 @@ def main():
     parser.add_argument('--train-fraction', type=float, default=None,
                         help='Cached mode only: train on a deterministic fraction of train images.')
     parser.add_argument('--seed', type=int, default=0,
-                        help='Random seed for deterministic cached train subsets.')
+                        help='Random seed for cached-probe initialization, dropout, shuffling, and train subsets.')
     parser.add_argument('--class-weight-mode', default='none',
                         choices=['none', 'inverse', 'sqrt_inverse',
                                  'median_frequency', 'effective_number'],

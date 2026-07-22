@@ -40,6 +40,7 @@ from .encoder import CHANNEL_POLICIES, Dinov3CkptEncoder, completed, extract_fea
 from .group_keys import GROUP_SPLIT_DATASETS
 from .make_group_splits import group_split_indices
 from .probes import (
+    run_bbbc013_compound_oof_probe,
     run_classification_probe,
     run_classification_probe_split,
     run_multilabel_classification_probe,
@@ -48,6 +49,9 @@ from .probes import (
     run_regression_probe_split,
 )
 from .registry import ALL_DATASETS, NATIVE_TEST_SPLIT_DATASETS, UNSUPPORTED_OFFICIAL_SPLIT_DATASETS, build_dataset
+
+
+BBBC013_SPLIT_PROTOCOL = "compound-log1p-leave-one-replicate-row-out"
 
 
 def _probe_split_for_task(task: str):
@@ -61,6 +65,8 @@ def _probe_split_for_task(task: str):
 
 def split_protocol_for_dataset(dataset_name: str) -> str:
     """Return the published evaluation split protocol label for a dataset."""
+    if dataset_name == "bbbc013":
+        return BBBC013_SPLIT_PROTOCOL
     if dataset_name in UNSUPPORTED_OFFICIAL_SPLIT_DATASETS:
         return "unsupported-open-set-official"
     if dataset_name in NATIVE_TEST_SPLIT_DATASETS:
@@ -97,7 +103,11 @@ CSV_FIELDS = [
     "accuracy", "balanced_accuracy", "macro_f1",
     "label_accuracy", "micro_f1", "macro_auc", "micro_auc",
     "macro_average_precision", "micro_average_precision",
-    "mae", "r2", "spearman", "feature_file",
+    "mae", "r2", "spearman",
+    "wortmannin_mae", "wortmannin_r2", "wortmannin_spearman",
+    "ly294002_mae", "ly294002_r2", "ly294002_spearman",
+    "target_transform", "fold_protocol", "ridge_alpha", "n_compounds", "n_folds", "oof_samples",
+    "feature_file",
     "image_size", "resize_size", "channel_policy", "channel_tta_samples",
     "checkpoint", "train_config", "error",
 ]
@@ -398,6 +408,17 @@ def main(argv=None) -> int:
                 _validate_explicit_split_labels(task, y_train, y_test, dataset_name)
                 result = _probe_split_for_task(task)(x_train, y_train, x_test, y_test)
                 feature_file = train_ff
+            elif dataset_name == "bbbc013" and split_label == BBBC013_SPLIT_PROTOCOL:
+                dataset, task = build_dataset(
+                    dataset_name, "train", args.max_samples, args.max_per_class, benchmark_root=args.benchmark_root
+                )
+                features, labels = extract_features(
+                    dataset, encoder, feature_file, args.batch_size, args.num_workers,
+                    args.overwrite_features, model_name,
+                    save_features=not args.no_save_features, save_paths=args.save_paths,
+                )
+                sample_paths = [str(sample.image_path) for sample in dataset.samples]
+                result = run_bbbc013_compound_oof_probe(features, labels, sample_paths)
             elif dataset_name in GROUP_SPLIT_DATASETS and split_label == "group-split":
                 # No official test split: fixed, documented, leakage-safe group split
                 # (splits/<dataset>.json). Extract whole-set features once, then probe
@@ -443,6 +464,13 @@ def main(argv=None) -> int:
                 "train_config": str(train_config),
                 **result.to_dict(),
             }
+            if dataset_name == "bbbc013" and split_label == BBBC013_SPLIT_PROTOCOL:
+                row.update(
+                    {
+                        "target_transform": "log1p",
+                        "fold_protocol": "leave-one-replicate-row-out",
+                    }
+                )
         except Exception as exc:
             failed_datasets.append(dataset_name)
             row = {

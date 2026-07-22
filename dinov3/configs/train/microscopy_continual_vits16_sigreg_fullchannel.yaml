@@ -1,0 +1,89 @@
+# ViT-S+/16 task-label-free continuation with a conservative multi-channel
+# stem. The official RGB PatchEmbed is preserved; channels 4-8 contribute via
+# a small residual branch. channel_subset can make only the student see 1-3
+# channels while the EMA teacher retains every available channel.
+
+train:
+  dataset_path: "packwds_chvit_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar::pct=1,99"
+  batch_size_per_gpu: 64
+  num_workers: 4
+  OFFICIAL_EPOCH_LENGTH: 8
+  output_dir: ./outputs/01_training_runs/splus_sigreg_fullchannel
+  compile: false
+  wds_shuffle_buffer: 50
+  prefetch_factor: 1
+  pin_memory: false
+
+student:
+  arch: vit_small
+  patch_size: 16
+  ffn_layer: swiglu
+  ffn_ratio: 6.0
+  drop_path_rate: 0.15
+  norm_layer: layernormbf16
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: residual_mc_v2
+  residual_mc_extra_scale_init: 0.01
+  n_storage_tokens: 4
+  mask_k_bias: true
+  pos_embed_rope_rescale_coords: 2
+  pos_embed_rope_dtype: fp32
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth"
+
+teacher:
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: residual_mc_v2
+  residual_mc_extra_scale_init: 0.01
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 1
+
+sigreg:
+  enabled: true
+  mode: bottleneck
+  loss_weight: 0.10
+  num_slices: 1024
+  range_max: 5.0
+  n_knots: 17
+  koleo_too: false
+
+channel_subset:
+  enabled: false
+  min_channels: 1
+  max_channels: 3
+
+optim:
+  epochs: 32
+  optimizer: adamw
+  lr: 2.0e-5
+  min_lr: 1.0e-6
+  warmup_epochs: 1
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  freeze_backbone_updates: 0
+  trainable_last_blocks: 4
+  trainable_extra_stem: true
+  scaling_rule: fixed
+  gradient_accumulation_steps: 8
+  lr_reference_effective_batch_size: 512
+  expected_effective_batch_size: 512
+  batch_lr_mismatch_policy: warn
+
+crops:
+  augmentation_policy: bio_safe
+  float_input: true
+  global_crops_size: 256
+  local_crops_size: 112
+  rgb_mean: [0.514666, 0.488834, 0.498267, 0.226684, 0.232035, 0.166374, 0.483261, 0.523779]
+  rgb_std: [0.338707, 0.339202, 0.336091, 0.280818, 0.278247, 0.235296, 0.196605, 0.137569]
+
+evaluation:
+  eval_period_iterations: 0
+
+checkpointing:
+  period: 16
+  max_to_keep: 50

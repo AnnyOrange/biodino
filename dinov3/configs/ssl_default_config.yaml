@@ -42,6 +42,27 @@ ibot:
   head_norm_last_layer: false
   head_nlayers: 3
   head_hidden_dim: 2048
+sigreg:
+  # FINO regularization on the unnormalized student DINO-head bottleneck.
+  enabled: false
+  mode: bottleneck
+  loss_weight: 0.05
+  num_slices: 1024
+  range_max: 5.0
+  n_knots: 17
+  koleo_too: false
+  weight_schedule:
+    enabled: false
+    type: cosine  # cosine or step
+    start_update: 0
+    end_update: -1  # -1 uses the final optimizer update
+    final_weight: 0.0
+channel_subset:
+  # Let the EMA teacher see every available channel while the student sees a
+  # random subset. This is task-label-free and is disabled for standard runs.
+  enabled: false
+  min_channels: 1
+  max_channels: 3
 gram:
   use_loss: false # (bool) if true gram is used, else not
   compute_stats: false # (bool): if true compute auxilliary stats
@@ -143,6 +164,14 @@ optim:
   schedule_trunc_extra: 0.0  # Compute the schedule for (1 + schedule_trunc_extra) steps and truncate, .25 is a good choice
   clip_grad: 3.0
   freeze_last_layer_epochs: 1
+  # Keep the trunk fixed for an initial heads-only warmup, measured in optimizer updates.
+  freeze_backbone_updates: 0
+  # -1 trains the full backbone. A positive value freezes the embedding/trunk
+  # except for the last N transformer blocks and final normalization layers.
+  trainable_last_blocks: -1
+  # Partial-backbone multi-channel runs can train only the new residual branch
+  # while preserving the official RGB PatchEmbed exactly.
+  trainable_extra_stem: false
   scaling_rule: sqrt_wrt_1024
   gradient_accumulation_steps: 1
   patch_embed_lr_mult: 0.2
