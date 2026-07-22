@@ -5,6 +5,7 @@
 
 import gc
 import logging
+import math
 from functools import partial
 
 import torch
@@ -17,13 +18,94 @@ from dinov3.configs import get_default_config
 from dinov3.data import DataAugmentationDINO
 from dinov3.fsdp.ac_compile_parallelize import ac_compile_parallelize
 from dinov3.layers.dino_head import DINOHead
-from dinov3.loss import DINOLoss, GramLoss, KoLeoLoss, KoLeoLossDistributed, iBOTPatchLoss
+from dinov3.loss import DINOLoss, DistributedSIGReg, GramLoss, KoLeoLoss, KoLeoLossDistributed, iBOTPatchLoss
 from dinov3.models import build_model_from_cfg
 from dinov3.train.cosine_lr_scheduler import linear_warmup_cosine_decay
 from dinov3.train.param_groups import fuse_params_groups, get_params_groups_with_decay_fsdp
 from dinov3.utils import count_parameters
 
 logger = logging.getLogger("dinov3")
+
+
+def _configure_partial_backbone(
+    backbone: nn.Module,
+    *,
+    trainable_last_blocks: int,
+    trainable_extra_stem: bool,
+) -> tuple[int, int]:
+    """Freeze a ViT except its final blocks/norm and optional new channel stem."""
+    if trainable_last_blocks < 0:
+        total = sum(p.numel() for p in backbone.parameters())
+        trainable = sum(p.numel() for p in backbone.parameters() if p.requires_grad)
+        return trainable, total
+    if not hasattr(backbone, "blocks"):
+        raise ValueError("optim.trainable_last_blocks requires a ViT-style backbone with .blocks")
+
+    depth = len(backbone.blocks)
+    if trainable_last_blocks > depth:
+        raise ValueError(
+            f"optim.trainable_last_blocks={trainable_last_blocks} exceeds backbone depth={depth}"
+        )
+
+    backbone.requires_grad_(False)
+    if trainable_last_blocks:
+        for block in backbone.blocks[-trainable_last_blocks:]:
+            block.requires_grad_(True)
+    for name in ("norm", "cls_norm", "local_cls_norm"):
+        module = getattr(backbone, name, None)
+        if module is not None:
+            module.requires_grad_(True)
+
+    if trainable_extra_stem:
+        stem = getattr(backbone, "patch_embed", None)
+        if stem is None:
+            raise ValueError("optim.trainable_extra_stem requires backbone.patch_embed")
+        found_extra = False
+        for name in ("extra", "extra_scale", "pool"):
+            component = getattr(stem, name, None)
+            if component is not None:
+                component.requires_grad_(True)
+                found_extra = True
+        channel_embed = getattr(backbone, "channel_embed", None)
+        if channel_embed is not None:
+            channel_embed.requires_grad_(True)
+            found_extra = True
+        if not found_extra:
+            raise ValueError(
+                "optim.trainable_extra_stem=true, but no residual/pool/channel embedding was found"
+            )
+
+    total = sum(p.numel() for p in backbone.parameters())
+    trainable = sum(p.numel() for p in backbone.parameters() if p.requires_grad)
+    return trainable, total
+
+
+def _sample_channel_subset_mask(
+    valid_mask: Tensor,
+    *,
+    min_channels: int,
+    max_channels: int,
+) -> Tensor:
+    """Sample one non-empty subset for each sample in a padded channel batch."""
+    if valid_mask.ndim != 2:
+        raise ValueError(f"Expected a [B, C] channel mask, got {tuple(valid_mask.shape)}")
+    if min_channels <= 0 or max_channels < min_channels:
+        raise ValueError(
+            f"Invalid channel subset range: min_channels={min_channels}, max_channels={max_channels}"
+        )
+
+    valid_mask = valid_mask.to(dtype=torch.bool)
+    subset = torch.zeros_like(valid_mask)
+    for row in range(valid_mask.shape[0]):
+        available = valid_mask[row].nonzero(as_tuple=False).flatten()
+        if available.numel() == 0:
+            raise ValueError(f"Sample {row} has no valid channels")
+        upper = min(max_channels, int(available.numel()))
+        lower = min(min_channels, upper)
+        count = int(torch.randint(lower, upper + 1, (1,), device=valid_mask.device).item())
+        chosen = available[torch.randperm(available.numel(), device=valid_mask.device)[:count]]
+        subset[row, chosen] = True
+    return subset
 
 
 class SSLMetaArch(nn.Module):
@@ -108,6 +190,61 @@ class SSLMetaArch(nn.Module):
             assert cfg.dino.koleo_topk == 1, "Non-distributed KoLeo loss only supports `dino.koleo_topk=1`"
             self.koleo_loss = KoLeoLoss()
 
+        sigreg_cfg = getattr(cfg, "sigreg", None)
+        self.sigreg_enabled = sigreg_cfg is not None and sigreg_cfg.enabled
+        self.sigreg_weight_schedule_enabled = False
+        if self.sigreg_enabled:
+            assert sigreg_cfg.mode == "bottleneck", (
+                f"Only sigreg.mode='bottleneck' is supported (got '{sigreg_cfg.mode}')."
+            )
+            self.sigreg_mode = sigreg_cfg.mode
+            self.sigreg_loss = DistributedSIGReg(
+                num_slices=sigreg_cfg.num_slices,
+                range_max=sigreg_cfg.range_max,
+                n_knots=sigreg_cfg.n_knots,
+            )
+            self.sigreg_loss_weight = sigreg_cfg.loss_weight
+            self.sigreg_koleo_too = sigreg_cfg.koleo_too
+            schedule_cfg = sigreg_cfg.get("weight_schedule")
+            if schedule_cfg is not None and schedule_cfg.enabled:
+                schedule_type = str(schedule_cfg.type).lower()
+                if schedule_type not in {"cosine", "step"}:
+                    raise ValueError(f"Unsupported SIGReg weight schedule type: {schedule_type}")
+                total_updates = int(cfg.train.OFFICIAL_EPOCH_LENGTH * cfg.optim.epochs)
+                start_update = int(schedule_cfg.start_update)
+                end_update = int(schedule_cfg.end_update)
+                if end_update < 0:
+                    end_update = total_updates - 1
+                if not 0 <= start_update < total_updates:
+                    raise ValueError(f"SIGReg schedule start_update must be in [0, {total_updates}), got {start_update}")
+                if end_update < start_update or end_update >= total_updates:
+                    raise ValueError(
+                        f"SIGReg schedule end_update must be in [{start_update}, {total_updates}), got {end_update}"
+                    )
+                final_weight = float(schedule_cfg.final_weight)
+                if final_weight < 0:
+                    raise ValueError(f"SIGReg schedule final_weight must be non-negative, got {final_weight}")
+                self.sigreg_weight_schedule_enabled = True
+                self.sigreg_weight_schedule_type = schedule_type
+                self.sigreg_weight_schedule_start = start_update
+                self.sigreg_weight_schedule_end = end_update
+                self.sigreg_weight_schedule_final = final_weight
+                logger.info(
+                    "OPTIONS -- SIGREG weight schedule: type=%s, start=%d, end=%d, weight=%s->%s",
+                    schedule_type,
+                    start_update,
+                    end_update,
+                    self.sigreg_loss_weight,
+                    final_weight,
+                )
+            logger.info(
+                "OPTIONS -- SIGREG: enabled, mode=%s, weight=%s, num_slices=%s, koleo_too=%s",
+                self.sigreg_mode,
+                self.sigreg_loss_weight,
+                sigreg_cfg.num_slices,
+                self.sigreg_koleo_too,
+            )
+
         logger.info("OPTIONS -- IBOT")
         logger.info(f"OPTIONS -- IBOT -- loss_weight: {cfg.ibot.loss_weight}")
         logger.info(f"OPTIONS -- IBOT masking -- ibot_mask_ratio_tuple: {cfg.ibot.mask_ratio_min_max}")
@@ -145,6 +282,45 @@ class SSLMetaArch(nn.Module):
         self.teacher.requires_grad_(False)
         self.model_ema.requires_grad_(False)
         self.ema_params_lists = None
+
+        self.trainable_last_blocks = int(getattr(cfg.optim, "trainable_last_blocks", -1))
+        self.trainable_extra_stem = bool(getattr(cfg.optim, "trainable_extra_stem", False))
+        trainable_backbone, total_backbone = _configure_partial_backbone(
+            self.student.backbone,
+            trainable_last_blocks=self.trainable_last_blocks,
+            trainable_extra_stem=self.trainable_extra_stem,
+        )
+        logger.info(
+            "Backbone trainability: last_blocks=%d extra_stem=%s trainable=%d/%d (%.2f%%)",
+            self.trainable_last_blocks,
+            self.trainable_extra_stem,
+            trainable_backbone,
+            total_backbone,
+            100.0 * trainable_backbone / max(1, total_backbone),
+        )
+
+        subset_cfg = cfg.channel_subset
+        self.channel_subset_enabled = bool(subset_cfg.enabled)
+        self.channel_subset_min = int(subset_cfg.min_channels)
+        self.channel_subset_max = int(subset_cfg.max_channels)
+        if self.channel_subset_enabled:
+            if self.channel_subset_min <= 0 or self.channel_subset_max < self.channel_subset_min:
+                raise ValueError(
+                    "channel_subset requires 0 < min_channels <= max_channels, got "
+                    f"{self.channel_subset_min}, {self.channel_subset_max}"
+                )
+            supports_channel_masks = bool(getattr(self.student.backbone, "enable_channelvit", False)) or (
+                getattr(self.student.backbone, "stem_type", None) is not None
+            )
+            if not supports_channel_masks:
+                raise ValueError(
+                    "channel_subset.enabled=true requires ChannelViT or a channel-aware stem_type"
+                )
+            logger.info(
+                "Full-channel teacher -> subset-channel student enabled: student channels=%d..%d",
+                self.channel_subset_min,
+                self.channel_subset_max,
+            )
 
         # getting config params fixed:
         self.n_local_crops = self.cfg.crops.local_crops_number
@@ -308,6 +484,8 @@ class SSLMetaArch(nn.Module):
         self.student.ibot_head.init_weights()
         self.dino_loss.init_weights()
         self.ibot_patch_loss.init_weights()
+        if self.sigreg_enabled:
+            self.sigreg_loss.reset_buffers()
         self.model_ema.load_state_dict(self.student.state_dict())
         if self.has_gram_teacher:
             if self.gram_ckpt is not None:
@@ -448,6 +626,26 @@ class SSLMetaArch(nn.Module):
             global_channel_valid_mask = global_channel_valid_mask.cuda(non_blocking=True)
         if local_channel_valid_mask is not None:
             local_channel_valid_mask = local_channel_valid_mask.cuda(non_blocking=True)
+
+        student_global_channel_valid_mask = global_channel_valid_mask
+        student_local_channel_valid_mask = local_channel_valid_mask
+        if self.channel_subset_enabled:
+            if global_channel_valid_mask is None or local_channel_valid_mask is None:
+                raise ValueError(
+                    "channel_subset.enabled=true requires channel ids/masks from a packwds_chvit dataset"
+                )
+            base_full_mask = global_channel_valid_mask[:B]
+            base_subset_mask = _sample_channel_subset_mask(
+                base_full_mask,
+                min_channels=self.channel_subset_min,
+                max_channels=self.channel_subset_max,
+            )
+            # Collation is crop-major, so reuse the same subset for every view of
+            # a sample while the teacher retains the original full-channel mask.
+            student_global_channel_valid_mask = base_subset_mask.repeat(n_global_crops, 1)
+            student_local_channel_valid_mask = base_subset_mask.repeat(n_local_crops, 1)
+            metrics_dict["teacher_channels_per_sample"] = base_full_mask.sum(dim=1).float().mean()
+            metrics_dict["student_channels_per_sample"] = base_subset_mask.sum(dim=1).float().mean()
         masks = data["collated_masks"].cuda(non_blocking=True)
         mask_indices_list = data["mask_indices_list"].cuda(non_blocking=True)
         masks_weight = data["masks_weight"].cuda(non_blocking=True)
@@ -459,7 +657,7 @@ class SSLMetaArch(nn.Module):
             masks, mask_indices_list, masks_weight, n_masked_patches_tensor = self._expand_channelvit_masks(
                 masks,
                 n_channels=global_crops.shape[1],
-                channel_valid_mask=global_channel_valid_mask,
+                channel_valid_mask=student_global_channel_valid_mask,
             )
 
         if self.has_gram_teacher:
@@ -503,11 +701,11 @@ class SSLMetaArch(nn.Module):
             local_channel_ids=local_channel_ids.unflatten(0, (n_local_crops, B))
             if local_channel_ids is not None
             else None,
-            global_channel_valid_mask=global_channel_valid_mask.unflatten(0, (n_global_crops, B))
-            if global_channel_valid_mask is not None
+            global_channel_valid_mask=student_global_channel_valid_mask.unflatten(0, (n_global_crops, B))
+            if student_global_channel_valid_mask is not None
             else None,
-            local_channel_valid_mask=local_channel_valid_mask.unflatten(0, (n_local_crops, B))
-            if local_channel_valid_mask is not None
+            local_channel_valid_mask=student_local_channel_valid_mask.unflatten(0, (n_local_crops, B))
+            if student_local_channel_valid_mask is not None
             else None,
             upperbound=data["upperbound"],
             masks=masks,
@@ -747,7 +945,12 @@ class SSLMetaArch(nn.Module):
         ]
         sizes = [x.shape[0] for x in buffer]
         buffer = torch.cat(buffer, dim=0)  # [n_global_crops * B + n_local_crops * B, D]
-        buffer = self.student.dino_head(buffer)  # [n_global_crops * B + n_local_crops * B, K]
+        bottleneck = None
+        if self.sigreg_enabled and self.sigreg_mode == "bottleneck":
+            buffer, bottleneck = self.student.dino_head(buffer, return_bottleneck=True)
+            bottleneck = torch.split_with_sizes(bottleneck, sizes, dim=0)
+        else:
+            buffer = self.student.dino_head(buffer)  # [n_global_crops * B + n_local_crops * B, K]
         buffer = torch.split_with_sizes(buffer, sizes, dim=0)
 
         global_out = {
@@ -758,6 +961,8 @@ class SSLMetaArch(nn.Module):
             "masked_patch_after_head": global_masked_patch_after_head,  # [n_masked_patches, K]
             "masked_patch_pre_head": masked_patches_pre_head,  # [n_masked_patches, D]
         }
+        if bottleneck is not None:
+            global_out["bottleneck_pre_norm"] = bottleneck[0].unflatten(0, [n_global_crops, B])
         local_out = {
             "cls_pre_head": l_cls.unflatten(0, [n_local_crops, B]),  # [n_local_crops, B, D]
             "reg_pre_head": l_reg.unflatten(0, [n_local_crops, B]),  # [n_local_crops, B, R, D]
@@ -818,10 +1023,23 @@ class SSLMetaArch(nn.Module):
         loss_dict["dino_global_crops_loss"] = dino_global_crops_loss
         loss_accumulator += self.dino_loss_weight * dino_global_scale * dino_global_crops_loss
 
-        # Koleo: regularize pre-head CLS tokens of student(global crops)
-        koleo_loss = sum(self.koleo_loss(x) for x in student_global["cls_pre_head"]) / n_global_crops
-        loss_dict["koleo_loss"] = koleo_loss
-        loss_accumulator += self.dino_koleo_loss_weight * koleo_scale * koleo_loss
+        # SIGReg replaces KoLeo by default, following the official FINO recipe.
+        if self.sigreg_enabled:
+            sigreg_features = student_global["bottleneck_pre_norm"]
+            sigreg_loss = sum(self.sigreg_loss(x, seed_step=iteration) for x in sigreg_features) / n_global_crops
+            sigreg_loss_weight = self.get_sigreg_loss_weight(iteration)
+            loss_dict["sigreg_loss"] = sigreg_loss
+            loss_dict["sigreg_loss_weight"] = sigreg_loss_weight
+            loss_accumulator += sigreg_loss_weight * koleo_scale * sigreg_loss
+
+            if self.sigreg_koleo_too:
+                koleo_loss = sum(self.koleo_loss(x) for x in student_global["cls_pre_head"]) / n_global_crops
+                loss_dict["koleo_loss"] = koleo_loss
+                loss_accumulator += self.dino_koleo_loss_weight * koleo_scale * koleo_loss
+        else:
+            koleo_loss = sum(self.koleo_loss(x) for x in student_global["cls_pre_head"]) / n_global_crops
+            loss_dict["koleo_loss"] = koleo_loss
+            loss_accumulator += self.dino_koleo_loss_weight * koleo_scale * koleo_loss
 
         # IBOT loss
         ibot_patch_loss = self.ibot_patch_loss.forward_masked(
@@ -868,6 +1086,22 @@ class SSLMetaArch(nn.Module):
                     loss_dict["stats_only/unmasked_gram_loss"] = gram_loss_unmasked
 
         return loss_accumulator, loss_dict
+
+    def get_sigreg_loss_weight(self, iteration: int) -> float:
+        if not self.sigreg_weight_schedule_enabled:
+            return float(self.sigreg_loss_weight)
+
+        start = self.sigreg_weight_schedule_start
+        end = self.sigreg_weight_schedule_end
+        final = self.sigreg_weight_schedule_final
+        if iteration < start:
+            return float(self.sigreg_loss_weight)
+        if self.sigreg_weight_schedule_type == "step" or iteration >= end or end == start:
+            return float(final)
+
+        progress = (iteration - start) / (end - start)
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return float(final + (self.sigreg_loss_weight - final) * cosine)
 
     @torch.no_grad()
     def gram_load_ema_teacher(self):
@@ -970,7 +1204,10 @@ class SSLMetaArch(nn.Module):
         all_params_groups = []
         for name, m in self.student.items():
             logger.info(f"Getting paramer groups for {name}")
-            all_params_groups += self.get_maybe_fused_params_for_submodel(m)
+            params_groups = list(self.get_maybe_fused_params_for_submodel(m))
+            for group in params_groups:
+                group["is_backbone"] = name == "backbone"
+            all_params_groups += params_groups
         return all_params_groups
 
     def prepare_for_distributed_training(self) -> None:

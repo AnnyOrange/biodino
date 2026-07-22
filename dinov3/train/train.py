@@ -168,6 +168,12 @@ def _build_raw_loss_static_fields(cfg, accum_steps, real_global_batch_size, effe
         "accum_steps": int(accum_steps),
         "real_global_batch_size": int(real_global_batch_size),
         "effective_global_batch_size": int(effective_global_batch_size),
+        "freeze_backbone_updates": int(getattr(cfg.optim, "freeze_backbone_updates", 0)),
+        "trainable_last_blocks": int(getattr(cfg.optim, "trainable_last_blocks", -1)),
+        "trainable_extra_stem": bool(getattr(cfg.optim, "trainable_extra_stem", False)),
+        "channel_subset_enabled": bool(getattr(cfg.channel_subset, "enabled", False)),
+        "channel_subset_min": int(getattr(cfg.channel_subset, "min_channels", 1)),
+        "channel_subset_max": int(getattr(cfg.channel_subset, "max_channels", 3)),
         "official_epoch_length": int(cfg.train.OFFICIAL_EPOCH_LENGTH),
         "patch_tokens_per_image_estimate": patch_tokens_per_image,
     }
@@ -184,6 +190,7 @@ def _append_raw_loss_metrics(
     wd,
     mom,
     last_layer_lr,
+    backbone_lr,
     total_loss,
     metrics_dict,
 ):
@@ -214,6 +221,7 @@ def _append_raw_loss_metrics(
             "wd": _to_jsonable_scalar(wd),
             "mom": _to_jsonable_scalar(mom),
             "last_layer_lr": _to_jsonable_scalar(last_layer_lr),
+            "backbone_lr": _to_jsonable_scalar(backbone_lr),
             "total_loss": _to_jsonable_scalar(total_loss),
         }
     )
@@ -402,13 +410,15 @@ def build_schedulers_v2(cfg):
     return lr, weight_decay, momentum, teacher_temp, last_layer_lr
 
 
-def apply_optim_scheduler(optimizer, lr, wd, last_layer_lr):
+def apply_optim_scheduler(optimizer, lr, wd, last_layer_lr, freeze_backbone=False):
     for param_group in optimizer.param_groups:
         is_last_layer = param_group["is_last_layer"]
         lr_multiplier = param_group["lr_multiplier"]
         wd_multiplier = param_group["wd_multiplier"]
         param_group["weight_decay"] = wd * wd_multiplier
-        if is_last_layer:
+        if freeze_backbone and param_group.get("is_backbone", False):
+            param_group["lr"] = 0.0
+        elif is_last_layer:
             param_group["lr"] = last_layer_lr * lr_multiplier
         else:
             param_group["lr"] = lr * lr_multiplier
@@ -606,6 +616,7 @@ def do_train(cfg, model, resume=False):
     OFFICIAL_EPOCH_LENGTH = cfg.train.OFFICIAL_EPOCH_LENGTH
     max_iter = cfg.optim.epochs * OFFICIAL_EPOCH_LENGTH
     accum_steps = max(1, int(getattr(cfg.optim, "gradient_accumulation_steps", 1)))
+    freeze_backbone_updates = max(0, int(getattr(cfg.optim, "freeze_backbone_updates", 0)))
 
     if cfg.multidistillation.enabled:
         real_global_batch_size = cfg.multidistillation.global_batch_size
@@ -620,6 +631,11 @@ def do_train(cfg, model, resume=False):
         real_global_batch_size,
         effective_global_batch_size,
     )
+    if freeze_backbone_updates:
+        logger.info(
+            "FINO-style heads warmup: backbone LR is zero for the first %d optimizer updates",
+            freeze_backbone_updates,
+        )
 
     # Build data loader
     data_loader = build_multi_resolution_data_loader_from_cfg(
@@ -697,7 +713,17 @@ def do_train(cfg, model, resume=False):
             mom = momentum_schedule[it]
             teacher_temp = teacher_temp_schedule[it]
             last_layer_lr = last_layer_lr_schedule[it]
-            apply_optim_scheduler(optimizer, lr, wd, last_layer_lr)
+            backbone_is_frozen = it < freeze_backbone_updates
+            if it == freeze_backbone_updates and freeze_backbone_updates > 0:
+                logger.info("FINO-style heads warmup complete; unfreezing backbone at optimizer update %d", it)
+            apply_optim_scheduler(
+                optimizer,
+                lr,
+                wd,
+                last_layer_lr,
+                freeze_backbone=backbone_is_frozen,
+            )
+            backbone_lr = 0.0 if backbone_is_frozen else lr
 
             accum_loss_for_log = None
             accum_metrics = {}
@@ -788,6 +814,7 @@ def do_train(cfg, model, resume=False):
         metric_logger.update(wd=wd)
         metric_logger.update(mom=mom)
         metric_logger.update(last_layer_lr=last_layer_lr)
+        metric_logger.update(backbone_lr=backbone_lr)
         metric_logger.update(real_global_batch_size=real_global_batch_size)
         metric_logger.update(effective_global_batch_size=effective_global_batch_size)
         metric_logger.update(total_loss=total_loss, **metrics_dict)
@@ -801,6 +828,7 @@ def do_train(cfg, model, resume=False):
             wd=wd,
             mom=mom,
             last_layer_lr=last_layer_lr,
+            backbone_lr=backbone_lr,
             total_loss=total_loss,
             metrics_dict=metrics_dict,
         )

@@ -377,8 +377,8 @@ def load_checkpoint(
       1) a DCP checkpoint directory, or
       2) a consolidated file checkpoint: ``ckpt_dir/checkpoint.pth``
 
-    For consolidated ``.pth`` resume, restores iteration and model weights.
-    Optimizer state in the file is ignored for now (fresh optimizer on resume).
+    For consolidated ``.pth`` resume, restores the iteration, model, and
+    optimizer state saved by :func:`save_checkpoint`.
     """
     ckpt_dir = Path(ckpt_dir)
     pth_file = ckpt_dir / "checkpoint.pth"
@@ -424,10 +424,13 @@ def load_checkpoint(
             )
 
         if optimizer is not None and "optimizer" in raw:
-            logger.warning(
-                "Consolidated .pth contains optimizer state, but optimizer restore is skipped "
-                "in resume mode; training continues with the current optimizer."
+            dcpsd.set_optimizer_state_dict(
+                model,
+                optimizer,
+                raw["optimizer"],
+                options=dcpsd.StateDictOptions(full_state_dict=True),
             )
+            logger.info("Restored optimizer state from consolidated checkpoint")
 
         logger.info("Loaded consolidated checkpoint: %s", pth_file)
         return iteration

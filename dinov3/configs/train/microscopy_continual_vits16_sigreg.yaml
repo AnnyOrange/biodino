@@ -1,0 +1,73 @@
+# ViT-S+/16 microscopy continuation with FINO's metadata-free SIGReg objective.
+
+train:
+  dataset_path: "packwds_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar::pct=1,99"
+  batch_size_per_gpu: 64
+  num_workers: 2
+  OFFICIAL_EPOCH_LENGTH: 1025
+  output_dir: ./outputs/01_training_runs/splus_sigreg
+  compile: false
+  wds_shuffle_buffer: 50
+  prefetch_factor: 1
+  pin_memory: false
+
+student:
+  arch: vit_small
+  patch_size: 16
+  ffn_layer: swiglu
+  ffn_ratio: 6.0
+  drop_path_rate: 0.15
+  norm_layer: layernormbf16
+  in_chans: 3
+  enable_channelvit: false
+  n_storage_tokens: 4
+  mask_k_bias: true
+  pos_embed_rope_rescale_coords: 2
+  pos_embed_rope_dtype: fp32
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth"
+
+teacher:
+  in_chans: 3
+  enable_channelvit: false
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 5
+
+sigreg:
+  enabled: true
+  mode: bottleneck
+  loss_weight: 0.05
+  num_slices: 1024
+  range_max: 5.0
+  n_knots: 17
+  koleo_too: false
+
+optim:
+  epochs: 30
+  optimizer: adamw
+  lr: 1.5e-4
+  min_lr: 1.0e-6
+  warmup_epochs: 2
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 2
+  lr_reference_effective_batch_size: 1024
+  expected_effective_batch_size: 1024
+  batch_lr_mismatch_policy: warn
+
+crops:
+  augmentation_policy: bio_safe
+  global_crops_size: 256
+  local_crops_size: 112
+  rgb_mean: [0.514666, 0.488834, 0.498267]
+  rgb_std: [0.338707, 0.339202, 0.336091]
+
+evaluation:
+  eval_period_iterations: 0
+
+checkpointing:
+  period: 1025
+  max_to_keep: 50

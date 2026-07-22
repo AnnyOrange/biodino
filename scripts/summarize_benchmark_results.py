@@ -24,6 +24,7 @@ TASK_DIRS = {
 
 RESULT_FILES = {"last_result.json", "results.json", "results_bio_detection.json"}
 UNSUPPORTED_RESULT_DATASETS = {"chammi-cp-task4", "chammi-hpa-task3"}
+BBBC013_SPLIT_PROTOCOL = "compound-log1p-leave-one-replicate-row-out"
 PRUNE_DIRS = {
     ".git",
     ".heavy_slots",
@@ -62,6 +63,14 @@ SUMMARY_COLUMNS = [
     "r2",
     "spearman",
     "mae",
+    "wortmannin_r2",
+    "wortmannin_spearman",
+    "wortmannin_mae",
+    "ly294002_r2",
+    "ly294002_spearman",
+    "ly294002_mae",
+    "target_transform",
+    "fold_protocol",
     "mrr",
     "recall_at_1",
     "recall_at_5",
@@ -295,6 +304,8 @@ def row_from_result(path: Path, eval_root: Path) -> Optional[Dict[str, Any]]:
     # closed-set supervised-probe results, so keep them out of aggregates.
     if task == "classification" and dataset in UNSUPPORTED_RESULT_DATASETS:
         return None
+    if task == "regression" and dataset == "bbbc013" and data.get("split") != BBBC013_SPLIT_PROTOCOL:
+        return None
     checkpoint_path = resolve_relocated_output_path(str(data.get("checkpoint", "") or ""))
     train_config = resolve_relocated_output_path(str(data.get("train_config", "") or ""))
     train_run = train_run_from_data(data)
@@ -330,6 +341,9 @@ def row_from_result(path: Path, eval_root: Path) -> Optional[Dict[str, Any]]:
         if key in row:
             row[key] = value
     for key in ("n_train", "n_test"):
+        if key in data:
+            row[key] = data[key]
+    for key in ("target_transform", "fold_protocol"):
         if key in data:
             row[key] = data[key]
     return row
