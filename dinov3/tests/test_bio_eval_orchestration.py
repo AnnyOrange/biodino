@@ -24,6 +24,7 @@ def make_args(tmp_path: Path, **overrides):
         checkpoints_dir=str(tmp_path / "ckpt"),
         tasks=["segmentation"],
         segmentation_datasets=["bbbc038", "tissuenet"],
+        segmentation_datasets_per_job=0,
         segmentation_multichannel=True,
         segmentation_channel_policy="native",
         segmentation_channel_tta_samples=8,
@@ -82,6 +83,29 @@ class BioEvalOrchestrationTests(unittest.TestCase):
         self.assertNotIn("--multichannel", rgb_job.cmd)
         self.assertEqual(mc_job.cmd[mc_job.cmd.index("--channel-policy") + 1], "native")
         self.assertIn("--multichannel", mc_job.cmd)
+
+    def test_segmentation_datasets_can_run_as_independent_gpu_jobs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            args = make_args(
+                tmp_path,
+                segmentation_datasets=["bbbc038", "conic", "monuseg"],
+                segmentation_multichannel=False,
+                segmentation_channel_policy="auto",
+                segmentation_datasets_per_job=1,
+            )
+            jobs = bio_benchmark.build_jobs(
+                args,
+                {1: tmp_path / "ckpt" / "1" / "checkpoint.pth"},
+                [1],
+                ["0", "1"],
+            )
+        self.assertEqual([job.dataset for job in jobs], ["bbbc038", "conic", "monuseg"])
+        self.assertEqual([job.gpu for job in jobs], ["0", "1", "0"])
+        for job in jobs:
+            datasets_at = job.cmd.index("--datasets")
+            checkpoints_at = job.cmd.index("--checkpoints-dir")
+            self.assertEqual(job.cmd[datasets_at + 1 : checkpoints_at], [job.dataset])
 
     def test_run_job_bounds_blas_threads_and_reuses_success(self):
         with tempfile.TemporaryDirectory() as tmp:

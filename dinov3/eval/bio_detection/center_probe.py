@@ -162,6 +162,9 @@ def run_bio_detection_eval(
     os.makedirs(output_dir, exist_ok=True)
     if dataset.lower() != "livecell":
         raise ValueError("Currently supported bio detection datasets: livecell")
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     data_root = Path(benchmark_root) / "segmentation" / "LIVECell"
     backbone = load_backbone(repo_dir=".", arch=arch, weights=weights, checkpoint=checkpoint, train_config=train_config)
     feature_model = PatchFeatureModel(
@@ -172,13 +175,25 @@ def run_bio_detection_eval(
     train_ds = LiveCellCenterDataset(str(data_root), "train", image_size=image_size, max_samples=max_samples_per_split, seed=seed)
     val_ds = LiveCellCenterDataset(str(data_root), "val", image_size=image_size, max_samples=max_samples_per_split, seed=seed)
     test_ds = LiveCellCenterDataset(str(data_root), "test", image_size=image_size, max_samples=max_samples_per_split, seed=seed)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True, drop_last=False)
+    train_generator = torch.Generator().manual_seed(seed)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+        generator=train_generator,
+    )
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
     sample_images, sample_labels = next(iter(train_loader))
     sample_feats = feature_model(sample_images.cuda(non_blocking=True)).clone()
     if sample_feats.shape[1] != sample_labels.shape[1]:
         raise RuntimeError(f"Patch token count {sample_feats.shape[1]} does not match labels {sample_labels.shape[1]}; adjust --image-size.")
+    # Keep the probe initialization identical across checkpoint comparisons.
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     head = nn.Linear(int(sample_feats.shape[-1]), 1).cuda()
     pos_weight = torch.tensor([_estimate_pos_weight(train_loader)], device="cuda")
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
@@ -204,6 +219,7 @@ def run_bio_detection_eval(
         "image_size": image_size,
         "epochs": epochs,
         "batch_size": batch_size,
+        "seed": seed,
         "pos_weight": float(pos_weight.item()),
     }
     results.update({f"val_{k}": v for k, v in val_metrics.items()})
