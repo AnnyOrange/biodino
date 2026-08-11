@@ -19,10 +19,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-suffix", default="qi4gbs64acc4")
     parser.add_argument("--eval-gpus", default="0 1 5")
+    parser.add_argument("--jobs-per-gpu", type=int, default=2)
     args = parser.parse_args()
     eval_gpus = args.eval_gpus.split()
     if not eval_gpus:
         parser.error("--eval-gpus must contain at least one GPU index")
+    if args.jobs_per_gpu < 1:
+        parser.error("--jobs-per-gpu must be positive")
+    max_jobs = len(eval_gpus) * args.jobs_per_gpu
     roots = {
         label: Path(
             f"outputs/01_training_runs/{RUN_PREFIX}{label}_fixed15M_b1024_seed0_{args.run_suffix}"
@@ -34,10 +38,11 @@ def main() -> int:
         "PYTHON_BIN": "/home/bbnc/anaconda3/envs/dinov3/bin/python",
         "CHECKPOINT_ITERS": CHECKPOINTS,
         "GPUS": " ".join(eval_gpus),
-        "MAX_CONCURRENT_JOBS": str(len(eval_gpus)),
-        "MAX_CPU_JOBS": str(len(eval_gpus)),
-        "JOBS_PER_GPU": "1",
-        "FROZEN_DATASETS_PER_JOB": "3",
+        "MAX_CONCURRENT_JOBS": str(max_jobs),
+        "MAX_CPU_JOBS": str(max_jobs),
+        "JOBS_PER_GPU": str(args.jobs_per_gpu),
+        "FROZEN_DATASETS_PER_JOB": "1",
+        "CONCURRENT_TASK_GROUPS": "1",
         "FROZEN_BATCH_SIZE": "64",
         "NUM_WORKERS": "2",
         "FROZEN_CHANNEL_POLICY": "auto",
@@ -60,7 +65,8 @@ def main() -> int:
             print(f"[data-scaling-watcher] random{label} already complete", flush=True)
             continue
         print(
-            f"[data-scaling-watcher] evaluating random{label} on GPUs {args.eval_gpus}",
+            f"[data-scaling-watcher] evaluating random{label} on GPUs {args.eval_gpus} "
+            f"with {args.jobs_per_gpu} jobs/GPU",
             flush=True,
         )
         subprocess.run(
