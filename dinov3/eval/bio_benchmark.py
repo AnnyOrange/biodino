@@ -235,36 +235,47 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
                     seg_policy = "auto"
                 seg_run_name = f"{args.run_name}_mc" if use_multichannel else args.run_name
                 seg_run_name = f"{seg_run_name}{_channel_policy_tag(seg_policy, args.segmentation_channel_tta_samples)}"
-                gpu = next(gpu_iter)
-                cmd = [
-                    py, "-m", "dinov3.eval.bio_segmentation.scripts.run_linear_probe_pipeline",
-                    "--datasets", *seg_datasets,
-                    "--checkpoints-dir", str(Path(args.checkpoints_dir).resolve()),
-                    "--checkpoint-iters", str(ckpt_id),
-                    "--train-config", str(Path(args.train_config).resolve()),
-                    "--data-root-base", str(Path(args.benchmark_root).resolve() / "segmentation"),
-                    "--output-root", str(seg_out),
-                    "--cache-root", str(seg_cache),
-                    "--run-name", args.run_name,
-                    "--protocol", args.segmentation_protocol,
-                    "--layer-preset", args.layer_preset,
-                    "--feature-batch-size", str(args.seg_feature_batch_size),
-                    "--feature-num-workers", str(args.seg_feature_num_workers),
-                    "--probe-epochs", str(args.seg_probe_epochs if not args.smoke else 1),
-                    "--probe-batch-size", str(args.seg_probe_batch_size),
-                    "--probe-num-workers", str(args.seg_probe_num_workers),
-                    "--probe-eval-every", str(args.seg_probe_epochs if not args.smoke else 1),
-                    "--probe-seed", str(args.seed),
-                    "--channel-policy", seg_policy,
-                    "--channel-tta-samples", str(args.segmentation_channel_tta_samples),
-                    "--channel-policy-seed", str(args.segmentation_channel_policy_seed),
-                    "--gpu", gpu,
-                ]
-                if args.smoke:
-                    cmd.extend(["--fast-eval", "--semantic-only", "--skip-test-eval"])
-                if use_multichannel:
-                    cmd.append("--multichannel")
-                jobs.append(Job("segmentation", "+".join(seg_datasets), ckpt_id, gpu, cmd, seg_out / seg_run_name))
+                datasets_per_job = args.segmentation_datasets_per_job or len(seg_datasets)
+                for dataset_chunk in _chunks(seg_datasets, datasets_per_job):
+                    gpu = next(gpu_iter)
+                    cmd = [
+                        py, "-m", "dinov3.eval.bio_segmentation.scripts.run_linear_probe_pipeline",
+                        "--datasets", *dataset_chunk,
+                        "--checkpoints-dir", str(Path(args.checkpoints_dir).resolve()),
+                        "--checkpoint-iters", str(ckpt_id),
+                        "--train-config", str(Path(args.train_config).resolve()),
+                        "--data-root-base", str(Path(args.benchmark_root).resolve() / "segmentation"),
+                        "--output-root", str(seg_out),
+                        "--cache-root", str(seg_cache),
+                        "--run-name", args.run_name,
+                        "--protocol", args.segmentation_protocol,
+                        "--layer-preset", args.layer_preset,
+                        "--feature-batch-size", str(args.seg_feature_batch_size),
+                        "--feature-num-workers", str(args.seg_feature_num_workers),
+                        "--probe-epochs", str(args.seg_probe_epochs if not args.smoke else 1),
+                        "--probe-batch-size", str(args.seg_probe_batch_size),
+                        "--probe-num-workers", str(args.seg_probe_num_workers),
+                        "--probe-eval-every", str(args.seg_probe_epochs if not args.smoke else 1),
+                        "--probe-seed", str(args.seed),
+                        "--channel-policy", seg_policy,
+                        "--channel-tta-samples", str(args.segmentation_channel_tta_samples),
+                        "--channel-policy-seed", str(args.segmentation_channel_policy_seed),
+                        "--gpu", gpu,
+                    ]
+                    if args.smoke:
+                        cmd.extend(["--fast-eval", "--semantic-only", "--skip-test-eval"])
+                    if use_multichannel:
+                        cmd.append("--multichannel")
+                    jobs.append(
+                        Job(
+                            "segmentation",
+                            "+".join(dataset_chunk),
+                            ckpt_id,
+                            gpu,
+                            cmd,
+                            seg_out / seg_run_name,
+                        )
+                    )
 
         # Classification / regression / multilabel use the sklearn frozen-feature
         # probes (dinov3.eval.bio_frozen_eval). The entry auto-detects the task
@@ -390,6 +401,12 @@ def parse_args(argv=None):
     parser.add_argument("--retrieval-datasets", nargs="+", default=DEFAULT_RETRIEVAL_DATASETS)
     parser.add_argument("--detection-datasets", nargs="+", default=DEFAULT_DETECTION_DATASETS)
     parser.add_argument("--segmentation-datasets", nargs="+", default=DEFAULT_SEGMENTATION_DATASETS)
+    parser.add_argument(
+        "--segmentation-datasets-per-job",
+        type=int,
+        default=0,
+        help="Datasets per segmentation subprocess; 0 keeps the full selected set in one pipeline.",
+    )
     # frozen-probe (classification / regression / multilabel / retrieval) settings
     parser.add_argument(
         "--probe-backend",

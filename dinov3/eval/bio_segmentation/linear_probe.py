@@ -38,6 +38,7 @@ import argparse
 import json
 import logging
 import os
+import resource
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -59,6 +60,19 @@ from .metrics import (
 )
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('bio_seg.linear_probe')
+
+
+def _configure_worker_resources() -> None:
+    """Avoid exhausting file descriptors during long multi-worker evaluations."""
+    soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    target_limit = min(hard_limit, max(soft_limit, 65_536))
+    if target_limit > soft_limit:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target_limit, hard_limit))
+        logger.info("Raised open-file soft limit from %d to %d", soft_limit, target_limit)
+
+    # File-descriptor sharing can retain one descriptor per queued tensor batch.
+    torch.multiprocessing.set_sharing_strategy("file_system")
+    logger.info("PyTorch multiprocessing sharing strategy: file_system")
 
 
 # ============================================================================
@@ -825,6 +839,7 @@ DATASET_CONFIGS = {
 # ============================================================================
 
 def main():
+    _configure_worker_resources()
     parser = argparse.ArgumentParser(
         description='Bio-segmentation linear probe (online or cached mode)'
     )

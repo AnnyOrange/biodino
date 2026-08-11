@@ -28,6 +28,7 @@ Optional env vars:
   SEGMENTATION_PROTOCOL=best        best | manual. best uses the dataset-specific final protocol.
   SEGMENTATION_MULTICHANNEL=0       1 passes --multichannel to the segmentation pipeline
                                    (meaningful for dualroute + TissueNet true channels).
+  SEGMENTATION_DATASETS_PER_JOB=0   0 groups all selected datasets; 1 parallelizes per dataset.
   SEGMENTATION_CHANNEL_POLICY=auto  auto | native | first3 | compact3 | zerofill3 | mean3 | sample3_tta.
   SEGMENTATION_CHANNEL_TTA_SAMPLES=8
   SEGMENTATION_CHANNEL_POLICY_SEED=0
@@ -102,6 +103,7 @@ EVAL_BLAS_THREADS="${EVAL_BLAS_THREADS:-1}"
 TASKS="${TASKS:-segmentation classification regression detection retrieval ood}"
 SEGMENTATION_PROTOCOL="${SEGMENTATION_PROTOCOL:-best}"
 SEGMENTATION_MULTICHANNEL="${SEGMENTATION_MULTICHANNEL:-0}"
+SEGMENTATION_DATASETS_PER_JOB="${SEGMENTATION_DATASETS_PER_JOB:-0}"
 SEGMENTATION_CHANNEL_POLICY="${SEGMENTATION_CHANNEL_POLICY:-auto}"
 SEGMENTATION_CHANNEL_TTA_SAMPLES="${SEGMENTATION_CHANNEL_TTA_SAMPLES:-8}"
 SEGMENTATION_CHANNEL_POLICY_SEED="${SEGMENTATION_CHANNEL_POLICY_SEED:-0}"
@@ -208,6 +210,7 @@ if [[ "${#BIO_TASKS[@]}" -gt 0 ]]; then
   --frozen-datasets-per-job "$FROZEN_DATASETS_PER_JOB"
   --num-workers "$NUM_WORKERS"
   --segmentation-datasets $SEGMENTATION_DATASETS
+  --segmentation-datasets-per-job "$SEGMENTATION_DATASETS_PER_JOB"
   --classification-datasets $CLASSIFICATION_DATASETS
   --regression-datasets $REGRESSION_DATASETS
   --retrieval-datasets $RETRIEVAL_DATASETS
@@ -381,6 +384,7 @@ echo "[run_bio_benchmark_all] Benchmark root: $BENCHMARK_ROOT"
 echo "[run_bio_benchmark_all] Output: $OUTPUT_DIR"
 echo "[run_bio_benchmark_all] Segmentation protocol: $SEGMENTATION_PROTOCOL"
 echo "[run_bio_benchmark_all] Segmentation multichannel: $SEGMENTATION_MULTICHANNEL"
+echo "[run_bio_benchmark_all] Segmentation datasets per job: $SEGMENTATION_DATASETS_PER_JOB"
 echo "[run_bio_benchmark_all] Segmentation channel policy: $SEGMENTATION_CHANNEL_POLICY"
 echo "[run_bio_benchmark_all] Frozen channel policy: $FROZEN_CHANNEL_POLICY"
 echo "[run_bio_benchmark_all] Frozen batch size: $FROZEN_BATCH_SIZE (profile=$RESOLVED_HARDWARE_PROFILE)"
