@@ -9,6 +9,7 @@ fi
 MODEL="$1"
 REPO="${REPO:-/mnt/huawei_deepcad/dinov3}"
 RUN_ROOT="${RUN_ROOT:-$REPO/outputs/01_training_runs}"
+REPORT_ROOT="${REPORT_ROOT:-$REPO/outputs/00_reports/splus_bl_fixed_pass_data_scaling_20260810}"
 WEIGHTS_DIR="${WEIGHTS_DIR:-/mnt/huawei_deepcad/weights}"
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-$REPO/docs/scaling_law/bio_sweet_spot/scripts/12_train_rgb_bioaug_robust.sh}"
 RANDOM_DATA_ROOT="${RANDOM_DATA_ROOT:-/mnt/huawei_deepcad/deduplication/random}"
@@ -89,7 +90,7 @@ for label in "${requested_labels[@]}"; do
   case "$label" in 10|20|50|100) ;; *) echo "ERROR: invalid label $label" >&2; exit 2 ;; esac
 done
 
-manifest_root="$REPO/outputs/00_reports/splus_bl_fixed_pass_data_scaling_20260810"
+manifest_root="$REPORT_ROOT"
 mkdir -p "$manifest_root"
 manifest="$manifest_root/${MODEL}_training_manifest_${RUN_TAG}.csv"
 if [[ ! -f "$manifest" ]]; then
