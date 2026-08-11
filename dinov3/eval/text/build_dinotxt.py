@@ -3,6 +3,7 @@
 # This software may be used and distributed in accordance with
 # the terms of the DINOv3 License Agreement.
 
+import inspect
 import logging
 from pathlib import Path
 from typing import Any, Dict, List
@@ -24,6 +25,17 @@ from dinov3.eval.text.ac_comp_parallelize import ac_compile_parallelize_and_init
 from dinov3.eval.text.dinotxt_model import DINOTxt, DINOTxtConfig
 
 logger = logging.getLogger("dinov3")
+
+_DISTRIBUTE_TENSOR_HAS_SRC_DATA_RANK = (
+    "src_data_rank" in inspect.signature(torch.distributed.tensor.distribute_tensor).parameters
+)
+
+
+def _distribute_full_tensor(tensor: torch.Tensor, world_mesh: DeviceMesh):
+    kwargs = {"device_mesh": world_mesh}
+    if _DISTRIBUTE_TENSOR_HAS_SRC_DATA_RANK:
+        kwargs["src_data_rank"] = None
+    return torch.distributed.tensor.distribute_tensor(tensor, **kwargs)
 
 
 # This allows us to load OSS DINOv2 models from pretrained weights using DINOv3 ViT
@@ -56,9 +68,7 @@ def load_backbone_checkpoint(
         state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
         state_dict = {
             k: (
-                torch.distributed.tensor.distribute_tensor(
-                    v, world_mesh, src_data_rank=None
-                )
+                _distribute_full_tensor(v, world_mesh)
                 if not k.startswith("rope_embed.periods") and "qkv.bias_mask" not in k
                 else v
             )
