@@ -36,7 +36,9 @@ BATCH_SIZE = {
     "bioclip": 16,
     "jump_cp": 16,
     "cytoself": 32,
-    "cytoimagenet": 8,
+    # Keras/Torch retains allocator state across datasets; batch 1 is the
+    # reliable setting on 24 GiB 3090 cards.
+    "cytoimagenet": 1,
 }
 EXCLUSIVE_MODELS = {"cytoimagenet", "virchow2", "gigapath", "hoptimus0"}
 
@@ -214,7 +216,10 @@ def main() -> int:
     environment.update({
         "CUDA_VISIBLE_DEVICES": str(args.gpu),
         "PYTHONUNBUFFERED": "1",
-        "PYTHONPATH": "/mnt/huawei_deepcad/benchmark_model:/mnt/huawei_deepcad/dinov3",
+        "PYTHONPATH": (
+            "/mnt/huawei_deepcad/benchmark_model/_vendor:"
+            "/mnt/huawei_deepcad/benchmark_model:/mnt/huawei_deepcad/dinov3"
+        ),
         "DENSE_PROBE_METRIC_PYTHON": "/home/bbnc/anaconda3/envs/dinov3/bin/python",
         "KERAS_BACKEND": "torch",
     })
