@@ -441,6 +441,7 @@ def do_test(cfg, model, iteration, process_group, do_low_freq=False):
             iteration=iteration,
             model=teacher_backbone,
             overwrite=True,
+            sharded=True,
             process_group=checkpoint_pg,
         )
         if not distributed.is_subgroup_main_process():
@@ -848,6 +849,7 @@ def do_train(cfg, model, resume=False):
                 model=model,
                 optimizer=optimizer,
                 overwrite=True,
+                sharded=bool(getattr(cfg.checkpointing, "sharded", False)),
                 process_group=checkpoint_pg,
             )
             if distributed.is_subgroup_main_process():

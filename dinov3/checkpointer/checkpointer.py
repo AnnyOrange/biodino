@@ -24,6 +24,7 @@ Distributed checkpointer docs:
 - https://pytorch.org/docs/stable/distributed.checkpoint.html
 """
 
+import inspect
 import logging
 import shutil
 import subprocess
@@ -41,6 +42,19 @@ import torch.distributed.checkpoint.state_dict as dcpsd
 from torch.distributed.checkpoint.stateful import Stateful
 
 logger = logging.getLogger("dinov3")
+
+_DISTRIBUTE_TENSOR_HAS_SRC_DATA_RANK = (
+    "src_data_rank" in inspect.signature(torch.distributed.tensor.distribute_tensor).parameters
+)
+
+
+def _distribute_checkpoint_tensor(tensor: torch.Tensor, *, device_mesh, placements):
+    """Shard a full checkpoint tensor across PyTorch 2.6 and newer releases."""
+    kwargs = {"device_mesh": device_mesh, "placements": placements}
+    if _DISTRIBUTE_TENSOR_HAS_SRC_DATA_RANK:
+        # Every rank loads the same full checkpoint, so no source-rank broadcast is needed.
+        kwargs["src_data_rank"] = None
+    return torch.distributed.tensor.distribute_tensor(tensor, **kwargs)
 
 
 def _torch_load_trusted(path: str | Path, *, map_location="cpu"):
@@ -292,15 +306,16 @@ def save_checkpoint(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer | None = None,
     overwrite: bool = True,
+    sharded: bool = False,
     process_group: dist.ProcessGroup = None,
     **others: Stateful,
 ):
     """
-    Save a consolidated single-file checkpoint:
-        ckpt_dir/checkpoint.pth
+    Save either a consolidated ``checkpoint.pth`` or a DCP sharded checkpoint.
 
-    Avoids dcp.save() and its NCCL gather_object planner path; directory layout
-    (ckpt/<iter>/) stays the same for find_latest_checkpoint / train loop.
+    Consolidated files are convenient for small models and downstream tools.
+    DCP avoids materializing the full model and optimizer on every rank, which
+    is required for practical 7B training and supports resharded resume.
     """
     rank = torch.distributed.get_rank(group=process_group)
     ckpt_dir = Path(ckpt_dir)
@@ -334,6 +349,18 @@ def save_checkpoint(
     if optimizer is not None:
         to_save["optimizer"] = dcpsd.get_optimizer_state_dict(model, optimizer)
     to_save.update(others)
+
+    if sharded:
+        dcp.save(
+            to_save,
+            storage_writer=dcpfs.FileSystemWriter(ckpt_dir_tmp),
+            process_group=process_group,
+        )
+        if rank == 0:
+            ckpt_dir_tmp.rename(ckpt_dir)
+        torch.distributed.barrier(group=process_group)
+        logger.info("Saved DCP sharded checkpoint: %s", ckpt_dir)
+        return
 
     # All ranks participate: DTensor.full_tensor() is collective.
     to_save = _materialize_to_cpu(to_save)
@@ -400,11 +427,10 @@ def load_checkpoint(
                 continue
             target_tensor = model_state[key]
             if isinstance(target_tensor, DTensor):
-                converted_model[key] = torch.distributed.tensor.distribute_tensor(
+                converted_model[key] = _distribute_checkpoint_tensor(
                     tensor,
                     device_mesh=target_tensor.device_mesh,
                     placements=target_tensor.placements,
-                    src_data_rank=None,
                 )
             else:
                 converted_model[key] = tensor
@@ -603,11 +629,10 @@ def init_fsdp_model_from_checkpoint(
                 )
                 continue
             if isinstance(target_tensor, torch.distributed.tensor.DTensor):
-                converted_chkpt[key] = torch.distributed.tensor.distribute_tensor(
+                converted_chkpt[key] = _distribute_checkpoint_tensor(
                     tensor,
                     device_mesh=target_tensor.device_mesh,
                     placements=target_tensor.placements,
-                    src_data_rank=None,
                 )
             else:
                 converted_chkpt[key] = tensor

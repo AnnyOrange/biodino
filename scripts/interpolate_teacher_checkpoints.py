@@ -17,16 +17,31 @@ TEACHER_PREFIX = "teacher.backbone."
 
 def load_teacher(path: Path) -> OrderedDict[str, torch.Tensor]:
     checkpoint = torch.load(path, map_location="cpu", mmap=True, weights_only=False)
-    if not isinstance(checkpoint, dict) or "model" not in checkpoint:
-        raise ValueError(f"Expected a consolidated training checkpoint with a model state: {path}")
-    teacher = OrderedDict(
-        (key[len(TEACHER_PREFIX) :], value)
-        for key, value in checkpoint["model"].items()
-        if key.startswith(TEACHER_PREFIX)
-    )
-    if not teacher:
-        raise ValueError(f"No {TEACHER_PREFIX} tensors found in {path}")
-    return teacher
+    if not isinstance(checkpoint, dict):
+        raise ValueError(f"Expected a checkpoint dictionary: {path}")
+    model = checkpoint.get("model")
+    if isinstance(model, dict):
+        teacher = OrderedDict(
+            (key[len(TEACHER_PREFIX) :], value)
+            for key, value in model.items()
+            if key.startswith(TEACHER_PREFIX)
+        )
+        if teacher:
+            return teacher
+        # Exported DCP eval backbones already use bare backbone keys.
+        if model and all(isinstance(value, torch.Tensor) for value in model.values()):
+            return OrderedDict(model)
+    teacher_state = checkpoint.get("teacher")
+    if isinstance(teacher_state, dict):
+        backbone_prefix = "backbone."
+        teacher = OrderedDict(
+            (key[len(backbone_prefix) :], value)
+            for key, value in teacher_state.items()
+            if key.startswith(backbone_prefix)
+        )
+        if teacher:
+            return teacher
+    raise ValueError(f"No EMA teacher backbone tensors found in {path}")
 
 
 def main() -> int:
@@ -62,7 +77,14 @@ def main() -> int:
         "alphas": args.alphas,
         "definition": "theta=(1-alpha)*official + alpha*bio_ema_teacher",
     }
-    (args.output_root / "interpolation_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    manifest_path = args.output_root / "interpolation_manifest.json"
+    if manifest_path.is_file():
+        previous = json.loads(manifest_path.read_text())
+        for key in ("official_checkpoint", "bio_checkpoint", "bio_config"):
+            if previous.get(key) != manifest[key]:
+                raise ValueError(f"Cannot merge interpolation manifests with different {key}")
+        manifest["alphas"] = sorted(set(previous.get("alphas", [])) | set(args.alphas))
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
     for alpha in args.alphas:
         if not 0.0 <= alpha <= 1.0:
