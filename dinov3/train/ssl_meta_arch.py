@@ -2770,10 +2770,27 @@ class SSLMetaArch(nn.Module):
             inference_only_models_process_groups=inference_only_models_process_groups,
         )
 
+    def _apply_ddp_activation_checkpointing(self) -> None:
+        """Checkpoint ViT blocks under DDP. FSDP already does this in ac_compile_parallelize."""
+        if not bool(getattr(self.cfg.train, "checkpointing", False)):
+            return
+        backbone = self.student.backbone if hasattr(self.student, "backbone") else self.student.get("backbone")
+        if backbone is None or not hasattr(backbone, "blocks"):
+            return
+        from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
+
+        for i, block in enumerate(backbone.blocks):
+            backbone.blocks[i] = checkpoint_wrapper(block, preserve_rng_state=True)
+        logger.info(
+            "DISTRIBUTED DDP -- activation checkpointing on %d student backbone blocks",
+            len(backbone.blocks),
+        )
+
     def finish_distributed_training_setup(self) -> None:
         """Wrap trainable submodules after plain-checkpoint initialization."""
         if self.distributed_mode != "ddp" or self._ddp_wrapped:
             return
+        self._apply_ddp_activation_checkpointing()
         device_id = torch.cuda.current_device()
         for name, module in list(self.student.items()):
             self.student[name] = DistributedDataParallel(
