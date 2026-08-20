@@ -4,9 +4,11 @@
 # the terms of the DINOv3 License Agreement.
 
 import logging
+import random
 from enum import Enum
-from typing import Any, Callable, List, Optional, TypeVar, Union
+from typing import Any, Callable, Iterator, List, Optional, TypeVar, Union
 
+import numpy as np
 import torch
 from torch.utils.data import Sampler
 
@@ -15,6 +17,76 @@ from .samplers import EpochSampler, InfiniteSampler, ShardedInfiniteSampler
 from .wds_pipeline import is_webdataset
 
 logger = logging.getLogger("dinov3")
+
+
+class DeterministicDataStream:
+    """Isolate a single-process data stream from model-side RNG consumption.
+
+    Controlled mechanism comparisons often add auxiliary modules that consume
+    random numbers during forward. With WebDataset workers disabled, this
+    wrapper gives every fetched batch its own CPU/Python/NumPy RNG state and
+    restores the model RNG state immediately afterwards. Consequently the
+    augmentation and masking stream remains identical across compared arms.
+    """
+
+    def __init__(self, data_loader, *, seed: int, start_fetch_index: int = 0) -> None:
+        self.data_loader = data_loader
+        self.seed = int(seed)
+        self.start_fetch_index = int(start_fetch_index)
+
+    @staticmethod
+    def _seed_for_fetch(base_seed: int, fetch_index: int) -> int:
+        # Keep the seed in torch's supported signed 64-bit range without
+        # consulting global RNG state.
+        return (base_seed + 1_000_003 * fetch_index) % (2**63 - 1)
+
+    @staticmethod
+    def _fetch_with_seed(iterator: Iterator, seed: int):
+        python_state = random.getstate()
+        numpy_state = np.random.get_state()
+        torch_state = torch.get_rng_state()
+        try:
+            random.seed(seed)
+            np.random.seed(seed % (2**32))
+            # Do not call torch.manual_seed here: model-side CUDA randomness
+            # belongs to the mechanism, while data augmentation is CPU-side.
+            torch.random.default_generator.manual_seed(seed)
+            return next(iterator)
+        finally:
+            random.setstate(python_state)
+            np.random.set_state(numpy_state)
+            torch.set_rng_state(torch_state)
+
+    @staticmethod
+    def _make_iterator_with_seed(data_loader, seed: int) -> Iterator:
+        python_state = random.getstate()
+        numpy_state = np.random.get_state()
+        torch_state = torch.get_rng_state()
+        try:
+            random.seed(seed)
+            np.random.seed(seed % (2**32))
+            torch.random.default_generator.manual_seed(seed)
+            return iter(data_loader)
+        finally:
+            random.setstate(python_state)
+            np.random.set_state(numpy_state)
+            torch.set_rng_state(torch_state)
+
+    def __iter__(self):
+        iterator = None
+        fetch_index = self.start_fetch_index
+        while True:
+            seed = self._seed_for_fetch(self.seed, fetch_index)
+            try:
+                if iterator is None:
+                    # DataLoader initialization can draw a CPU seed even when
+                    # num_workers=0, so construct it in the same data scope.
+                    iterator = self._make_iterator_with_seed(self.data_loader, seed)
+                batch = self._fetch_with_seed(iterator, seed)
+            except StopIteration:
+                return
+            fetch_index += 1
+            yield batch
 
 
 class SamplerType(Enum):
@@ -87,6 +159,8 @@ def make_dataset(
     transforms: Optional[Callable] = None,
     target_channels: Optional[int] = None,
     wds_shuffle_buffer: int = 1000,
+    wds_resample_seed: int = 0,
+    wds_deterministic_resampling: bool = False,
 ):
     """
     Creates a dataset with the specified parameters.
@@ -138,6 +212,8 @@ def make_dataset(
             transform,
             target_channels=target_channels,
             shuffle_buffer=wds_shuffle_buffer,
+            resample_seed=wds_resample_seed,
+            deterministic_resampling=wds_deterministic_resampling,
         )
 
     if dataset_str.startswith("mixwds:"):
@@ -146,6 +222,8 @@ def make_dataset(
             transform,
             target_channels=target_channels,
             shuffle_buffer=wds_shuffle_buffer,
+            resample_seed=wds_resample_seed,
+            deterministic_resampling=wds_deterministic_resampling,
         )
 
     if dataset_str.startswith("packwds_chvit_robust:"):
@@ -154,6 +232,8 @@ def make_dataset(
             transform,
             target_channels=target_channels,
             shuffle_buffer=wds_shuffle_buffer,
+            resample_seed=wds_resample_seed,
+            deterministic_resampling=wds_deterministic_resampling,
         )
 
     if dataset_str.startswith("packwds_robust:"):
@@ -162,6 +242,8 @@ def make_dataset(
             transform,
             target_channels=target_channels,
             shuffle_buffer=wds_shuffle_buffer,
+            resample_seed=wds_resample_seed,
+            deterministic_resampling=wds_deterministic_resampling,
         )
 
     if dataset_str.startswith("packwds_chvit:"):
@@ -170,6 +252,8 @@ def make_dataset(
             transform,
             target_channels=target_channels,
             shuffle_buffer=wds_shuffle_buffer,
+            resample_seed=wds_resample_seed,
+            deterministic_resampling=wds_deterministic_resampling,
         )
 
     if dataset_str.startswith("packwds:"):
@@ -178,6 +262,8 @@ def make_dataset(
             transform,
             target_channels=target_channels,
             shuffle_buffer=wds_shuffle_buffer,
+            resample_seed=wds_resample_seed,
+            deterministic_resampling=wds_deterministic_resampling,
         )
 
     # DINOv3 native dataset path
@@ -241,6 +327,8 @@ def _make_weighted_packed_webdataset(
     transform: Optional[Callable] = None,
     target_channels: Optional[int] = None,
     shuffle_buffer: int = 1000,
+    resample_seed: int = 0,
+    deterministic_resampling: bool = False,
 ):
     """Create a weighted random mix of multiple ``packwds:`` sources."""
     from .wds_pipeline import WeightedIterableDataset
@@ -252,11 +340,15 @@ def _make_weighted_packed_webdataset(
             transform,
             target_channels=target_channels,
             shuffle_buffer=shuffle_buffer,
+            # Separate source streams deterministically while preserving the
+            # same weighted-mixture sequence across compared runs.
+            resample_seed=resample_seed + source_idx,
+            deterministic_resampling=deterministic_resampling,
         )
-        for spec in specs
+        for source_idx, spec in enumerate(specs)
     ]
     logger.info("creating weighted packwds mix: weights=%s specs=%s", weights, specs)
-    return WeightedIterableDataset(datasets, weights, names=specs)
+    return WeightedIterableDataset(datasets, weights, seed=resample_seed, names=specs)
 
 
 def _make_weighted_packed_robust_webdataset(
@@ -264,6 +356,8 @@ def _make_weighted_packed_robust_webdataset(
     transform: Optional[Callable] = None,
     target_channels: Optional[int] = None,
     shuffle_buffer: int = 1000,
+    resample_seed: int = 0,
+    deterministic_resampling: bool = False,
 ):
     """Create a weighted random mix of multiple ``packwds_robust:`` sources."""
     from .wds_pipeline import WeightedIterableDataset
@@ -279,8 +373,10 @@ def _make_weighted_packed_robust_webdataset(
             transform,
             target_channels=target_channels,
             shuffle_buffer=shuffle_buffer,
+            resample_seed=resample_seed + source_idx,
+            deterministic_resampling=deterministic_resampling,
         )
-        for spec in specs
+        for source_idx, spec in enumerate(specs)
     ]
     logger.info(
         "creating weighted packwds_robust mix: weights=%s pct=[%s,%s] specs=%s",
@@ -289,7 +385,7 @@ def _make_weighted_packed_robust_webdataset(
         p_high,
         specs,
     )
-    return WeightedIterableDataset(datasets, weights, names=specs)
+    return WeightedIterableDataset(datasets, weights, seed=resample_seed, names=specs)
 
 
 def _make_packed_webdataset(
@@ -297,6 +393,8 @@ def _make_packed_webdataset(
     transform: Optional[Callable] = None,
     target_channels: Optional[int] = None,
     shuffle_buffer: int = 1000,
+    resample_seed: int = 0,
+    deterministic_resampling: bool = False,
 ):
     """Create a pipeline for packed multi-channel shards (``packwds:`` prefix).
 
@@ -344,6 +442,8 @@ def _make_packed_webdataset(
         shard_urls=shard_urls,
         shuffle_buffer=shuffle_buffer,
         target_channels=effective_channels,
+        resample_seed=resample_seed,
+        deterministic_resampling=deterministic_resampling,
     )
     pipeline = build_packed_wds_pipeline(config, transform=transform)
     logger.info(
@@ -357,6 +457,8 @@ def _make_packed_channelvit_webdataset(
     transform: Optional[Callable] = None,
     target_channels: Optional[int] = None,
     shuffle_buffer: int = 1000,
+    resample_seed: int = 0,
+    deterministic_resampling: bool = False,
 ):
     """Create a true ChannelViT pipeline for packed multi-channel shards.
 
@@ -408,6 +510,8 @@ def _make_packed_channelvit_webdataset(
         shard_urls=shard_urls,
         shuffle_buffer=shuffle_buffer,
         target_channels=max_channels,
+        resample_seed=resample_seed,
+        deterministic_resampling=deterministic_resampling,
     )
     pipeline = build_packed_channelvit_wds_pipeline(
         config,
@@ -460,6 +564,8 @@ def _make_packed_channelvit_robust_webdataset(
     transform: Optional[Callable] = None,
     target_channels: Optional[int] = None,
     shuffle_buffer: int = 1000,
+    resample_seed: int = 0,
+    deterministic_resampling: bool = False,
 ):
     """Create a true ChannelViT/DualRoute pipeline with robust normalization.
 
@@ -504,6 +610,8 @@ def _make_packed_channelvit_robust_webdataset(
         shard_urls=shard_urls,
         shuffle_buffer=shuffle_buffer,
         target_channels=max_channels,
+        resample_seed=resample_seed,
+        deterministic_resampling=deterministic_resampling,
     )
     pipeline = build_packed_channelvit_robust_wds_pipeline(
         config,
@@ -529,6 +637,8 @@ def _make_packed_robust_webdataset(
     transform: Optional[Callable] = None,
     target_channels: Optional[int] = None,
     shuffle_buffer: int = 1000,
+    resample_seed: int = 0,
+    deterministic_resampling: bool = False,
 ):
     """Create a pipeline for packed shards with robust per-channel normalization
     (``packwds_robust:`` prefix).
@@ -574,6 +684,8 @@ def _make_packed_robust_webdataset(
         shard_urls=shard_urls,
         shuffle_buffer=shuffle_buffer,
         target_channels=effective_channels,
+        resample_seed=resample_seed,
+        deterministic_resampling=deterministic_resampling,
     )
     pipeline = build_packed_robust_wds_pipeline(
         config, transform=transform, p_low=p_low, p_high=p_high
@@ -600,8 +712,33 @@ def _expand_shard_patterns(patterns: List[str]) -> List[str]:
       3. Results are sorted and deduplicated.
     """
     import glob as _glob
+    import re
 
-    from braceexpand import braceexpand
+    try:
+        from braceexpand import braceexpand
+    except ImportError:
+        # Keep single-node/legacy environments usable without an optional
+        # dependency; this covers the numeric shard ranges used by our WDS paths.
+        def braceexpand(pattern: str):
+            match = re.search(r"\{([^{}]+)\}", pattern)
+            if match is None:
+                return [pattern]
+            body = match.group(1)
+            range_match = re.fullmatch(r"(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?", body)
+            if range_match:
+                start_raw, stop_raw, step_raw = range_match.groups()
+                start, stop = int(start_raw), int(stop_raw)
+                step = int(step_raw) if step_raw is not None else (1 if stop >= start else -1)
+                if step == 0 or (stop - start) * step < 0:
+                    raise ValueError(f"Invalid brace range {{{body}}}")
+                width = max(len(start_raw.lstrip("-")), len(stop_raw.lstrip("-")))
+                values = [f"{value:0{width}d}" for value in range(start, stop + (1 if step > 0 else -1), step)]
+            else:
+                values = body.split(",")
+            expanded = []
+            for value in values:
+                expanded.extend(braceexpand(pattern[: match.start()] + value + pattern[match.end() :]))
+            return expanded
 
     resolved: List[str] = []
     for pattern in patterns:

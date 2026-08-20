@@ -39,6 +39,8 @@ class WdsConfig:
     batch_size: Optional[int] = None
     num_workers: int = 4
     target_channels: Optional[int] = None
+    resample_seed: int = 0
+    deterministic_resampling: bool = False
 
 
 class WeightedIterableDataset(torch.utils.data.IterableDataset):
@@ -87,18 +89,31 @@ class WeightedIterableDataset(torch.utils.data.IterableDataset):
                 yield next(iterators[idx])
 
 
-def _make_shard_source(wds, shard_urls):
+def _make_shard_source(wds, config: WdsConfig):
     """Create an infinite shard source for training.
 
     We prefer ResampledShards so the stream never exhausts after one pass
     through the finite shard list.
     """
     if hasattr(wds, "ResampledShards"):
-        return wds.ResampledShards(shard_urls)
+        return wds.ResampledShards(
+            config.shard_urls,
+            seed=config.resample_seed,
+            deterministic=config.deterministic_resampling,
+        )
     raise RuntimeError(
         "webdataset.ResampledShards is required for infinite streaming, "
         "but it was not found in the installed webdataset package."
     )
+
+
+def _make_sample_shuffle(wds, config: WdsConfig):
+    """Build the sample shuffle stage, with an explicit stream seed for audits."""
+    if config.deterministic_resampling:
+        # ResampledShards alone is insufficient: WebDataset's shuffle buffer
+        # otherwise seeds from wall-clock time.
+        return wds.shuffle(config.shuffle_buffer, seed=config.resample_seed + 1_000_003)
+    return wds.shuffle(config.shuffle_buffer)
 
 
 def build_packed_wds_pipeline(
@@ -142,9 +157,9 @@ def build_packed_wds_pipeline(
         }
 
     stages = [
-        _make_shard_source(wds, config.shard_urls),
+        _make_shard_source(wds, config),
         wds.tarfile_to_samples(),
-        wds.shuffle(config.shuffle_buffer),
+        _make_sample_shuffle(wds, config),
         wds.map(decode_sample),
         wds.select(lambda x: x is not None),
     ]
@@ -202,9 +217,9 @@ def build_packed_robust_wds_pipeline(
         }
 
     stages = [
-        _make_shard_source(wds, config.shard_urls),
+        _make_shard_source(wds, config),
         wds.tarfile_to_samples(),
-        wds.shuffle(config.shuffle_buffer),
+        _make_sample_shuffle(wds, config),
         wds.map(decode_sample),
         wds.select(lambda x: x is not None),
     ]
@@ -268,9 +283,9 @@ def build_packed_channelvit_wds_pipeline(
         return decoded
 
     stages = [
-        _make_shard_source(wds, config.shard_urls),
+        _make_shard_source(wds, config),
         wds.tarfile_to_samples(),
-        wds.shuffle(config.shuffle_buffer),
+        _make_sample_shuffle(wds, config),
         wds.map(decode_sample),
         wds.select(lambda x: x is not None),
     ]
@@ -339,9 +354,9 @@ def build_packed_channelvit_robust_wds_pipeline(
         return decoded
 
     stages = [
-        _make_shard_source(wds, config.shard_urls),
+        _make_shard_source(wds, config),
         wds.tarfile_to_samples(),
-        wds.shuffle(config.shuffle_buffer),
+        _make_sample_shuffle(wds, config),
         wds.map(decode_sample),
         wds.select(lambda x: x is not None),
     ]

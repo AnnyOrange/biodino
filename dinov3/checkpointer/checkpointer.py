@@ -43,9 +43,13 @@ from torch.distributed.checkpoint.stateful import Stateful
 
 logger = logging.getLogger("dinov3")
 
-_DISTRIBUTE_TENSOR_HAS_SRC_DATA_RANK = (
-    "src_data_rank" in inspect.signature(torch.distributed.tensor.distribute_tensor).parameters
-)
+# PyTorch 2.2 exposes DTensor only through the private module; newer releases
+# also provide the public ``torch.distributed.tensor`` namespace.
+_DISTRIBUTE_TENSOR = getattr(getattr(torch.distributed, "tensor", None), "distribute_tensor", None)
+if _DISTRIBUTE_TENSOR is None:
+    from torch.distributed._tensor import distribute_tensor as _DISTRIBUTE_TENSOR
+
+_DISTRIBUTE_TENSOR_HAS_SRC_DATA_RANK = "src_data_rank" in inspect.signature(_DISTRIBUTE_TENSOR).parameters
 
 
 def _distribute_checkpoint_tensor(tensor: torch.Tensor, *, device_mesh, placements):
@@ -54,7 +58,7 @@ def _distribute_checkpoint_tensor(tensor: torch.Tensor, *, device_mesh, placemen
     if _DISTRIBUTE_TENSOR_HAS_SRC_DATA_RANK:
         # Every rank loads the same full checkpoint, so no source-rank broadcast is needed.
         kwargs["src_data_rank"] = None
-    return torch.distributed.tensor.distribute_tensor(tensor, **kwargs)
+    return _DISTRIBUTE_TENSOR(tensor, **kwargs)
 
 
 def _torch_load_trusted(path: str | Path, *, map_location="cpu"):
@@ -585,11 +589,38 @@ def init_fsdp_model_from_checkpoint(
     skip_load_keys: List[str] | None = None,
     keys_not_sharded: List[str] | None = None,
     process_group: dist.ProcessGroup = None,
+    checkpoint_state_prefix: str | None = None,
 ):
     if not Path(checkpoint_path).is_dir():  # PyTorch standard checkpoint
         logger.info(f"Loading pretrained weights from {checkpoint_path}")
         raw = _torch_load_trusted(checkpoint_path, map_location="cpu")
-        if isinstance(raw, dict) and "teacher" in raw:
+        if checkpoint_state_prefix is not None:
+            # Training checkpoints store the complete meta-architecture under
+            # ``model`` (for example ``teacher.backbone.*``).  A frozen
+            # auxiliary backbone needs one explicitly selected state instead
+            # of treating the checkpoint wrapper as a flat official release.
+            state = raw.get("model", raw) if isinstance(raw, dict) else raw
+            if not isinstance(state, dict):
+                raise ValueError(
+                    "checkpoint_state_prefix requires a mapping checkpoint state, got "
+                    f"{type(state).__name__}"
+                )
+            selected = {
+                f"backbone.{key.removeprefix(checkpoint_state_prefix)}": tensor
+                for key, tensor in state.items()
+                if key.startswith(checkpoint_state_prefix)
+            }
+            if not selected:
+                raise ValueError(
+                    f"No checkpoint keys begin with {checkpoint_state_prefix!r} in {checkpoint_path}"
+                )
+            chkpt = selected
+            logger.info(
+                "Selected %d keys with training-checkpoint prefix %s",
+                len(chkpt),
+                checkpoint_state_prefix,
+            )
+        elif isinstance(raw, dict) and "teacher" in raw:
             chkpt = raw["teacher"]
         else:
             # Flat backbone-only checkpoint (e.g. official released weights).
@@ -628,7 +659,7 @@ def init_fsdp_model_from_checkpoint(
                     tuple(target_tensor.shape),
                 )
                 continue
-            if isinstance(target_tensor, torch.distributed.tensor.DTensor):
+            if isinstance(target_tensor, DTensor):
                 converted_chkpt[key] = _distribute_checkpoint_tensor(
                     tensor,
                     device_mesh=target_tensor.device_mesh,

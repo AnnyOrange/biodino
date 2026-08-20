@@ -6,6 +6,7 @@
 import argparse
 import copy
 import gc
+import hashlib
 import json
 import logging
 import math
@@ -31,6 +32,7 @@ from dinov3.checkpointer import (
 )
 from dinov3.configs import setup_config, setup_job, setup_multidistillation
 from dinov3.data import (
+    DeterministicDataStream,
     MaskingGenerator,
     SamplerType,
     collate_data_and_cast,
@@ -176,8 +178,18 @@ def _build_raw_loss_static_fields(cfg, accum_steps, real_global_batch_size, effe
         "channel_subset_max": int(getattr(cfg.channel_subset, "max_channels", 3)),
         "official_epoch_length": int(cfg.train.OFFICIAL_EPOCH_LENGTH),
         "patch_tokens_per_image_estimate": patch_tokens_per_image,
+        "controlled_data_stream": bool(getattr(cfg.train, "wds_deterministic_resampling", False)),
     }
     return fields
+
+
+def _batch_sample_key_digest(data) -> str | None:
+    """Compact audit trail proving compared arms consumed the same samples."""
+    sample_keys = data.get("sample_keys")
+    if not sample_keys:
+        return None
+    payload = "\n".join(map(str, sample_keys)).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:16]
 
 
 def _append_raw_loss_metrics(
@@ -193,6 +205,7 @@ def _append_raw_loss_metrics(
     backbone_lr,
     total_loss,
     metrics_dict,
+    batch_sample_key_digest=None,
 ):
     if not distributed.is_main_process():
         return
@@ -223,6 +236,7 @@ def _append_raw_loss_metrics(
             "last_layer_lr": _to_jsonable_scalar(last_layer_lr),
             "backbone_lr": _to_jsonable_scalar(backbone_lr),
             "total_loss": _to_jsonable_scalar(total_loss),
+            "batch_sample_key_digest": batch_sample_key_digest,
         }
     )
     row.update({k: _to_jsonable_scalar(v) for k, v in metrics_dict.items()})
@@ -508,6 +522,10 @@ def build_data_loader_from_cfg(
         target_transform=lambda _: (),
         target_channels=cfg.student.in_chans,
         wds_shuffle_buffer=getattr(cfg.train, "wds_shuffle_buffer", 1000),
+        wds_resample_seed=cfg.train.seed + start_iter + 1,
+        wds_deterministic_resampling=bool(
+            getattr(cfg.train, "wds_deterministic_resampling", False)
+        ),
     )
 
     if isinstance(dataset, torch.utils.data.IterableDataset):
@@ -528,6 +546,20 @@ def build_data_loader_from_cfg(
         prefetch_factor=getattr(cfg.train, "prefetch_factor", None),
         collate_fn=collate_fn,
     )
+    if bool(getattr(cfg.train, "wds_deterministic_resampling", False)):
+        if num_workers != 0:
+            raise ValueError(
+                "train.wds_deterministic_resampling=true requires train.num_workers=0 "
+                "so augmentation and masking remain comparable across method arms"
+            )
+        data_loader = DeterministicDataStream(
+            data_loader,
+            seed=cfg.train.seed + 1_000_003 * distributed.get_rank(),
+            start_fetch_index=start_iter * accum_steps,
+        )
+        logger.info(
+            "WebDataset controlled stream enabled: fixed shard/sample order and isolated per-batch augmentation RNG"
+        )
     return data_loader
 
 
@@ -586,7 +618,10 @@ def do_train(cfg, model, resume=False):
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     model.train()
-    # Optimizer
+    # Plain checkpoints use unwrapped module names. DDP wrapping is deferred
+    # until after initialization; FSDP is already wrapped and this is a no-op.
+    model.init_weights()
+    model.finish_distributed_training_setup()
     optimizer = build_optimizer(cfg, model.get_params_groups())
     (
         lr_schedule,
@@ -600,7 +635,6 @@ def do_train(cfg, model, resume=False):
             model,
             dont_save=[k for k, _ in model.state_dict().items() if k.startswith("teacher")],
         )
-    model.init_weights()
     start_iter = 0
     if resume and (last_checkpoint_dir := find_latest_checkpoint(ckpt_dir)):
         logger.info(f"Checkpoint found {last_checkpoint_dir}")
@@ -694,11 +728,21 @@ def do_train(cfg, model, resume=False):
             break
 
         it = iteration
+        batch_sample_key_digest = _batch_sample_key_digest(data)
         data["global_batch_size"] = real_global_batch_size
 
         micro_step_in_cycle = micro_step % accum_steps
         is_cycle_start = micro_step_in_cycle == 0
         is_update_step = (micro_step_in_cycle + 1) == accum_steps
+
+        if accum_steps > 1:
+            # FSDP2 otherwise reduce-scatters gradients after every micro-step.
+            # DDP exposes the same intent through ``require_backward_grad_sync``.
+            for student_module in student.values():
+                if hasattr(student_module, "set_requires_gradient_sync"):
+                    student_module.set_requires_gradient_sync(is_update_step, recurse=True)
+                elif isinstance(student_module, torch.nn.parallel.DistributedDataParallel):
+                    student_module.require_backward_grad_sync = is_update_step
 
         if is_cycle_start:
             if (iteration + 1) % 150 == 0:
@@ -793,7 +837,7 @@ def do_train(cfg, model, resume=False):
                 )
                 metrics_dict[f"{k}_grad_norm"] = (
                     grad_norm.full_tensor().item()
-                    if isinstance(grad_norm, torch.distributed.tensor.DTensor)
+                    if isinstance(grad_norm, DTensor)
                     else grad_norm.item()
                 )
 
@@ -832,6 +876,7 @@ def do_train(cfg, model, resume=False):
             backbone_lr=backbone_lr,
             total_loss=total_loss,
             metrics_dict=metrics_dict,
+            batch_sample_key_digest=batch_sample_key_digest,
         )
 
         if (
@@ -908,6 +953,7 @@ def main(argv=None):
     logger.info(f"Model after distributed:\n{model}")
     if args.eval_only:
         model.init_weights()
+        model.finish_distributed_training_setup()
         iteration = (
             model.get_checkpointer_class()(model, save_dir=cfg.train.output_dir)
             .resume_or_load(cfg.MODEL.WEIGHTS, resume=not args.no_resume)
