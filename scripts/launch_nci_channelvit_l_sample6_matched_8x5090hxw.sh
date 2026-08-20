@@ -26,8 +26,8 @@ SUBMIT=${SUBMIT:-1}
 DRY_RUN=${DRY_RUN:-0}
 
 NPROC_PER_ARM=4
-BATCH_SIZE_PER_GPU=${BATCH_SIZE_PER_GPU:-16}
-GRAD_ACCUM_STEPS=${GRAD_ACCUM_STEPS:-16}
+BATCH_SIZE_PER_GPU=${BATCH_SIZE_PER_GPU:-8}
+GRAD_ACCUM_STEPS=${GRAD_ACCUM_STEPS:-32}
 GLOBAL_BATCH_SIZE=1024
 OFFICIAL_EPOCH_LENGTH=1025
 EPOCHS=15
@@ -121,7 +121,7 @@ build_cmd() {
     train.compile=false
     train.prefetch_factor=1
     train.pin_memory=false
-    train.checkpointing=false
+    train.checkpointing=true
     student.in_chans=8
     teacher.in_chans=8
     student.enable_channelvit=true

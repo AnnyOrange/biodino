@@ -11,7 +11,7 @@ train:
   OFFICIAL_EPOCH_LENGTH: 1025
   output_dir: ./outputs/01_training_runs/nci_vitl_channelvit_sample6_control
   compile: false
-  checkpointing: false
+  checkpointing: true
   wds_shuffle_buffer: 100
   prefetch_factor: 1
   pin_memory: false
