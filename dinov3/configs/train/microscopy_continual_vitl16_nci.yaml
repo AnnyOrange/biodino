@@ -8,14 +8,14 @@
 # NCI settings follow the 1024-step winner: masked_shared, loss_weight=0.5.
 # Budget follows H-S0 L: 15 x 1025, lr 1e-4, warmup 3, teacher-temp warmup 30,
 # global batch 1024, no SIGReg. ChannelViT-L sample6 needs activation
-# checkpointing on 32 GB cards. Four GPUs per matched arm: 8/GPU x accum 32.
+# checkpointing on 32 GB cards. Four GPUs per matched arm: 32/GPU x accum 8.
 
 compute_precision:
   distributed_mode: ddp
 
 train:
   dataset_path: "packwds_chvit_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar::sample_channels=6,min_channels=1,pct=1,99"
-  batch_size_per_gpu: 16
+  batch_size_per_gpu: 32
   num_workers: 2
   OFFICIAL_EPOCH_LENGTH: 1025
   output_dir: ./outputs/01_training_runs/nci_vitl_channelvit_sample6

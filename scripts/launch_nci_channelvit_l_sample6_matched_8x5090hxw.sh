@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Matched ChannelViT-L sample6 continue on eight 5090s at 5090-hxw-xzj.
 # GPUs 0-3: control (NCI off). GPUs 4-7: masked_shared NCI w=0.5.
-# 4 x 16 x accum 16 = global batch 1024 per arm. Do not score against
+# 4 x 32 x accum 8 = global batch 1024 per arm. Do not score against
 # Residual-MC or RGB H-S0 / H-S6.
 
 REPO=${REPO:-/home/xzj/biodino}
@@ -26,8 +26,8 @@ SUBMIT=${SUBMIT:-1}
 DRY_RUN=${DRY_RUN:-0}
 
 NPROC_PER_ARM=4
-BATCH_SIZE_PER_GPU=${BATCH_SIZE_PER_GPU:-8}
-GRAD_ACCUM_STEPS=${GRAD_ACCUM_STEPS:-32}
+BATCH_SIZE_PER_GPU=${BATCH_SIZE_PER_GPU:-32}
+GRAD_ACCUM_STEPS=${GRAD_ACCUM_STEPS:-8}
 GLOBAL_BATCH_SIZE=1024
 OFFICIAL_EPOCH_LENGTH=1025
 EPOCHS=15
