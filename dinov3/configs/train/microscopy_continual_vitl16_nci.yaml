@@ -1,0 +1,103 @@
+# ViT-L ChannelViT sample6 + NCI. This is not Residual-MC and not H-line RGB.
+#
+# Nested channel innovation needs a nested subset of channels (S ⊂ F).
+# The backbone must therefore be ChannelViT (or another channel-aware stem).
+# Compare only against microscopy_continual_vitl16_nci_control.yaml.
+# Do not score this against RGB H-S0 / H-S6 or Residual-MC.
+#
+# NCI settings follow the 1024-step winner: masked_shared, loss_weight=0.5.
+# Budget follows H-S0 L: 15 x 1025, lr 1e-4, warmup 3, teacher-temp warmup 30,
+# global batch 1024, no SIGReg. Eight GPUs: 16/GPU x accum 8. Four GPUs per
+# matched arm: override accum to 16.
+
+compute_precision:
+  distributed_mode: ddp
+
+train:
+  dataset_path: "packwds_chvit_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar::sample_channels=6,min_channels=1,pct=1,99"
+  batch_size_per_gpu: 16
+  num_workers: 2
+  OFFICIAL_EPOCH_LENGTH: 1025
+  output_dir: ./outputs/01_training_runs/nci_vitl_channelvit_sample6
+  compile: false
+  checkpointing: false
+  wds_shuffle_buffer: 100
+  prefetch_factor: 1
+  pin_memory: false
+
+student:
+  arch: vit_large
+  patch_size: 16
+  ffn_layer: mlp
+  ffn_ratio: 4.0
+  drop_path_rate: 0.25
+  in_chans: 8
+  enable_channelvit: true
+  stem_type: null
+  n_storage_tokens: 4
+  mask_k_bias: true
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+
+teacher:
+  in_chans: 8
+  enable_channelvit: true
+  stem_type: null
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+
+sigreg:
+  enabled: false
+
+channel_subset:
+  enabled: false
+
+nested_channel_innovation:
+  enabled: true
+  observation_protocol: masked_shared
+  min_channels: 1
+  max_channels: 3
+  loss_weight: 0.5
+  predictor_hidden_dim: 0
+  predictor_lr_multiplier: 10.0
+  stop_gradient: true
+  checkpoint_subset_forward: false
+  checkpoint_full_forward: false
+  predictor_loss_weight: 1.0
+  invariance_loss_weight: 1.0
+  variance_loss_weight: 1.0
+  orthogonality_loss_weight: 1.0
+  min_std: 0.5
+  martingale_enabled: false
+
+nested_resolution_innovation:
+  enabled: false
+
+optim:
+  epochs: 15
+  optimizer: adamw
+  lr: 1.0e-4
+  min_lr: 1.0e-6
+  warmup_epochs: 3
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 8
+
+crops:
+  augmentation_policy: dinov3
+  float_input: false
+  global_crops_size: 224
+  local_crops_size: 96
+  rgb_mean: [0.511375, 0.598449, 0.683452, 0.119112, 0.105159, 0.082019, 0.419583, 0.307523]
+  rgb_std: [0.340017, 0.306132, 0.284308, 0.187627, 0.161061, 0.151326, 0.157172, 0.025357]
+
+evaluation:
+  eval_period_iterations: 0
+
+checkpointing:
+  period: 1025
+  max_to_keep: 3
+  sharded: false

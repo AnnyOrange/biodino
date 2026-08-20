@@ -7,6 +7,9 @@ compute_precision:
   param_dtype: bf16
   reduce_dtype: fp32
   sharding_strategy: SHARD_GRAD_OP
+  # ``fsdp`` is the upstream default. ``ddp`` keeps a full replica per device
+  # when the model fits, avoiding all-gather and reshard traffic.
+  distributed_mode: fsdp
 dino:
   loss_weight: 1.0
   global_ignore_diagonal: true  # Whether to ignore A-A and B-B global pairs, default as in DINOv2, ignored by SSLMetaArch
@@ -63,6 +66,125 @@ channel_subset:
   enabled: false
   min_channels: 1
   max_channels: 3
+nested_channel_innovation:
+  # Keep the main SSL objective full-channel symmetric. An auxiliary subset
+  # pass estimates the subset-predictable component with detached regression;
+  # only the residual innovation losses update the full-channel backbone.
+  enabled: false
+  # The conditional residual is defined only when F and S are encoded from
+  # the same observation. ``masked_shared`` uses the main iBOT observation
+  # on both channel views. ``unmasked_shared`` remains a valid ablation, and
+  # ``legacy_mask_mismatch`` is retained solely to reproduce older screens.
+  observation_protocol: masked_shared # unmasked_shared | masked_shared | legacy_mask_mismatch
+  min_channels: 1
+  max_channels: 3
+  loss_weight: 0.1
+  predictor_hidden_dim: 0  # 0 selects 2 * backbone embed_dim
+  predictor_lr_multiplier: 10.0
+  stop_gradient: true
+  # Recompute only the differentiable subset branch in the no-firewall
+  # ablation. This preserves its objective while avoiding an FSDP-only test.
+  checkpoint_subset_forward: false
+  checkpoint_full_forward: false
+  predictor_loss_weight: 1.0
+  invariance_loss_weight: 1.0
+  variance_loss_weight: 1.0
+  orthogonality_loss_weight: 1.0
+  min_std: 0.1
+  # A second conditional step S subset M subset F turns the residual into
+  # adjacent martingale differences rather than one undifferentiated F|S gap.
+  martingale_enabled: false
+  martingale_lower_loss_weight: 1.0
+  martingale_cross_orthogonality_weight: 1.0
+  martingale_checkpoint_middle_forward: true
+conditional_morphology_graph:
+  # Use an EMA teacher's local patch graph only on edges that cannot be
+  # predicted from a strict channel subset. This preserves extra-channel
+  # morphology without applying a global Gram anchor.
+  enabled: false
+  min_channels: 1
+  max_channels: 1
+  loss_weight: 1.0
+  predictor_hidden_dim: 0
+  predictor_lr_multiplier: 10.0
+  stop_gradient: true
+  # Use the EMA teacher for both C and S when estimating conditional
+  # innovation, so the gate represents a stable teacher-space quantity rather
+  # than the student's rapidly moving representation.
+  condition_source: teacher  # teacher or student
+  # ``feature`` retains the original token-prediction route. ``edge`` is the
+  # direct conditional graph predictor: it estimates E[G_C | T(S)] in the
+  # same space in which innovation is later selected.
+  predictor_mode: feature  # feature or edge
+  edge_predictor_dim: 64
+  predictor_loss_weight: 1.0
+  graph_loss_weight: 1.0
+  local_radius: 2
+  min_innovation: 0.0
+  # Keep only this fraction of valid local edges per image. A value below one
+  # creates a density-matched test of whether irreducible channel information
+  # is more useful than an equally sparse content-independent edge set.
+  selection_fraction: 1.0
+  max_edge_weight: 4.0
+  huber_beta: 0.05
+  gate_mode: conditional  # conditional or uniform (density-matched control)
+nested_resolution_innovation:
+  # Decompose a full-resolution representation into the component predictable
+  # from a nested low-pass view and a non-collapsed scale-specific innovation.
+  enabled: false
+  downsample_factor: 2
+  feature_mode: cls_patch_mean  # cls or cls_patch_mean
+  loss_weight: 0.1
+  predictor_hidden_dim: 0
+  predictor_lr_multiplier: 10.0
+  stop_gradient: true
+  predictor_loss_weight: 1.0
+  invariance_loss_weight: 1.0
+  variance_loss_weight: 1.0
+  orthogonality_loss_weight: 1.0
+  min_std: 0.25
+acquisition_orbit_deflation:
+  # Restrict only the newly learned displacement that lies along a frozen
+  # acquisition nuisance orbit, not the whole pretrained representation.
+  enabled: false
+  # gradient_projection is forward-identical and projects only the backward
+  # CLS gradient. random_gradient_projection is its rank-matched control.
+  mode: deflate  # deflate | random_tangent | direct_consistency | gradient_projection | random_gradient_projection
+  loss_weight: 0.1
+  projection_strength: 1.0
+  projection_scope: cls  # cls | cls_patch
+  num_perturbations: 3
+  contrast_scale: 1.15
+  background_scale: 0.10
+  blur_mix: 0.50
+  min_singular_value: 1.0e-4
+  relative_singular_value: 0.05
+scout_kernel_transport:
+  # Transfer only a smaller model's pretraining-relative relation change.
+  enabled: false
+  loss_weight: 0.1
+  # ``anchor_consistent`` uses a shared unmasked view. ``mask_matched`` uses
+  # the ordinary iBOT student representation but gives the frozen anchors the
+  # exact same mask. ``masked_student`` is retained only to reproduce early
+  # diagnostics; it mixes a masked student with an unmasked anchor.
+  current_feature_protocol: masked_student # masked_student | anchor_consistent | mask_matched
+  # Kernel displacement starts at zero under the anchor-consistent protocol.
+  # This trust-region scale bounds the directional gradient at that point;
+  # it is in Frobenius units of the centered batch kernel displacement.
+  directional_damping: 0.1
+  # A positive ratio caps Scout transport outside a local ball around the
+  # large-model anchor. It is normalized by the frozen Scout target norm;
+  # zero preserves ordinary transport throughout adaptation.
+  displacement_budget_ratio: 0.0
+  # ``stable_delta`` keeps only cross-view reproducible components of the
+  # anchor-relative scout displacement. ``shuffled_stable_delta`` preserves
+  # that target's norm/spectrum but breaks sample correspondence as a control.
+  target_mode: delta # delta | stable_delta | shuffled_delta | shuffled_stable_delta | final_kernel
+  stable_relative_eigenvalue: 0.05
+  stable_min_eigenvalue: 1.0e-6
+  scout_config_path: null
+  scout_anchor_checkpoint: null
+  scout_adapted_checkpoint: null
 gram:
   use_loss: false # (bool) if true gram is used, else not
   compute_stats: false # (bool): if true compute auxilliary stats
@@ -90,6 +212,9 @@ train:
   saveckp_freq: 20
   seed: 0
   num_workers: 10
+  # Enable only for controlled method comparisons. This fixes WDS shard/sample
+  # order and isolates augmentation/masking RNG from model-side randomness.
+  wds_deterministic_resampling: false
   OFFICIAL_EPOCH_LENGTH: 1250
   monitor_gradient_norm: false
   chunk_schedule: []
@@ -195,6 +320,9 @@ crops:
   gram_teacher_crops_size: null  # If not None, return crops for gram teacher
   localcrops_subset_of_globalcrops: false
   share_color_jitter: false
+  # Reuse the global crop geometry for both global views.  Disabled for normal
+  # pretraining; useful for controlled representation diagnostics.
+  paired_global_geometry: false
   horizontal_flips: true
   augmentation_policy: dinov3  # dinov3 or bio_safe
   gram_teacher_no_distortions: false  # If True, no distortions are applied to gram teacher crops

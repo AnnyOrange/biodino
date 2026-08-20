@@ -3,22 +3,50 @@
 # This software may be used and distributed in accordance with
 # the terms of the DINOv3 License Agreement.
 
+import copy
 import gc
 import logging
 import math
+from contextlib import nullcontext
 from functools import partial
 
 import torch
+import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch import Tensor, nn
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 import dinov3.distributed as distributed
 from dinov3.checkpointer import init_fsdp_model_from_checkpoint
 from dinov3.configs import get_default_config
 from dinov3.data import DataAugmentationDINO
-from dinov3.fsdp.ac_compile_parallelize import ac_compile_parallelize
 from dinov3.layers.dino_head import DINOHead
-from dinov3.loss import DINOLoss, DistributedSIGReg, GramLoss, KoLeoLoss, KoLeoLossDistributed, iBOTPatchLoss
+from dinov3.loss import (
+    AcquisitionOrbitDeflationLoss,
+    acquisition_tangent_fraction,
+    apply_acquisition_tangent_gradient_projection,
+    build_acquisition_tangent_basis,
+    ConditionalEdgeGraphPredictor,
+    ConditionalMorphologyGraphLoss,
+    ConditionalMorphologyGraphWeights,
+    ConditionalFeaturePredictor,
+    DINOLoss,
+    DistributedSIGReg,
+    GramLoss,
+    KoLeoLoss,
+    KoLeoLossDistributed,
+    NestedChannelInnovationLoss,
+    NestedChannelInnovationWeights,
+    ScoutKernelDeltaTransportLoss,
+    conditional_innovation_residual,
+    centered_cosine_kernel,
+    cross_view_stable_kernel_delta,
+    iBOTPatchLoss,
+    martingale_increment_orthogonality,
+    project_onto_acquisition_tangent,
+    rank_matched_random_tangent_basis,
+)
 from dinov3.models import build_model_from_cfg
 from dinov3.train.cosine_lr_scheduler import linear_warmup_cosine_decay
 from dinov3.train.param_groups import fuse_params_groups, get_params_groups_with_decay_fsdp
@@ -85,8 +113,14 @@ def _sample_channel_subset_mask(
     *,
     min_channels: int,
     max_channels: int,
+    require_omission: bool = False,
 ) -> Tensor:
-    """Sample one non-empty subset for each sample in a padded channel batch."""
+    """Sample one non-empty subset for each sample in a padded channel batch.
+
+    When ``require_omission`` is true, every sample with at least two valid
+    channels loses at least one channel. Single-channel samples remain unchanged
+    and are marked inactive by the caller.
+    """
     if valid_mask.ndim != 2:
         raise ValueError(f"Expected a [B, C] channel mask, got {tuple(valid_mask.shape)}")
     if min_channels <= 0 or max_channels < min_channels:
@@ -100,12 +134,116 @@ def _sample_channel_subset_mask(
         available = valid_mask[row].nonzero(as_tuple=False).flatten()
         if available.numel() == 0:
             raise ValueError(f"Sample {row} has no valid channels")
-        upper = min(max_channels, int(available.numel()))
+        available_count = int(available.numel())
+        omission_cap = available_count - 1 if require_omission and available_count > 1 else available_count
+        upper = min(max_channels, omission_cap)
         lower = min(min_channels, upper)
         count = int(torch.randint(lower, upper + 1, (1,), device=valid_mask.device).item())
         chosen = available[torch.randperm(available.numel(), device=valid_mask.device)[:count]]
         subset[row, chosen] = True
     return subset
+
+
+def _sample_nested_channel_masks(valid_mask: Tensor) -> tuple[Tensor, Tensor]:
+    """Sample S subset M subset F for channel-count-aware martingale losses.
+
+    The midpoint is approximately half the available channels.  This keeps the
+    two increments meaningful for the common 3-channel case (1 -> 2 -> 3)
+    while still providing a balanced split for rarer high-channel fields.
+    """
+    if valid_mask.ndim != 2:
+        raise ValueError(f"Expected a [B, C] channel mask, got {tuple(valid_mask.shape)}")
+
+    valid_mask = valid_mask.to(dtype=torch.bool)
+    middle = torch.zeros_like(valid_mask)
+    lower = torch.zeros_like(valid_mask)
+    for row in range(valid_mask.shape[0]):
+        available = valid_mask[row].nonzero(as_tuple=False).flatten()
+        available_count = int(available.numel())
+        if available_count == 0:
+            raise ValueError(f"Sample {row} has no valid channels")
+        middle_count = max(1, (available_count + 1) // 2)
+        middle_channels = available[
+            torch.randperm(available_count, device=valid_mask.device)[:middle_count]
+        ]
+        middle[row, middle_channels] = True
+        if middle_count == 1:
+            lower[row, middle_channels] = True
+            continue
+        lower_count = int(torch.randint(1, middle_count, (1,), device=valid_mask.device).item())
+        lower_channels = middle_channels[
+            torch.randperm(middle_count, device=valid_mask.device)[:lower_count]
+        ]
+        lower[row, lower_channels] = True
+    return middle, lower
+
+
+def _require_rgb_backbone_for_nri(backbone) -> None:
+    """NRI downsamples the same RGB image; it must not ride a channel stem."""
+    stem_type = getattr(backbone, "stem_type", None)
+    if stem_type in ("", "auto"):
+        stem_type = None
+    if stem_type is not None:
+        raise ValueError(
+            "nested_resolution_innovation requires the standard RGB PatchEmbed "
+            f"(stem_type=null, in_chans=3), got stem_type={stem_type!r}. "
+            "Residual-MC / dualroute change the input carrier, so a gain cannot "
+            "be attributed to NRI."
+        )
+    if bool(getattr(backbone, "enable_channelvit", False)):
+        raise ValueError("nested_resolution_innovation requires enable_channelvit=false")
+    in_chans = getattr(backbone, "in_chans", None)
+    if in_chans is not None and int(in_chans) != 3:
+        raise ValueError(
+            "nested_resolution_innovation requires in_chans=3, "
+            f"got in_chans={in_chans}"
+        )
+
+
+def _make_low_resolution_observation(images: Tensor, downsample_factor: int) -> Tensor:
+    """Remove fine spatial detail while retaining the exact field of view."""
+    if images.ndim != 4:
+        raise ValueError(f"Expected [N, C, H, W] images, got {tuple(images.shape)}")
+    if downsample_factor <= 1:
+        raise ValueError(f"downsample_factor must be greater than one, got {downsample_factor}")
+    height, width = images.shape[-2:]
+    low_size = (height // downsample_factor, width // downsample_factor)
+    if min(low_size) < 1:
+        raise ValueError(
+            f"downsample_factor={downsample_factor} is too large for spatial size {(height, width)}"
+        )
+    work = images.float()
+    low = F.interpolate(work, size=low_size, mode="bilinear", align_corners=False, antialias=True)
+    restored = F.interpolate(low, size=(height, width), mode="bilinear", align_corners=False, antialias=True)
+    return restored.to(dtype=images.dtype)
+
+
+def _make_acquisition_orbit_views(
+    images: Tensor,
+    *,
+    contrast_scale: float,
+    background_scale: float,
+    blur_mix: float,
+    num_perturbations: int,
+) -> Tensor:
+    """Construct deterministic, label-preserving acquisition perturbations."""
+    if images.ndim != 4:
+        raise ValueError(f"Expected [B, C, H, W] images, got {tuple(images.shape)}")
+    if not 1 <= num_perturbations <= 3:
+        raise ValueError(f"num_perturbations must be in [1, 3], got {num_perturbations}")
+    if contrast_scale <= 0:
+        raise ValueError(f"contrast_scale must be positive, got {contrast_scale}")
+    if background_scale < 0 or not 0 <= blur_mix <= 1:
+        raise ValueError("background_scale must be non-negative and blur_mix must be in [0, 1]")
+
+    work = images.float()
+    spatial_mean = work.mean(dim=(-2, -1), keepdim=True)
+    spatial_std = work.std(dim=(-2, -1), keepdim=True).clamp_min(1.0e-6)
+    contrast = spatial_mean + contrast_scale * (work - spatial_mean)
+    background = work + background_scale * spatial_std
+    blurred = F.avg_pool2d(F.pad(work, (1, 1, 1, 1), mode="reflect"), kernel_size=3, stride=1)
+    psf_blur = (1.0 - blur_mix) * work + blur_mix * blurred
+    return torch.stack((contrast, background, psf_blur), dim=1)[:, :num_perturbations].to(images.dtype)
 
 
 class SSLMetaArch(nn.Module):
@@ -122,8 +260,16 @@ class SSLMetaArch(nn.Module):
         assert cfg.ibot.separate_head is True
         assert cfg.train.centering == "sinkhorn_knopp"
 
-        # For some reason FULL_SHARD doesn't work
-        assert cfg.compute_precision.sharding_strategy == "SHARD_GRAD_OP"
+        self.distributed_mode = str(getattr(cfg.compute_precision, "distributed_mode", "fsdp")).lower()
+        if self.distributed_mode not in {"fsdp", "ddp"}:
+            raise ValueError(
+                "compute_precision.distributed_mode must be 'fsdp' or 'ddp', got "
+                f"{self.distributed_mode!r}"
+            )
+        # The FSDP implementation currently supports SHARD_GRAD_OP only.
+        if self.distributed_mode == "fsdp":
+            assert cfg.compute_precision.sharding_strategy == "SHARD_GRAD_OP"
+        self._ddp_wrapped = False
 
         self.cfg = cfg
 
@@ -270,6 +416,375 @@ class SSLMetaArch(nn.Module):
         teacher_model_dict["ibot_head"] = ibot_head_class()
         self.ibot_patch_loss = iBOTPatchLoss(cfg.ibot.head_n_prototypes, compile_sinkhorn=cfg.train.compile)
 
+        nci_cfg = cfg.nested_channel_innovation
+        self.nci_enabled = bool(nci_cfg.enabled)
+        self.nci_loss_weight = float(nci_cfg.loss_weight)
+        self.nci_observation_protocol = str(nci_cfg.observation_protocol).lower()
+        self.nci_min_channels = int(nci_cfg.min_channels)
+        self.nci_max_channels = int(nci_cfg.max_channels)
+        self.nci_predictor_lr_multiplier = float(nci_cfg.predictor_lr_multiplier)
+        self.nci_checkpoint_subset_forward = bool(nci_cfg.checkpoint_subset_forward)
+        self.nci_checkpoint_full_forward = bool(nci_cfg.checkpoint_full_forward)
+        self.nci_martingale_enabled = bool(nci_cfg.martingale_enabled)
+        self.nci_martingale_lower_loss_weight = float(nci_cfg.martingale_lower_loss_weight)
+        self.nci_martingale_cross_orthogonality_weight = float(
+            nci_cfg.martingale_cross_orthogonality_weight
+        )
+        self.nci_martingale_checkpoint_middle_forward = bool(
+            nci_cfg.martingale_checkpoint_middle_forward
+        )
+        if self.nci_enabled:
+            if self.nci_loss_weight < 0:
+                raise ValueError(
+                    f"nested_channel_innovation.loss_weight must be non-negative, got {self.nci_loss_weight}"
+                )
+            if self.nci_observation_protocol not in {
+                "unmasked_shared",
+                "masked_shared",
+                "legacy_mask_mismatch",
+            }:
+                raise ValueError(
+                    "nested_channel_innovation.observation_protocol must be one of "
+                    "{'unmasked_shared', 'masked_shared', 'legacy_mask_mismatch'}, got "
+                    f"{self.nci_observation_protocol!r}"
+                )
+            if self.nci_predictor_lr_multiplier <= 0:
+                raise ValueError(
+                    "nested_channel_innovation.predictor_lr_multiplier must be positive, got "
+                    f"{self.nci_predictor_lr_multiplier}"
+                )
+            if self.nci_martingale_enabled and self.nci_observation_protocol != "masked_shared":
+                raise ValueError(
+                    "nested_channel_innovation.martingale_enabled requires observation_protocol='masked_shared'"
+                )
+            if self.nci_martingale_lower_loss_weight < 0:
+                raise ValueError(
+                    "nested_channel_innovation.martingale_lower_loss_weight must be non-negative, got "
+                    f"{self.nci_martingale_lower_loss_weight}"
+                )
+            if self.nci_martingale_cross_orthogonality_weight < 0:
+                raise ValueError(
+                    "nested_channel_innovation.martingale_cross_orthogonality_weight must be non-negative, got "
+                    f"{self.nci_martingale_cross_orthogonality_weight}"
+                )
+            predictor_hidden_dim = int(nci_cfg.predictor_hidden_dim)
+            student_model_dict["nci_predictor"] = ConditionalFeaturePredictor(
+                embed_dim,
+                hidden_dim=predictor_hidden_dim,
+            )
+            teacher_model_dict["nci_predictor"] = ConditionalFeaturePredictor(
+                embed_dim,
+                hidden_dim=predictor_hidden_dim,
+            )
+            self.nci_loss = NestedChannelInnovationLoss(
+                min_std=float(nci_cfg.min_std),
+                stop_gradient=bool(nci_cfg.stop_gradient),
+                weights=NestedChannelInnovationWeights(
+                    predictor=float(nci_cfg.predictor_loss_weight),
+                    invariance=float(nci_cfg.invariance_loss_weight),
+                    variance=float(nci_cfg.variance_loss_weight),
+                    orthogonality=float(nci_cfg.orthogonality_loss_weight),
+                ),
+            )
+            if self.nci_martingale_enabled:
+                # The two conditional maps represent distinct filtration
+                # steps: S -> M and M -> F. Sharing them would collapse the
+                # martingale construction into an ordinary one-step adapter.
+                student_model_dict["nci_mid_predictor"] = ConditionalFeaturePredictor(
+                    embed_dim,
+                    hidden_dim=predictor_hidden_dim,
+                )
+                teacher_model_dict["nci_mid_predictor"] = ConditionalFeaturePredictor(
+                    embed_dim,
+                    hidden_dim=predictor_hidden_dim,
+                )
+                self.nci_mid_loss = NestedChannelInnovationLoss(
+                    min_std=float(nci_cfg.min_std),
+                    stop_gradient=bool(nci_cfg.stop_gradient),
+                    metric_prefix="nci_mid",
+                    weights=NestedChannelInnovationWeights(
+                        predictor=float(nci_cfg.predictor_loss_weight),
+                        invariance=float(nci_cfg.invariance_loss_weight),
+                        variance=float(nci_cfg.variance_loss_weight),
+                        orthogonality=float(nci_cfg.orthogonality_loss_weight),
+                    ),
+                )
+
+        cmgi_cfg = cfg.conditional_morphology_graph
+        self.cmgi_enabled = bool(cmgi_cfg.enabled)
+        self.cmgi_loss_weight = float(cmgi_cfg.loss_weight)
+        self.cmgi_min_channels = int(cmgi_cfg.min_channels)
+        self.cmgi_max_channels = int(cmgi_cfg.max_channels)
+        self.cmgi_predictor_lr_multiplier = float(cmgi_cfg.predictor_lr_multiplier)
+        self.cmgi_condition_source = str(cmgi_cfg.condition_source).lower()
+        self.cmgi_predictor_mode = str(cmgi_cfg.predictor_mode).lower()
+        self.cmgi_edge_predictor_dim = int(cmgi_cfg.edge_predictor_dim)
+        if self.cmgi_enabled:
+            if self.cmgi_loss_weight < 0:
+                raise ValueError(
+                    "conditional_morphology_graph.loss_weight must be non-negative, got "
+                    f"{self.cmgi_loss_weight}"
+                )
+            if self.cmgi_predictor_lr_multiplier <= 0:
+                raise ValueError(
+                    "conditional_morphology_graph.predictor_lr_multiplier must be positive, got "
+                    f"{self.cmgi_predictor_lr_multiplier}"
+                )
+            if self.cmgi_condition_source not in {"teacher", "student"}:
+                raise ValueError(
+                    "conditional_morphology_graph.condition_source must be 'teacher' or 'student', got "
+                    f"{self.cmgi_condition_source!r}"
+                )
+            if self.cmgi_predictor_mode not in {"feature", "edge"}:
+                raise ValueError(
+                    "conditional_morphology_graph.predictor_mode must be 'feature' or 'edge', got "
+                    f"{self.cmgi_predictor_mode!r}"
+                )
+            if self.cmgi_edge_predictor_dim <= 0:
+                raise ValueError(
+                    "conditional_morphology_graph.edge_predictor_dim must be positive, got "
+                    f"{self.cmgi_edge_predictor_dim}"
+                )
+            predictor_hidden_dim = int(cmgi_cfg.predictor_hidden_dim)
+            if self.cmgi_predictor_mode == "feature":
+                student_model_dict["cmgi_predictor"] = ConditionalFeaturePredictor(
+                    embed_dim,
+                    hidden_dim=predictor_hidden_dim,
+                )
+                teacher_model_dict["cmgi_predictor"] = ConditionalFeaturePredictor(
+                    embed_dim,
+                    hidden_dim=predictor_hidden_dim,
+                )
+            else:
+                student_model_dict["cmgi_predictor"] = ConditionalEdgeGraphPredictor(
+                    embed_dim,
+                    edge_dim=self.cmgi_edge_predictor_dim,
+                    hidden_dim=predictor_hidden_dim,
+                )
+                teacher_model_dict["cmgi_predictor"] = ConditionalEdgeGraphPredictor(
+                    embed_dim,
+                    edge_dim=self.cmgi_edge_predictor_dim,
+                    hidden_dim=predictor_hidden_dim,
+                )
+            self.cmgi_loss = ConditionalMorphologyGraphLoss(
+                local_radius=int(cmgi_cfg.local_radius),
+                min_innovation=float(cmgi_cfg.min_innovation),
+                selection_fraction=float(cmgi_cfg.selection_fraction),
+                max_edge_weight=float(cmgi_cfg.max_edge_weight),
+                huber_beta=float(cmgi_cfg.huber_beta),
+                gate_mode=str(cmgi_cfg.gate_mode),
+                predictor_mode=self.cmgi_predictor_mode,
+                stop_gradient=bool(cmgi_cfg.stop_gradient),
+                weights=ConditionalMorphologyGraphWeights(
+                    predictor=float(cmgi_cfg.predictor_loss_weight),
+                    graph=float(cmgi_cfg.graph_loss_weight),
+                ),
+            )
+
+        nri_cfg = cfg.nested_resolution_innovation
+        self.nri_enabled = bool(nri_cfg.enabled)
+        self.nri_loss_weight = float(nri_cfg.loss_weight)
+        self.nri_downsample_factor = int(nri_cfg.downsample_factor)
+        self.nri_feature_mode = str(nri_cfg.feature_mode)
+        self.nri_predictor_lr_multiplier = float(nri_cfg.predictor_lr_multiplier)
+        if self.nri_enabled:
+            if self.nri_loss_weight < 0:
+                raise ValueError(
+                    "nested_resolution_innovation.loss_weight must be non-negative, got "
+                    f"{self.nri_loss_weight}"
+                )
+            if self.nri_downsample_factor <= 1:
+                raise ValueError(
+                    "nested_resolution_innovation.downsample_factor must be greater than one, got "
+                    f"{self.nri_downsample_factor}"
+                )
+            if self.nri_feature_mode not in {"cls", "cls_patch_mean"}:
+                raise ValueError(
+                    "nested_resolution_innovation.feature_mode must be 'cls' or 'cls_patch_mean', got "
+                    f"{self.nri_feature_mode!r}"
+                )
+            if self.nri_predictor_lr_multiplier <= 0:
+                raise ValueError(
+                    "nested_resolution_innovation.predictor_lr_multiplier must be positive, got "
+                    f"{self.nri_predictor_lr_multiplier}"
+                )
+            predictor_hidden_dim = int(nri_cfg.predictor_hidden_dim)
+            student_model_dict["nri_predictor"] = ConditionalFeaturePredictor(
+                embed_dim,
+                hidden_dim=predictor_hidden_dim,
+            )
+            teacher_model_dict["nri_predictor"] = ConditionalFeaturePredictor(
+                embed_dim,
+                hidden_dim=predictor_hidden_dim,
+            )
+            self.nri_loss = NestedChannelInnovationLoss(
+                min_std=float(nri_cfg.min_std),
+                stop_gradient=bool(nri_cfg.stop_gradient),
+                metric_prefix="nri",
+                weights=NestedChannelInnovationWeights(
+                    predictor=float(nri_cfg.predictor_loss_weight),
+                    invariance=float(nri_cfg.invariance_loss_weight),
+                    variance=float(nri_cfg.variance_loss_weight),
+                    orthogonality=float(nri_cfg.orthogonality_loss_weight),
+                ),
+            )
+
+        acq_cfg = cfg.acquisition_orbit_deflation
+        self.acq_deflation_enabled = bool(acq_cfg.enabled)
+        self.acq_deflation_mode = str(acq_cfg.mode)
+        self.acq_deflation_loss_weight = float(acq_cfg.loss_weight)
+        self.acq_projection_strength = float(getattr(acq_cfg, "projection_strength", 1.0))
+        self.acq_projection_scope = str(getattr(acq_cfg, "projection_scope", "cls")).lower()
+        self.acq_num_perturbations = int(acq_cfg.num_perturbations)
+        self.acq_contrast_scale = float(acq_cfg.contrast_scale)
+        self.acq_background_scale = float(acq_cfg.background_scale)
+        self.acq_blur_mix = float(acq_cfg.blur_mix)
+        self._acquisition_anchor_backbone: nn.Module | None = None
+        self.acq_deflation_loss: AcquisitionOrbitDeflationLoss | None = None
+        if self.acq_deflation_enabled:
+            if self.distributed_mode != "ddp":
+                raise ValueError("acquisition_orbit_deflation currently requires distributed_mode=ddp")
+            if cfg.distillation.enabled or cfg.multidistillation.enabled:
+                raise ValueError("acquisition_orbit_deflation does not support distillation meta-architectures")
+            if self.acq_deflation_loss_weight < 0:
+                raise ValueError(
+                    "acquisition_orbit_deflation.loss_weight must be non-negative, got "
+                    f"{self.acq_deflation_loss_weight}"
+                )
+            if self.acq_deflation_mode not in {
+                "deflate",
+                "random_tangent",
+                "direct_consistency",
+                "gradient_projection",
+                "random_gradient_projection",
+            }:
+                raise ValueError(
+                    "acquisition_orbit_deflation.mode must be deflate, random_tangent, direct_consistency, "
+                    "gradient_projection, or random_gradient_projection, got "
+                    f"{self.acq_deflation_mode!r}"
+                )
+            if self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"} and not (
+                0.0 <= self.acq_projection_strength <= 1.0
+            ):
+                raise ValueError(
+                    "acquisition_orbit_deflation.projection_strength must be in [0, 1], got "
+                    f"{self.acq_projection_strength}"
+                )
+            if self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"} and (
+                self.acq_projection_scope not in {"cls", "cls_patch"}
+            ):
+                raise ValueError(
+                    "acquisition_orbit_deflation.projection_scope must be 'cls' or 'cls_patch', got "
+                    f"{self.acq_projection_scope!r}"
+                )
+            if self.acq_deflation_mode in {"deflate", "random_tangent"}:
+                self.acq_deflation_loss = AcquisitionOrbitDeflationLoss(
+                    min_singular_value=float(acq_cfg.min_singular_value),
+                    relative_singular_value=float(acq_cfg.relative_singular_value),
+                )
+            logger.info(
+                "Acquisition orbit mode=%s perturbations=%d weight=%s projection_strength=%s scope=%s",
+                self.acq_deflation_mode,
+                self.acq_num_perturbations,
+                self.acq_deflation_loss_weight,
+                self.acq_projection_strength,
+                self.acq_projection_scope,
+            )
+
+        scout_cfg = cfg.scout_kernel_transport
+        self.scout_transport_enabled = bool(scout_cfg.enabled)
+        self.scout_transport_loss_weight = float(scout_cfg.loss_weight)
+        self.scout_transport_target_mode = str(scout_cfg.target_mode).lower()
+        self.scout_transport_current_feature_protocol = str(
+            getattr(scout_cfg, "current_feature_protocol", "masked_student")
+        ).lower()
+        self.scout_transport_directional_damping = float(
+            getattr(scout_cfg, "directional_damping", 0.1)
+        )
+        self.scout_transport_displacement_budget_ratio = float(
+            getattr(scout_cfg, "displacement_budget_ratio", 0.0)
+        )
+        self.scout_stable_relative_eigenvalue = float(
+            getattr(scout_cfg, "stable_relative_eigenvalue", 0.05)
+        )
+        self.scout_stable_min_eigenvalue = float(getattr(scout_cfg, "stable_min_eigenvalue", 1.0e-6))
+        self.scout_config_path = scout_cfg.scout_config_path
+        self.scout_anchor_checkpoint = scout_cfg.scout_anchor_checkpoint
+        self.scout_adapted_checkpoint = scout_cfg.scout_adapted_checkpoint
+        self._scout_large_anchor_backbone: nn.Module | None = None
+        self._scout_anchor_backbone: nn.Module | None = None
+        self._scout_adapted_backbone: nn.Module | None = None
+        # The shuffled-target control must not consume the global CUDA RNG.
+        # Otherwise it would also perturb future masks/augmentations and cease
+        # to isolate the semantic effect of the scout target.
+        self._scout_shuffled_target_step = 0
+        if self.scout_transport_enabled:
+            if self.distributed_mode != "ddp":
+                raise ValueError("scout_kernel_transport currently requires distributed_mode=ddp")
+            if cfg.distillation.enabled or cfg.multidistillation.enabled:
+                raise ValueError("scout_kernel_transport does not support distillation meta-architectures")
+            if self.scout_transport_loss_weight < 0:
+                raise ValueError(
+                    "scout_kernel_transport.loss_weight must be non-negative, got "
+                    f"{self.scout_transport_loss_weight}"
+                )
+            if self.scout_transport_target_mode not in {
+                "delta",
+                "stable_delta",
+                "shuffled_delta",
+                "shuffled_stable_delta",
+                "final_kernel",
+            }:
+                raise ValueError(
+                    "scout_kernel_transport.target_mode must be one of "
+                    "{'delta', 'stable_delta', 'shuffled_delta', "
+                    "'shuffled_stable_delta', 'final_kernel'}, got "
+                    f"{self.scout_transport_target_mode!r}"
+                )
+            if self.scout_transport_current_feature_protocol not in {
+                "masked_student",
+                "anchor_consistent",
+                "mask_matched",
+            }:
+                raise ValueError(
+                    "scout_kernel_transport.current_feature_protocol must be one of "
+                    "{'masked_student', 'anchor_consistent', 'mask_matched'}, got "
+                    f"{self.scout_transport_current_feature_protocol!r}"
+                )
+            if self.scout_transport_directional_damping <= 0:
+                raise ValueError(
+                    "scout_kernel_transport.directional_damping must be positive, got "
+                    f"{self.scout_transport_directional_damping}"
+                )
+            if self.scout_transport_displacement_budget_ratio < 0:
+                raise ValueError(
+                    "scout_kernel_transport.displacement_budget_ratio must be non-negative, got "
+                    f"{self.scout_transport_displacement_budget_ratio}"
+                )
+            if self.scout_stable_relative_eigenvalue < 0 or self.scout_stable_min_eigenvalue < 0:
+                raise ValueError("scout stable eigenvalue thresholds must be non-negative")
+            for name, path in (
+                ("scout_config_path", self.scout_config_path),
+                ("scout_anchor_checkpoint", self.scout_anchor_checkpoint),
+                ("scout_adapted_checkpoint", self.scout_adapted_checkpoint),
+            ):
+                if not path:
+                    raise ValueError(f"scout_kernel_transport.{name} must be set when enabled")
+            self.scout_transport_loss = ScoutKernelDeltaTransportLoss(
+                directional_damping=self.scout_transport_directional_damping,
+                displacement_budget_ratio=self.scout_transport_displacement_budget_ratio,
+            )
+            logger.info(
+                "Scout kernel transport enabled: weight=%s target=%s current_protocol=%s "
+                "directional_damping=%s displacement_budget_ratio=%s stable_relative_eigenvalue=%s",
+                self.scout_transport_loss_weight,
+                self.scout_transport_target_mode,
+                self.scout_transport_current_feature_protocol,
+                self.scout_transport_directional_damping,
+                self.scout_transport_displacement_budget_ratio,
+                self.scout_stable_relative_eigenvalue,
+            )
+
         # Build student and teacher models
         self.student = nn.ModuleDict(student_model_dict)
         self.teacher = nn.ModuleDict(teacher_model_dict)
@@ -303,6 +818,13 @@ class SSLMetaArch(nn.Module):
         self.channel_subset_enabled = bool(subset_cfg.enabled)
         self.channel_subset_min = int(subset_cfg.min_channels)
         self.channel_subset_max = int(subset_cfg.max_channels)
+        if (self.nci_enabled or self.cmgi_enabled) and self.channel_subset_enabled:
+            raise ValueError(
+                "conditional channel objectives and legacy channel_subset cannot be enabled together: "
+                "they keep the main SSL path full-channel symmetric"
+            )
+        if self.nci_enabled and self.cmgi_enabled:
+            raise ValueError("nested_channel_innovation and conditional_morphology_graph cannot be enabled together")
         if self.channel_subset_enabled:
             if self.channel_subset_min <= 0 or self.channel_subset_max < self.channel_subset_min:
                 raise ValueError(
@@ -320,6 +842,68 @@ class SSLMetaArch(nn.Module):
                 "Full-channel teacher -> subset-channel student enabled: student channels=%d..%d",
                 self.channel_subset_min,
                 self.channel_subset_max,
+            )
+        if self.nci_enabled:
+            if self.nci_min_channels <= 0 or self.nci_max_channels < self.nci_min_channels:
+                raise ValueError(
+                    "nested_channel_innovation requires 0 < min_channels <= max_channels, got "
+                    f"{self.nci_min_channels}, {self.nci_max_channels}"
+                )
+            supports_channel_masks = bool(getattr(self.student.backbone, "enable_channelvit", False)) or (
+                getattr(self.student.backbone, "stem_type", None) is not None
+            )
+            if not supports_channel_masks:
+                raise ValueError(
+                    "nested_channel_innovation.enabled=true requires ChannelViT or a channel-aware stem_type"
+                )
+            if cfg.distillation.enabled or cfg.multidistillation.enabled:
+                raise ValueError("nested_channel_innovation does not yet support distillation meta-architectures")
+            logger.info(
+                "Nested channel innovation enabled: subset channels=%d..%d overall_weight=%s protocol=%s "
+                "subset_checkpoint=%s full_checkpoint=%s martingale=%s",
+                self.nci_min_channels,
+                self.nci_max_channels,
+                self.nci_loss_weight,
+                self.nci_observation_protocol,
+                self.nci_checkpoint_subset_forward,
+                self.nci_checkpoint_full_forward,
+                self.nci_martingale_enabled,
+            )
+        if self.cmgi_enabled:
+            if self.cmgi_min_channels <= 0 or self.cmgi_max_channels < self.cmgi_min_channels:
+                raise ValueError(
+                    "conditional_morphology_graph requires 0 < min_channels <= max_channels, got "
+                    f"{self.cmgi_min_channels}, {self.cmgi_max_channels}"
+                )
+            if bool(getattr(self.student.backbone, "enable_channelvit", False)):
+                raise ValueError(
+                    "conditional_morphology_graph currently requires a fixed-grid channel-aware stem, not ChannelViT"
+                )
+            if getattr(self.student.backbone, "stem_type", None) is None:
+                raise ValueError(
+                    "conditional_morphology_graph.enabled=true requires a channel-aware stem_type"
+                )
+            if cfg.distillation.enabled or cfg.multidistillation.enabled:
+                raise ValueError("conditional_morphology_graph does not yet support distillation meta-architectures")
+            logger.info(
+                "Conditional morphology graph enabled: subset channels=%d..%d radius=%d overall_weight=%s",
+                self.cmgi_min_channels,
+                self.cmgi_max_channels,
+                self.cmgi_loss.local_radius,
+                self.cmgi_loss_weight,
+            )
+        if self.nri_enabled:
+            if cfg.distillation.enabled or cfg.multidistillation.enabled:
+                raise ValueError("nested_resolution_innovation does not yet support distillation meta-architectures")
+            _require_rgb_backbone_for_nri(self.student.backbone)
+            logger.info(
+                "Nested resolution innovation enabled on RGB PatchEmbed: downsample=%dx "
+                "feature=%s overall_weight=%s in_chans=%s stem_type=%s",
+                self.nri_downsample_factor,
+                self.nri_feature_mode,
+                self.nri_loss_weight,
+                getattr(self.student.backbone, "in_chans", None),
+                getattr(self.student.backbone, "stem_type", None),
             )
 
         # getting config params fixed:
@@ -482,6 +1066,14 @@ class SSLMetaArch(nn.Module):
         self.student.backbone.init_weights()
         self.student.dino_head.init_weights()
         self.student.ibot_head.init_weights()
+        if self.nci_enabled:
+            self.student.nci_predictor.reset_parameters()
+            if self.nci_martingale_enabled:
+                self.student.nci_mid_predictor.reset_parameters()
+        if self.cmgi_enabled:
+            self.student.cmgi_predictor.reset_parameters()
+        if self.nri_enabled:
+            self.student.nri_predictor.reset_parameters()
         self.dino_loss.init_weights()
         self.ibot_patch_loss.init_weights()
         if self.sigreg_enabled:
@@ -551,9 +1143,178 @@ class SSLMetaArch(nn.Module):
                 self.teacher.dino_head.init_weights()
                 self.teacher.ibot_head.init_weights()
             logger.info(f"Performing distillation from: {self.teacher}")
+        if self.acq_deflation_enabled and self.acq_deflation_mode != "direct_consistency":
+            # Do not register the anchor as a trainable/checkpoint module. It
+            # is a fixed calibration artifact copied after released weights load.
+            anchor_backbone = copy.deepcopy(self.teacher.backbone)
+            anchor_backbone.requires_grad_(False)
+            anchor_backbone.eval()
+            object.__setattr__(self, "_acquisition_anchor_backbone", anchor_backbone)
+        if self.scout_transport_enabled:
+            large_anchor = copy.deepcopy(self.teacher.backbone)
+            large_anchor.requires_grad_(False)
+            large_anchor.eval()
+            object.__setattr__(self, "_scout_large_anchor_backbone", large_anchor)
+            object.__setattr__(
+                self,
+                "_scout_anchor_backbone",
+                self._build_frozen_scout_backbone(str(self.scout_anchor_checkpoint)),
+            )
+            object.__setattr__(
+                self,
+                "_scout_adapted_backbone",
+                self._build_frozen_scout_backbone(
+                    str(self.scout_adapted_checkpoint),
+                    from_training_checkpoint=True,
+                ),
+            )
+
+    def _build_frozen_scout_backbone(
+        self,
+        checkpoint_path: str,
+        *,
+        from_training_checkpoint: bool = False,
+    ) -> nn.Module:
+        """Build a frozen scout from either released or continued-training weights."""
+        default_cfg = get_default_config()
+        scout_cfg = OmegaConf.merge(default_cfg, OmegaConf.load(str(self.scout_config_path)))
+        backbone, _ = build_model_from_cfg(scout_cfg, only_teacher=True)
+        dtype_by_name = {
+            "fp16": torch.float16,
+            "bf16": torch.bfloat16,
+            "fp32": torch.float32,
+        }
+        backbone.to_empty(device="cuda")
+        backbone.to(dtype=dtype_by_name[self.cfg.compute_precision.param_dtype])
+        holder = nn.ModuleDict({"backbone": backbone})
+        init_fsdp_model_from_checkpoint(
+            holder,
+            checkpoint_path,
+            skip_load_keys=["dino_loss.center", "ibot_patch_loss.center"],
+            keys_not_sharded=["backbone.rope_embed.periods", "qkv.bias_mask"],
+            process_group=distributed.get_process_subgroup(),
+            checkpoint_state_prefix="teacher.backbone." if from_training_checkpoint else None,
+        )
+        backbone.requires_grad_(False)
+        backbone.eval()
+        return backbone
+
+    @torch.no_grad()
+    def _get_acquisition_anchor_features(
+        self,
+        *,
+        images: Tensor,
+        channel_ids: Tensor | None,
+        channel_valid_mask: Tensor | None,
+        return_patches: bool = False,
+    ) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Return frozen CLS features and optionally aligned dense token fields."""
+        anchor_backbone = self._acquisition_anchor_backbone
+        if anchor_backbone is None:
+            raise RuntimeError("Acquisition anchor was not initialized")
+        anchor_output = anchor_backbone(
+            images,
+            channel_ids=channel_ids,
+            channel_valid_mask=channel_valid_mask,
+            is_training=True,
+        )
+        anchor_features = anchor_output["x_norm_clstoken"]
+        orbit_images = _make_acquisition_orbit_views(
+            images,
+            contrast_scale=self.acq_contrast_scale,
+            background_scale=self.acq_background_scale,
+            blur_mix=self.acq_blur_mix,
+            num_perturbations=self.acq_num_perturbations,
+        )
+        batch_size, num_views = orbit_images.shape[:2]
+        orbit_images = orbit_images.flatten(0, 1)
+        if channel_ids is not None:
+            channel_ids = channel_ids.unsqueeze(1).expand(-1, num_views, -1).flatten(0, 1)
+        if channel_valid_mask is not None:
+            channel_valid_mask = channel_valid_mask.unsqueeze(1).expand(-1, num_views, -1).flatten(0, 1)
+        orbit_output = anchor_backbone(
+            orbit_images,
+            channel_ids=channel_ids,
+            channel_valid_mask=channel_valid_mask,
+            is_training=True,
+        )
+        orbit_features = orbit_output["x_norm_clstoken"].unflatten(0, (batch_size, num_views))
+        if not return_patches:
+            return anchor_features, orbit_features
+        anchor_patches = anchor_output["x_norm_patchtokens"]
+        orbit_patches = orbit_output["x_norm_patchtokens"].unflatten(0, (batch_size, num_views))
+        return anchor_features, orbit_features, anchor_patches, orbit_patches
+
+    def _get_acquisition_student_features(
+        self,
+        *,
+        orbit_images: Tensor,
+        channel_ids: Tensor | None,
+        channel_valid_mask: Tensor | None,
+    ) -> Tensor:
+        """Return differentiable student features for a physical nuisance orbit."""
+        batch_size, num_views = orbit_images.shape[:2]
+        images = orbit_images.flatten(0, 1)
+        if channel_ids is not None:
+            channel_ids = channel_ids.unsqueeze(1).expand(-1, num_views, -1).flatten(0, 1)
+        if channel_valid_mask is not None:
+            channel_valid_mask = channel_valid_mask.unsqueeze(1).expand(-1, num_views, -1).flatten(0, 1)
+        features = self.student.backbone(
+            images,
+            channel_ids=channel_ids,
+            channel_valid_mask=channel_valid_mask,
+            is_training=True,
+        )["x_norm_clstoken"]
+        return features.unflatten(0, (batch_size, num_views))
+
+    @torch.no_grad()
+    def _get_scout_transport_artifacts(
+        self,
+        *,
+        images: Tensor,
+        masks: Tensor | None,
+        channel_ids: Tensor | None,
+        channel_valid_mask: Tensor | None,
+        include_large_anchor: bool = True,
+    ) -> tuple[Tensor | None, Tensor, Tensor]:
+        """Return an optional L anchor and a width-agnostic scout kernel delta."""
+        large_anchor = self._scout_large_anchor_backbone
+        scout_anchor = self._scout_anchor_backbone
+        scout_adapted = self._scout_adapted_backbone
+        if scout_anchor is None or scout_adapted is None or (include_large_anchor and large_anchor is None):
+            raise RuntimeError("Scout transport artifacts were not initialized")
+        large_features = None
+        if include_large_anchor:
+            assert large_anchor is not None
+            large_features = large_anchor(
+                images,
+                masks=masks,
+                channel_ids=channel_ids,
+                channel_valid_mask=channel_valid_mask,
+                is_training=True,
+            )["x_norm_clstoken"]
+        scout_anchor_features = scout_anchor(
+            images,
+            masks=masks,
+            channel_ids=channel_ids,
+            channel_valid_mask=channel_valid_mask,
+            is_training=True,
+        )["x_norm_clstoken"]
+        scout_adapted_features = scout_adapted(
+            images,
+            masks=masks,
+            channel_ids=channel_ids,
+            channel_valid_mask=channel_valid_mask,
+            is_training=True,
+        )["x_norm_clstoken"]
+        scout_adapted_kernel = centered_cosine_kernel(scout_adapted_features)
+        scout_delta = scout_adapted_kernel - centered_cosine_kernel(scout_anchor_features)
+        return large_features, scout_delta, scout_adapted_kernel
 
     @staticmethod
     def _is_channelvit_backbone(backbone: nn.Module) -> bool:
+        if isinstance(backbone, DistributedDataParallel):
+            backbone = backbone.module
         return bool(getattr(backbone, "enable_channelvit", False))
 
     @staticmethod
@@ -629,6 +1390,12 @@ class SSLMetaArch(nn.Module):
 
         student_global_channel_valid_mask = global_channel_valid_mask
         student_local_channel_valid_mask = local_channel_valid_mask
+        nci_global_channel_valid_mask = None
+        nci_active_samples = None
+        nci_lower_channel_valid_mask = None
+        nci_lower_active_samples = None
+        cmgi_global_channel_valid_mask = None
+        cmgi_active_samples = None
         if self.channel_subset_enabled:
             if global_channel_valid_mask is None or local_channel_valid_mask is None:
                 raise ValueError(
@@ -646,6 +1413,56 @@ class SSLMetaArch(nn.Module):
             student_local_channel_valid_mask = base_subset_mask.repeat(n_local_crops, 1)
             metrics_dict["teacher_channels_per_sample"] = base_full_mask.sum(dim=1).float().mean()
             metrics_dict["student_channels_per_sample"] = base_subset_mask.sum(dim=1).float().mean()
+        elif self.nci_enabled:
+            if global_channel_valid_mask is None or local_channel_valid_mask is None:
+                raise ValueError(
+                    "nested_channel_innovation.enabled=true requires channel ids/masks from a "
+                    "packwds_chvit dataset"
+            )
+            base_full_mask = global_channel_valid_mask[:B]
+            if self.nci_martingale_enabled:
+                base_middle_mask, base_lower_mask = _sample_nested_channel_masks(base_full_mask)
+                nci_global_channel_valid_mask = base_middle_mask.repeat(n_global_crops, 1)
+                nci_lower_channel_valid_mask = base_lower_mask.repeat(n_global_crops, 1)
+                nci_active_samples = base_full_mask.sum(dim=1) > base_middle_mask.sum(dim=1)
+                nci_lower_active_samples = base_middle_mask.sum(dim=1) > base_lower_mask.sum(dim=1)
+                metrics_dict["nci_middle_channels_per_sample"] = (
+                    base_middle_mask.sum(dim=1).float().mean()
+                )
+                metrics_dict["nci_lower_channels_per_sample"] = (
+                    base_lower_mask.sum(dim=1).float().mean()
+                )
+            else:
+                base_subset_mask = _sample_channel_subset_mask(
+                    base_full_mask,
+                    min_channels=self.nci_min_channels,
+                    max_channels=self.nci_max_channels,
+                    require_omission=True,
+                )
+                nci_global_channel_valid_mask = base_subset_mask.repeat(n_global_crops, 1)
+                nci_active_samples = base_full_mask.sum(dim=1) > base_subset_mask.sum(dim=1)
+            metrics_dict["nci_full_channels_per_sample"] = base_full_mask.sum(dim=1).float().mean()
+            metrics_dict["nci_subset_channels_per_sample"] = (
+                nci_global_channel_valid_mask[:B].sum(dim=1).float().mean()
+            )
+        elif self.cmgi_enabled:
+            if global_channel_valid_mask is None or local_channel_valid_mask is None:
+                raise ValueError(
+                    "conditional_morphology_graph.enabled=true requires channel ids/masks from a "
+                    "packwds_chvit dataset"
+                )
+            base_full_mask = global_channel_valid_mask[:B]
+            base_subset_mask = _sample_channel_subset_mask(
+                base_full_mask,
+                min_channels=self.cmgi_min_channels,
+                max_channels=self.cmgi_max_channels,
+                require_omission=True,
+            )
+            cmgi_global_channel_valid_mask = base_subset_mask.repeat(n_global_crops, 1)
+            cmgi_active_samples = base_full_mask.sum(dim=1) > base_subset_mask.sum(dim=1)
+            metrics_dict["cmgi_full_channels_per_sample"] = base_full_mask.sum(dim=1).float().mean()
+            metrics_dict["cmgi_subset_channels_per_sample"] = base_subset_mask.sum(dim=1).float().mean()
+            metrics_dict["cmgi_condition_source_teacher"] = float(self.cmgi_condition_source == "teacher")
         masks = data["collated_masks"].cuda(non_blocking=True)
         mask_indices_list = data["mask_indices_list"].cuda(non_blocking=True)
         masks_weight = data["masks_weight"].cuda(non_blocking=True)
@@ -691,6 +1508,86 @@ class SSLMetaArch(nn.Module):
             upperbound=data["upperbound"],
         )
 
+        # Build the frozen local nuisance geometry before the student forward.
+        # Gradient projection is an identity in the forward pass, so this does
+        # not alter teacher targets or the current student activations.
+        acq_anchor_features = None
+        acq_orbit_features = None
+        acq_tangent_basis = None
+        acq_tangent_active = None
+        acq_tangent_metrics: dict[str, Tensor] = {}
+        acq_patch_tangent_basis = None
+        acq_patch_tangent_active = None
+        acq_patch_tangent_metrics: dict[str, Tensor] = {}
+        acq_gradient_metrics: dict[str, Tensor] = {}
+        anchor_channel_ids = None
+        anchor_channel_mask = None
+        if self.acq_deflation_enabled:
+            anchor_images = global_crops.unflatten(0, (n_global_crops, B))[0]
+            anchor_channel_ids = (
+                global_channel_ids.unflatten(0, (n_global_crops, B))[0]
+                if global_channel_ids is not None
+                else None
+            )
+            anchor_channel_mask = (
+                global_channel_valid_mask.unflatten(0, (n_global_crops, B))[0]
+                if global_channel_valid_mask is not None
+                else None
+            )
+            if self.acq_deflation_mode != "direct_consistency":
+                use_patch_projection = (
+                    self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"}
+                    and self.acq_projection_scope == "cls_patch"
+                )
+                anchor_artifacts = self._get_acquisition_anchor_features(
+                    images=anchor_images,
+                    channel_ids=anchor_channel_ids,
+                    channel_valid_mask=anchor_channel_mask,
+                    return_patches=use_patch_projection,
+                )
+                if use_patch_projection:
+                    (
+                        acq_anchor_features,
+                        acq_orbit_features,
+                        acq_anchor_patches,
+                        acq_orbit_patches,
+                    ) = anchor_artifacts
+                else:
+                    acq_anchor_features, acq_orbit_features = anchor_artifacts
+                if self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"}:
+                    acq_tangent_basis, acq_tangent_active, acq_tangent_metrics = (
+                        build_acquisition_tangent_basis(
+                            anchor_features=acq_anchor_features,
+                            perturbed_anchor_features=acq_orbit_features,
+                            min_singular_value=float(self.cfg.acquisition_orbit_deflation.min_singular_value),
+                            relative_singular_value=float(
+                                self.cfg.acquisition_orbit_deflation.relative_singular_value
+                            ),
+                        )
+                    )
+                    if self.acq_deflation_mode == "random_gradient_projection":
+                        acq_tangent_basis = rank_matched_random_tangent_basis(acq_tangent_basis)
+                    if use_patch_projection:
+                        acq_patch_tangent_basis, acq_patch_tangent_active, patch_metrics = (
+                            build_acquisition_tangent_basis(
+                                anchor_features=acq_anchor_patches.flatten(0, 1),
+                                perturbed_anchor_features=acq_orbit_patches.permute(0, 2, 1, 3).flatten(0, 1),
+                                min_singular_value=float(
+                                    self.cfg.acquisition_orbit_deflation.min_singular_value
+                                ),
+                                relative_singular_value=float(
+                                    self.cfg.acquisition_orbit_deflation.relative_singular_value
+                                ),
+                            )
+                        )
+                        acq_patch_tangent_metrics = {
+                            f"acq_patch_{name[4:]}": value for name, value in patch_metrics.items()
+                        }
+                        if self.acq_deflation_mode == "random_gradient_projection":
+                            acq_patch_tangent_basis = rank_matched_random_tangent_basis(
+                                acq_patch_tangent_basis
+                            )
+
         # Student output (will trigger an all-gather to unshard)
         student_global, student_local = self.get_student_output(
             global_crops=global_crops.unflatten(0, (n_global_crops, B)),
@@ -710,7 +1607,192 @@ class SSLMetaArch(nn.Module):
             upperbound=data["upperbound"],
             masks=masks,
             mask_indices_list=mask_indices_list,
+            global_tangent_basis=acq_tangent_basis,
+            global_tangent_active=acq_tangent_active,
+            global_patch_tangent_basis=acq_patch_tangent_basis,
+            global_patch_tangent_active=acq_patch_tangent_active,
+            tangent_projection_strength=self.acq_projection_strength,
+            tangent_gradient_metrics=acq_gradient_metrics,
         )
+
+        if self.nci_enabled:
+            nci_global_crops = global_crops.unflatten(0, (n_global_crops, B))
+            nci_lower_cls = None
+            nci_global_channel_ids = (
+                global_channel_ids.unflatten(0, (n_global_crops, B))
+                if global_channel_ids is not None
+                else None
+            )
+            if self.nci_observation_protocol == "unmasked_shared":
+                # The residual r_F = z_F - E[z_F | z_S] is a conditional
+                # channel quantity, not an iBOT-mask quantity.  Keep the
+                # normal masked main path intact, but make both auxiliary
+                # observations unmasked and otherwise identical.
+                nci_full_cls = self.get_nci_full_output(
+                    global_crops=nci_global_crops,
+                    global_channel_ids=nci_global_channel_ids,
+                    global_channel_valid_mask=global_channel_valid_mask.unflatten(0, (n_global_crops, B)),
+                )
+                nci_subset_cls = self.get_nci_subset_output(
+                    global_crops=nci_global_crops,
+                    global_channel_ids=nci_global_channel_ids,
+                    global_channel_valid_mask=nci_global_channel_valid_mask.unflatten(0, (n_global_crops, B)),
+                    requires_grad=not self.nci_loss.stop_gradient,
+                )
+            elif self.nci_observation_protocol == "masked_shared":
+                # Hold the exact iBOT observation fixed on both sides.  This
+                # isolates channel-conditional innovation from the legacy
+                # full-masked/subset-unmasked mismatch.
+                nci_full_cls = student_global["cls_pre_head"]
+                nci_subset_cls = self.get_nci_subset_output(
+                    global_crops=nci_global_crops,
+                    masks=masks,
+                    global_channel_ids=nci_global_channel_ids,
+                    global_channel_valid_mask=nci_global_channel_valid_mask.unflatten(0, (n_global_crops, B)),
+                    # M must be differentiable so the lower martingale
+                    # increment can shape the shared backbone. The F|M loss
+                    # still detaches M, preserving the NCI firewall.
+                    requires_grad=self.nci_martingale_enabled or not self.nci_loss.stop_gradient,
+                    checkpoint_backbone=self.nci_martingale_enabled
+                    and self.nci_martingale_checkpoint_middle_forward,
+                )
+                if self.nci_martingale_enabled:
+                    if nci_lower_channel_valid_mask is None:
+                        raise RuntimeError("Martingale NCI lower channel masks were not initialized")
+                    nci_lower_cls = self.get_nci_subset_output(
+                        global_crops=nci_global_crops,
+                        masks=masks,
+                        global_channel_ids=nci_global_channel_ids,
+                        global_channel_valid_mask=nci_lower_channel_valid_mask.unflatten(
+                            0, (n_global_crops, B)
+                        ),
+                        requires_grad=not self.nci_loss.stop_gradient,
+                    )
+            else:
+                # Reproduce pre-correction screens only.  This mixes the
+                # masked main-path feature with an unmasked subset feature.
+                nci_full_cls = student_global["cls_pre_head"]
+                nci_subset_cls = self.get_nci_subset_output(
+                    global_crops=nci_global_crops,
+                    global_channel_ids=nci_global_channel_ids,
+                    global_channel_valid_mask=nci_global_channel_valid_mask.unflatten(0, (n_global_crops, B)),
+                    requires_grad=True,
+                )
+        else:
+            nci_full_cls = None
+            nci_subset_cls = None
+            nci_lower_cls = None
+
+        if self.cmgi_enabled:
+            cmgi_subset_patches = self.get_cmgi_subset_output(
+                global_crops=global_crops.unflatten(0, (n_global_crops, B)),
+                global_channel_ids=global_channel_ids.unflatten(0, (n_global_crops, B))
+                if global_channel_ids is not None
+                else None,
+                global_channel_valid_mask=cmgi_global_channel_valid_mask.unflatten(0, (n_global_crops, B)),
+            )
+        else:
+            cmgi_subset_patches = None
+
+        if self.nri_enabled:
+            nri_low_features = self.get_nri_low_resolution_output(
+                global_crops=global_crops.unflatten(0, (n_global_crops, B)),
+                masks=masks,
+                global_channel_ids=global_channel_ids.unflatten(0, (n_global_crops, B))
+                if global_channel_ids is not None
+                else None,
+                global_channel_valid_mask=global_channel_valid_mask.unflatten(0, (n_global_crops, B))
+                if global_channel_valid_mask is not None
+                else None,
+            )
+        else:
+            nri_low_features = None
+
+        if self.acq_deflation_enabled and self.acq_deflation_mode == "direct_consistency":
+            acq_orbit_images = _make_acquisition_orbit_views(
+                anchor_images,
+                contrast_scale=self.acq_contrast_scale,
+                background_scale=self.acq_background_scale,
+                blur_mix=self.acq_blur_mix,
+                num_perturbations=self.acq_num_perturbations,
+            )
+            acq_orbit_features = self._get_acquisition_student_features(
+                orbit_images=acq_orbit_images,
+                channel_ids=anchor_channel_ids,
+                channel_valid_mask=anchor_channel_mask,
+            )
+
+        if self.scout_transport_enabled:
+            scout_global_crops = global_crops.unflatten(0, (n_global_crops, B))
+            scout_global_masks = masks.unflatten(0, (n_global_crops, B))
+            scout_global_channel_ids = (
+                global_channel_ids.unflatten(0, (n_global_crops, B))
+                if global_channel_ids is not None
+                else None
+            )
+            scout_global_channel_mask = (
+                global_channel_valid_mask.unflatten(0, (n_global_crops, B))
+                if global_channel_valid_mask is not None
+                else None
+            )
+            scout_first_mask = (
+                scout_global_masks[0]
+                if self.scout_transport_current_feature_protocol == "mask_matched"
+                else None
+            )
+            (
+                scout_large_anchor_features,
+                scout_delta,
+                scout_final_kernel,
+            ) = self._get_scout_transport_artifacts(
+                images=scout_global_crops[0],
+                masks=scout_first_mask,
+                channel_ids=scout_global_channel_ids[0] if scout_global_channel_ids is not None else None,
+                channel_valid_mask=scout_global_channel_mask[0]
+                if scout_global_channel_mask is not None
+                else None,
+            )
+            if self.scout_transport_target_mode == "final_kernel":
+                scout_target = scout_final_kernel
+                scout_stability_metrics = {}
+            elif self.scout_transport_target_mode in {"stable_delta", "shuffled_stable_delta"}:
+                _, scout_second_delta, _ = self._get_scout_transport_artifacts(
+                    images=scout_global_crops[1],
+                    masks=scout_global_masks[1]
+                    if self.scout_transport_current_feature_protocol == "mask_matched"
+                    else None,
+                    channel_ids=scout_global_channel_ids[1] if scout_global_channel_ids is not None else None,
+                    channel_valid_mask=scout_global_channel_mask[1]
+                    if scout_global_channel_mask is not None
+                    else None,
+                    include_large_anchor=False,
+                )
+                scout_target, scout_stability_metrics = cross_view_stable_kernel_delta(
+                    scout_delta,
+                    scout_second_delta,
+                    relative_eigenvalue=self.scout_stable_relative_eigenvalue,
+                    min_eigenvalue=self.scout_stable_min_eigenvalue,
+                )
+            else:
+                scout_target = scout_delta
+                scout_stability_metrics = {}
+            if self.scout_transport_target_mode in {"shuffled_delta", "shuffled_stable_delta"}:
+                # Preserve target energy and spectrum while breaking the
+                # sample correspondence. This isolates the proposed scout
+                # relation direction from generic auxiliary-loss strength.
+                shuffle_generator = torch.Generator(device=scout_target.device)
+                shuffle_generator.manual_seed(17_291 + self._scout_shuffled_target_step)
+                self._scout_shuffled_target_step += 1
+                permutation = torch.randperm(
+                    B,
+                    device=scout_target.device,
+                    generator=shuffle_generator,
+                )
+                scout_target = scout_target[permutation][:, permutation]
+        else:
+            scout_large_anchor_features = None
+            scout_target = None
+            scout_stability_metrics = {}
 
         # Gram output
         if self.gram_use_loss:
@@ -741,9 +1823,187 @@ class SSLMetaArch(nn.Module):
             masks_weight=masks_weight,
             iteration=iteration,
         )
+        if self.nci_enabled:
+            if nci_full_cls is None or nci_subset_cls is None:
+                raise RuntimeError("Nested channel innovation features were not initialized")
+            nci_loss, nci_metrics = self.nci_loss(
+                full_features=nci_full_cls,
+                subset_features=nci_subset_cls,
+                active_samples=nci_active_samples,
+                predictor=self.student.nci_predictor,
+            )
+            if self.nci_martingale_enabled:
+                if nci_lower_cls is None or nci_lower_active_samples is None:
+                    raise RuntimeError("Martingale NCI features were not initialized")
+                nci_lower_loss, nci_lower_metrics = self.nci_mid_loss(
+                    full_features=nci_subset_cls,
+                    subset_features=nci_lower_cls,
+                    active_samples=nci_lower_active_samples,
+                    predictor=self.student.nci_mid_predictor,
+                )
+                upper_increment = conditional_innovation_residual(
+                    full_features=nci_full_cls,
+                    subset_features=nci_subset_cls,
+                    predictor=self.student.nci_predictor,
+                    stop_gradient=self.nci_loss.stop_gradient,
+                )
+                lower_increment = conditional_innovation_residual(
+                    full_features=nci_subset_cls,
+                    subset_features=nci_lower_cls,
+                    predictor=self.student.nci_mid_predictor,
+                    stop_gradient=self.nci_mid_loss.stop_gradient,
+                )
+                nci_cross_loss, nci_cross_metrics = martingale_increment_orthogonality(
+                    upper_increment=upper_increment,
+                    lower_increment=lower_increment,
+                    active_samples=nci_lower_active_samples,
+                )
+                # Average the two same-scale conditional objectives so MCI is
+                # not merely a stronger auxiliary-loss baseline than NCI.
+                nci_loss = (
+                    nci_loss + self.nci_martingale_lower_loss_weight * nci_lower_loss
+                ) / (1.0 + self.nci_martingale_lower_loss_weight)
+                nci_loss = nci_loss + self.nci_martingale_cross_orthogonality_weight * nci_cross_loss
+                loss_dict["nci_martingale_lower_loss"] = nci_lower_loss.detach()
+                loss_dict["nci_martingale_lower_loss_weight"] = self.nci_martingale_lower_loss_weight
+                loss_dict["nci_martingale_cross_loss_weight"] = (
+                    self.nci_martingale_cross_orthogonality_weight
+                )
+                loss_dict.update(nci_lower_metrics)
+                loss_dict.update(nci_cross_metrics)
+            loss_accumulator += self.nci_loss_weight * nci_loss
+            loss_dict["nci_loss"] = nci_loss.detach()
+            loss_dict["nci_loss_weight"] = self.nci_loss_weight
+            loss_dict["nci_martingale_enabled"] = float(self.nci_martingale_enabled)
+            loss_dict["nci_unmasked_shared_observation"] = float(
+                self.nci_observation_protocol == "unmasked_shared"
+            )
+            loss_dict["nci_masked_shared_observation"] = float(
+                self.nci_observation_protocol == "masked_shared"
+            )
+            loss_dict.update(nci_metrics)
+        if self.cmgi_enabled:
+            cmgi_loss, cmgi_metrics = self.cmgi_loss(
+                full_features=student_global["patch_pre_head"],
+                teacher_features=teacher_global["patch_pre_head"],
+                subset_features=cmgi_subset_patches,
+                active_samples=cmgi_active_samples,
+                predictor=self.student.cmgi_predictor,
+                masks=masks.unflatten(0, (n_global_crops, B)),
+            )
+            loss_accumulator += self.cmgi_loss_weight * cmgi_loss
+            loss_dict["cmgi_loss"] = cmgi_loss.detach()
+            loss_dict["cmgi_loss_weight"] = self.cmgi_loss_weight
+            loss_dict.update(cmgi_metrics)
+        if self.nri_enabled:
+            nri_full_features = self._select_nri_features(
+                student_global["cls_pre_head"],
+                student_global["patch_pre_head"],
+            )
+            nri_loss, nri_metrics = self.nri_loss(
+                full_features=nri_full_features,
+                subset_features=nri_low_features,
+                active_samples=torch.ones(B, dtype=torch.bool, device=nri_full_features.device),
+                predictor=self.student.nri_predictor,
+            )
+            loss_accumulator += self.nri_loss_weight * nri_loss
+            loss_dict["nri_loss"] = nri_loss.detach()
+            loss_dict["nri_loss_weight"] = self.nri_loss_weight
+            loss_dict.update(nri_metrics)
+        if self.acq_deflation_enabled:
+            current_features = student_global["cls_pre_head"][0]
+            if self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"}:
+                if acq_tangent_basis is None or acq_tangent_active is None or acq_anchor_features is None:
+                    raise RuntimeError("Acquisition tangent projection was not initialized")
+                acq_loss = current_features.new_zeros(())
+                acq_metrics = {
+                    **acq_tangent_metrics,
+                    **acq_patch_tangent_metrics,
+                    "acq_projection_prehead_tangent_fraction": acquisition_tangent_fraction(
+                        current_features.detach() - acq_anchor_features,
+                        tangent_basis=acq_tangent_basis,
+                        active_rows=acq_tangent_active,
+                    ).detach(),
+                    "acq_gradient_projection": current_features.new_tensor(1.0),
+                    "acq_projection_strength": current_features.new_tensor(self.acq_projection_strength),
+                }
+            elif self.acq_deflation_mode == "direct_consistency":
+                positive = F.cosine_similarity(
+                    current_features.unsqueeze(1), acq_orbit_features, dim=-1
+                )
+                acq_loss = (1.0 - positive).mean()
+                acq_metrics = {
+                    "acq_direct_consistency": acq_loss.detach(),
+                    "acq_direct_positive_cosine": positive.mean().detach(),
+                }
+            else:
+                if self.acq_deflation_mode == "random_tangent":
+                    acq_orbit_features = acq_anchor_features.unsqueeze(1) + torch.randn_like(acq_orbit_features)
+                if self.acq_deflation_loss is None:
+                    raise RuntimeError("Acquisition orbit deflation loss was not initialized")
+                acq_loss, _, acq_metrics = self.acq_deflation_loss(
+                    current_features=current_features,
+                    anchor_features=acq_anchor_features,
+                    perturbed_anchor_features=acq_orbit_features,
+                )
+            if self.acq_deflation_mode not in {"gradient_projection", "random_gradient_projection"}:
+                loss_accumulator += self.acq_deflation_loss_weight * acq_loss
+            loss_dict["acq_deflation_loss"] = acq_loss.detach()
+            loss_dict["acq_deflation_loss_weight"] = (
+                0.0
+                if self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"}
+                else self.acq_deflation_loss_weight
+            )
+            loss_dict["acq_random_tangent"] = float(
+                self.acq_deflation_mode in {"random_tangent", "random_gradient_projection"}
+            )
+            loss_dict.update(acq_metrics)
+        if self.scout_transport_enabled:
+            if scout_large_anchor_features is None or scout_target is None:
+                raise RuntimeError("Scout transport artifacts were not initialized")
+            scout_current_features = student_global["cls_pre_head"][0]
+            if self.scout_transport_current_feature_protocol == "anchor_consistent":
+                # The frozen L anchor saw an unmasked global crop. Re-evaluate
+                # the trainable L on that exact observation so its kernel delta
+                # represents adaptation rather than the fixed iBOT mask effect.
+                scout_current_features = self.student.backbone(
+                    scout_global_crops[0],
+                    channel_ids=scout_global_channel_ids[0]
+                    if scout_global_channel_ids is not None
+                    else None,
+                    channel_valid_mask=scout_global_channel_mask[0]
+                    if scout_global_channel_mask is not None
+                    else None,
+                    is_training=True,
+                )["x_norm_clstoken"]
+            scout_loss, scout_metrics = self.scout_transport_loss(
+                current_features=scout_current_features,
+                anchor_features=scout_large_anchor_features,
+                scout_delta=scout_target,
+            )
+            loss_accumulator += self.scout_transport_loss_weight * scout_loss
+            loss_dict["scout_kernel_transport_loss"] = scout_loss.detach()
+            loss_dict["scout_kernel_transport_loss_weight"] = self.scout_transport_loss_weight
+            loss_dict["scout_kernel_transport_displacement_budget_ratio"] = (
+                self.scout_transport_displacement_budget_ratio
+            )
+            loss_dict["scout_kernel_transport_is_delta"] = float(
+                self.scout_transport_target_mode
+                in {"delta", "stable_delta", "shuffled_delta", "shuffled_stable_delta"}
+            )
+            loss_dict["scout_kernel_transport_anchor_consistent"] = float(
+                self.scout_transport_current_feature_protocol in {"anchor_consistent", "mask_matched"}
+            )
+            loss_dict["scout_kernel_transport_mask_matched"] = float(
+                self.scout_transport_current_feature_protocol == "mask_matched"
+            )
+            loss_dict.update(scout_metrics)
+            loss_dict.update(scout_stability_metrics)
 
         scaled_loss = loss_accumulator / float(loss_divisor)
         self.backprop_loss(scaled_loss)
+        if acq_gradient_metrics:
+            loss_dict.update(acq_gradient_metrics)
 
         # Log loss finite check at iteration 0 to catch degenerate initialization early
         if iteration == 0 and distributed.is_main_process():
@@ -901,6 +2161,12 @@ class SSLMetaArch(nn.Module):
         local_channel_ids=None,
         global_channel_valid_mask=None,
         local_channel_valid_mask=None,
+        global_tangent_basis: Tensor | None = None,
+        global_tangent_active: Tensor | None = None,
+        global_patch_tangent_basis: Tensor | None = None,
+        global_patch_tangent_active: Tensor | None = None,
+        tangent_projection_strength: float = 1.0,
+        tangent_gradient_metrics: dict[str, Tensor] | None = None,
     ):
         n_global_crops, B, rgb, H, W = global_crops.shape
         n_local_crops, B, rgb, H, W = local_crops.shape
@@ -933,6 +2199,102 @@ class SSLMetaArch(nn.Module):
             local_out["x_storage_tokens"],
             local_out["x_norm_patchtokens"],
         )
+
+        if global_tangent_basis is not None or global_tangent_active is not None:
+            if global_tangent_basis is None or global_tangent_active is None:
+                raise ValueError("global_tangent_basis and global_tangent_active must be provided together")
+            if global_tangent_basis.shape[0] != B:
+                raise ValueError(
+                    "The acquisition tangent must describe the first global crop with batch size "
+                    f"{B}, got {tuple(global_tangent_basis.shape)}"
+                )
+            first_global_cls = apply_acquisition_tangent_gradient_projection(
+                g_cls[:B],
+                tangent_basis=global_tangent_basis,
+                active_rows=global_tangent_active,
+                strength=tangent_projection_strength,
+            )
+            if tangent_gradient_metrics is not None:
+                def _record_tangent_gradient(gradient: Tensor) -> Tensor:
+                    with torch.no_grad():
+                        tangent_part = project_onto_acquisition_tangent(
+                            gradient,
+                            tangent_basis=global_tangent_basis,
+                            active_rows=global_tangent_active,
+                        )
+                        filtered = gradient - tangent_projection_strength * tangent_part
+                        gradient_energy = gradient.float().square().sum(dim=-1).mean()
+                        tangent_gradient_metrics["acq_gradient_tangent_fraction_before"] = (
+                            tangent_part.float().square().sum(dim=-1).mean()
+                            / gradient_energy.clamp_min(1.0e-12)
+                        ).detach()
+                        tangent_gradient_metrics["acq_gradient_tangent_fraction_after"] = (
+                            acquisition_tangent_fraction(
+                                filtered,
+                                tangent_basis=global_tangent_basis,
+                                active_rows=global_tangent_active,
+                            ).detach()
+                        )
+                        tangent_gradient_metrics["acq_gradient_removed_energy_fraction"] = (
+                            (tangent_projection_strength * tangent_part).float().square().sum(dim=-1).mean()
+                            / gradient_energy.clamp_min(1.0e-12)
+                        ).detach()
+                    return gradient
+
+                first_global_cls.register_hook(_record_tangent_gradient)
+            # The first global crop is the calibrated physical view. Other
+            # DINO crops retain their ordinary gradients as a stable control.
+            g_cls = torch.cat((first_global_cls, g_cls[B:]), dim=0)
+
+        if global_patch_tangent_basis is not None or global_patch_tangent_active is not None:
+            if global_patch_tangent_basis is None or global_patch_tangent_active is None:
+                raise ValueError(
+                    "global_patch_tangent_basis and global_patch_tangent_active must be provided together"
+                )
+            patch_count = g_patch.shape[1]
+            if global_patch_tangent_basis.shape[0] != B * patch_count:
+                raise ValueError(
+                    "The dense acquisition tangent must describe B * P tokens from the first global crop, "
+                    f"got {tuple(global_patch_tangent_basis.shape)} for B={B}, P={patch_count}"
+                )
+            first_global_patches = apply_acquisition_tangent_gradient_projection(
+                g_patch[:B].flatten(0, 1),
+                tangent_basis=global_patch_tangent_basis,
+                active_rows=global_patch_tangent_active,
+                strength=tangent_projection_strength,
+            )
+            if tangent_gradient_metrics is not None:
+                def _record_patch_tangent_gradient(gradient: Tensor) -> Tensor:
+                    with torch.no_grad():
+                        tangent_part = project_onto_acquisition_tangent(
+                            gradient,
+                            tangent_basis=global_patch_tangent_basis,
+                            active_rows=global_patch_tangent_active,
+                        )
+                        filtered = gradient - tangent_projection_strength * tangent_part
+                        gradient_energy = gradient.float().square().sum(dim=-1).mean()
+                        tangent_gradient_metrics["acq_patch_gradient_tangent_fraction_before"] = (
+                            tangent_part.float().square().sum(dim=-1).mean()
+                            / gradient_energy.clamp_min(1.0e-12)
+                        ).detach()
+                        tangent_gradient_metrics["acq_patch_gradient_tangent_fraction_after"] = (
+                            acquisition_tangent_fraction(
+                                filtered,
+                                tangent_basis=global_patch_tangent_basis,
+                                active_rows=global_patch_tangent_active,
+                            ).detach()
+                        )
+                        tangent_gradient_metrics["acq_patch_gradient_removed_energy_fraction"] = (
+                            (tangent_projection_strength * tangent_part).float().square().sum(dim=-1).mean()
+                            / gradient_energy.clamp_min(1.0e-12)
+                        ).detach()
+                    return gradient
+
+                first_global_patches.register_hook(_record_patch_tangent_gradient)
+            g_patch = torch.cat(
+                (first_global_patches.unflatten(0, (B, patch_count)), g_patch[B:]),
+                dim=0,
+            )
 
         # IBOT head only on masked patches
         masked_patches_pre_head = torch.index_select(g_patch.flatten(0, 1), dim=0, index=mask_indices_list)
@@ -971,6 +2333,159 @@ class SSLMetaArch(nn.Module):
         }
 
         return global_out, local_out
+
+    def _get_nci_channel_output(
+        self,
+        *,
+        global_crops,
+        masks: Tensor | None = None,
+        global_channel_ids=None,
+        global_channel_valid_mask,
+        requires_grad: bool,
+        checkpoint_backbone: bool = False,
+    ) -> Tensor:
+        """Encode an unmasked full/subset channel view for conditional NCI."""
+        n_global_crops, batch_size, _, _, _ = global_crops.shape
+        images = global_crops.flatten(0, 1)
+        channel_ids = global_channel_ids.flatten(0, 1) if global_channel_ids is not None else None
+        channel_valid_mask = global_channel_valid_mask.flatten(0, 1)
+        if checkpoint_backbone:
+            if not requires_grad:
+                raise ValueError("NCI activation checkpointing requires a differentiable subset forward")
+
+            def encode(images: Tensor) -> Tensor:
+                backbone_out = self.student.backbone(
+                    images,
+                    masks=masks,
+                    channel_ids=channel_ids,
+                    channel_valid_mask=channel_valid_mask,
+                    is_training=True,
+                )
+                return backbone_out["x_norm_clstoken"]
+
+            # Non-reentrant checkpointing retains parameter gradients even when
+            # the image tensor itself is not a differentiation target.
+            cls_tokens = activation_checkpoint(encode, images, use_reentrant=False)
+        else:
+            grad_context = nullcontext() if requires_grad else torch.no_grad()
+            with grad_context:
+                backbone_out = self.student.backbone(
+                    images,
+                    masks=masks,
+                    channel_ids=channel_ids,
+                    channel_valid_mask=channel_valid_mask,
+                    is_training=True,
+                )
+            cls_tokens = backbone_out["x_norm_clstoken"]
+        return cls_tokens.unflatten(0, (n_global_crops, batch_size))
+
+    def get_nci_full_output(
+        self,
+        *,
+        global_crops,
+        global_channel_ids=None,
+        global_channel_valid_mask,
+    ) -> Tensor:
+        """Return the differentiable full-channel side of the shared observation."""
+        return self._get_nci_channel_output(
+            global_crops=global_crops,
+            global_channel_ids=global_channel_ids,
+            global_channel_valid_mask=global_channel_valid_mask,
+            requires_grad=True,
+            checkpoint_backbone=self.nci_checkpoint_full_forward,
+        )
+
+    def get_nci_subset_output(
+        self,
+        *,
+        global_crops,
+        masks: Tensor | None = None,
+        global_channel_ids=None,
+        global_channel_valid_mask,
+        requires_grad: bool,
+        checkpoint_backbone: bool | None = None,
+    ) -> Tensor:
+        """Return the subset side, optionally behind the stop-gradient firewall."""
+        return self._get_nci_channel_output(
+            global_crops=global_crops,
+            masks=masks,
+            global_channel_ids=global_channel_ids,
+            global_channel_valid_mask=global_channel_valid_mask,
+            requires_grad=requires_grad,
+            checkpoint_backbone=requires_grad
+            and (
+                self.nci_checkpoint_subset_forward
+                if checkpoint_backbone is None
+                else checkpoint_backbone
+            ),
+        )
+
+    def get_cmgi_subset_output(
+        self,
+        *,
+        global_crops,
+        global_channel_ids=None,
+        global_channel_valid_mask,
+    ) -> Tensor:
+        """Encode S in the same feature space used to define CMGI innovation."""
+        n_global_crops, batch_size, _, _, _ = global_crops.shape
+        images = global_crops.flatten(0, 1)
+        channel_ids = global_channel_ids.flatten(0, 1) if global_channel_ids is not None else None
+        channel_valid_mask = global_channel_valid_mask.flatten(0, 1)
+        # The population target is E[T(C) | T(S)].  Reading S from the EMA
+        # teacher therefore keeps the gate's conditional quantity stable as
+        # the full student adapts. The student option remains useful for an
+        # explicit ablation of this design choice.
+        if self.cmgi_condition_source == "teacher":
+            source_backbone = self.teacher.backbone
+            grad_context = torch.no_grad()
+        else:
+            source_backbone = self.student.backbone
+            grad_context = torch.no_grad() if self.cmgi_loss.stop_gradient else nullcontext()
+        with grad_context:
+            backbone_out = source_backbone(
+                images,
+                channel_ids=channel_ids,
+                channel_valid_mask=channel_valid_mask,
+                is_training=True,
+            )
+        return backbone_out["x_norm_patchtokens"].unflatten(0, (n_global_crops, batch_size))
+
+    def _select_nri_features(self, cls_features: Tensor, patch_features: Tensor) -> Tensor:
+        if self.nri_feature_mode == "cls":
+            return cls_features
+        return 0.5 * (cls_features + patch_features.mean(dim=-2))
+
+    def get_nri_low_resolution_output(
+        self,
+        *,
+        global_crops,
+        masks,
+        global_channel_ids=None,
+        global_channel_valid_mask=None,
+    ) -> Tensor:
+        """Encode a nested low-pass view without exposing predictor gradients."""
+        n_global_crops, batch_size, _, _, _ = global_crops.shape
+        images = _make_low_resolution_observation(
+            global_crops.flatten(0, 1),
+            self.nri_downsample_factor,
+        )
+        channel_ids = global_channel_ids.flatten(0, 1) if global_channel_ids is not None else None
+        channel_valid_mask = (
+            global_channel_valid_mask.flatten(0, 1) if global_channel_valid_mask is not None else None
+        )
+        grad_context = torch.no_grad() if self.nri_loss.stop_gradient else nullcontext()
+        with grad_context:
+            backbone_out = self.student.backbone(
+                images,
+                masks=masks,
+                channel_ids=channel_ids,
+                channel_valid_mask=channel_valid_mask,
+                is_training=True,
+            )
+        cls_features = backbone_out["x_norm_clstoken"].unflatten(0, (n_global_crops, batch_size))
+        patch_features = backbone_out["x_norm_patchtokens"].unflatten(0, (n_global_crops, batch_size))
+        return self._select_nri_features(cls_features, patch_features)
 
     def compute_losses(
         self,
@@ -1180,6 +2695,7 @@ class SSLMetaArch(nn.Module):
             std=cfg.crops.rgb_std,
             float_input=getattr(cfg.crops, "float_input", False),
             augmentation_policy=getattr(cfg.crops, "augmentation_policy", "dinov3"),
+            paired_global_geometry=getattr(cfg.crops, "paired_global_geometry", False),
         )
 
     def get_maybe_fused_params_for_submodel(self, m: nn.Module):
@@ -1207,10 +2723,32 @@ class SSLMetaArch(nn.Module):
             params_groups = list(self.get_maybe_fused_params_for_submodel(m))
             for group in params_groups:
                 group["is_backbone"] = name == "backbone"
+                if name in {"nci_predictor", "nci_mid_predictor"}:
+                    group["lr_multiplier"] *= self.nci_predictor_lr_multiplier
+                elif name == "cmgi_predictor":
+                    group["lr_multiplier"] *= self.cmgi_predictor_lr_multiplier
+                elif name == "nri_predictor":
+                    group["lr_multiplier"] *= self.nri_predictor_lr_multiplier
             all_params_groups += params_groups
         return all_params_groups
 
     def prepare_for_distributed_training(self) -> None:
+        if self.distributed_mode == "ddp":
+            # Keep checkpoint keys plain until initialization has loaded the
+            # released backbone; DDP wrapping happens immediately afterward.
+            dtype_by_name = {
+                "fp16": torch.float16,
+                "bf16": torch.bfloat16,
+                "fp32": torch.float32,
+            }
+            param_dtype = dtype_by_name[self.cfg.compute_precision.param_dtype]
+            for model in (self.student, self.model_ema, getattr(self, "gram_teacher", None)):
+                if model is not None:
+                    model.to_empty(device="cuda")
+                    model.to(dtype=param_dtype)
+            logger.info("DISTRIBUTED DDP -- materialized full model replicas")
+            return
+
         process_subgroup = distributed.get_process_subgroup()
         default_process_group = distributed.get_default_process_group()
         inference_only_models = [self.model_ema]
@@ -1221,6 +2759,9 @@ class SSLMetaArch(nn.Module):
         if self.cfg.distillation.enabled:
             inference_only_models.append(self.teacher)
             inference_only_models_process_groups.append(default_process_group)
+        # Keep DDP usable on legacy PyTorch installations that predate FSDP2.
+        from dinov3.fsdp.ac_compile_parallelize import ac_compile_parallelize
+
         ac_compile_parallelize(
             trained_model=self.student,
             inference_only_models=inference_only_models,
@@ -1228,6 +2769,26 @@ class SSLMetaArch(nn.Module):
             trained_model_process_group=process_subgroup,
             inference_only_models_process_groups=inference_only_models_process_groups,
         )
+
+    def finish_distributed_training_setup(self) -> None:
+        """Wrap trainable submodules after plain-checkpoint initialization."""
+        if self.distributed_mode != "ddp" or self._ddp_wrapped:
+            return
+        device_id = torch.cuda.current_device()
+        for name, module in list(self.student.items()):
+            self.student[name] = DistributedDataParallel(
+                module,
+                device_ids=[device_id],
+                output_device=device_id,
+                broadcast_buffers=False,
+                # Only conditional innovation predictors can be inactive on a
+                # rank. Avoid DDP's graph traversal for ordinary full-model,
+                # DBI, and Scout runs.
+                find_unused_parameters=bool(self.nci_enabled or self.cmgi_enabled or self.nri_enabled),
+                gradient_as_bucket_view=True,
+            )
+        self._ddp_wrapped = True
+        logger.info("DISTRIBUTED DDP -- wrapped %d trainable student modules", len(self.student))
 
     def broadcast_to_subgroups(self, tensor, over_dim, global_batch_size=None):
         """

@@ -227,6 +227,7 @@ class DataAugmentationDINO(object):
         std=IMAGENET_DEFAULT_STD,
         float_input=False,
         augmentation_policy="dinov3",
+        paired_global_geometry=False,
     ):
         self.global_crops_scale = global_crops_scale
         self.local_crops_scale = local_crops_scale
@@ -243,6 +244,9 @@ class DataAugmentationDINO(object):
         self.std = std
         self.float_input = float_input
         self.augmentation_policy = (augmentation_policy or "dinov3").lower()
+        # This is opt-in and primarily supports diagnostics that compare
+        # representations under photometric, rather than spatial, perturbations.
+        self.paired_global_geometry = bool(paired_global_geometry)
         self._logged_channel_stats_adapt = False
         self._active_channel_ids = None
 
@@ -270,6 +274,7 @@ class DataAugmentationDINO(object):
         logger.info(f"horizontal flips: {horizontal_flips}")
         logger.info(f"float_input: {float_input} (solarize threshold: {solarize_threshold})")
         logger.info(f"augmentation_policy: {self.augmentation_policy}")
+        logger.info(f"paired_global_geometry: {self.paired_global_geometry}")
         logger.info("Using channel-agnostic color augmentations (supports 1-N channels)")
         logger.info("###################################")
 
@@ -451,7 +456,11 @@ class DataAugmentationDINO(object):
             global_crop_1_transf = self.global_transfo1(im1_base)
             global_crop_1 = self.resize_global_post_transf(global_crop_1_transf)
 
-            im2_base = self.geometric_augmentation_global(image)
+            im2_base = (
+                im1_base.clone()
+                if self.paired_global_geometry
+                else self.geometric_augmentation_global(image)
+            )
             global_crop_2_transf = self.global_transfo2(im2_base)
             global_crop_2 = self.resize_global_post_transf(global_crop_2_transf)
 
