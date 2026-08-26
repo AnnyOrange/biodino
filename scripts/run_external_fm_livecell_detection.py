@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the H+ LIVECell center-to-patch probe with an external frozen encoder."""
+"""Run a center-to-patch detection probe with an external frozen encoder."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ sys.path[:0] = [str(ROOT), str(BENCHMARK_MODEL_ROOT), str(BENCHMARK_MODEL_ROOT /
 sys.path.append("/mnt/huawei_deepcad/benchmark_model/_vendor/external_gapfill_py311")
 
 from dinov3.eval.bio_detection.center_probe import (  # noqa: E402
-    LiveCellCenterDataset,
     _estimate_pos_weight,
     _eval,
+    build_center_dataset,
 )
 from run_dense_probe_benchmark import DenseFeatureExtractor  # noqa: E402
 
@@ -55,6 +55,9 @@ class ExternalPatchFeatureModel(nn.Module):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True)
+    parser.add_argument(
+        "--dataset", default="livecell", choices=("livecell", "bbbc038", "conic")
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--benchmark-root", default="/mnt/huawei_deepcad/benchmark")
     parser.add_argument("--batch-size", type=int, default=8)
@@ -75,11 +78,14 @@ def main() -> int:
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
-    data_root = Path(args.benchmark_root) / "segmentation/LIVECell"
     datasets = {
-        split: LiveCellCenterDataset(
-            str(data_root), split, image_size=224, patch_size=16,
-            max_samples=args.max_samples_per_split, seed=args.seed,
+        split: build_center_dataset(
+            args.dataset,
+            args.benchmark_root,
+            split,
+            image_size=224,
+            max_samples=args.max_samples_per_split,
+            seed=args.seed,
         )
         for split in ("train", "val", "test")
     }
@@ -124,8 +130,8 @@ def main() -> int:
     test_metrics = _eval(feature_model, head, loaders["test"])
     result = {
         "model": args.model,
-        "dataset": "livecell",
-        "probe": "livecell_center_patch_linear",
+        "dataset": args.dataset,
+        "probe": f"{args.dataset}_center_patch_linear",
         "feature_grid": "14x14",
         "encoder_preprocess": "model-native",
         "epochs": args.epochs,

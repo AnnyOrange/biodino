@@ -51,6 +51,18 @@ def load_image(path: str | Path) -> Image.Image:
         return img.convert("RGB")
 
 
+def _pad_to_square(image: Image.Image) -> Image.Image:
+    """Letterbox an image with its mean color so full-image targets stay visible."""
+    width, height = image.size
+    if width == height:
+        return image
+    side = max(width, height)
+    fill = image.resize((1, 1), resample=Image.Resampling.BOX).getpixel((0, 0))
+    square = Image.new("RGB", (side, side), color=fill)
+    square.paste(image, ((side - width) // 2, (side - height) // 2))
+    return square
+
+
 class ImageFolderDataset(Dataset):
     def __init__(self, root: str | Path, max_per_class: int | None = None, recursive: bool = False, class_names: list[str] | None = None):
         self.root = Path(root)
@@ -315,6 +327,70 @@ class CHAMMIClassificationDataset(Dataset):
         return image, int(label), str(path)
 
 
+class CHAMMIRegressionDataset(Dataset):
+    """Continuous morphology targets on an official CHAMMI held-out split."""
+
+    def __init__(
+        self,
+        root: str | Path,
+        segment: str,
+        split_name: str,
+        target_col: str,
+        max_samples: int | None = None,
+        target_transform: str = "log1p",
+        p_low: float = 1.0,
+        p_high: float = 99.0,
+    ):
+        self.root = Path(root)
+        self.segment = segment
+        self.split_name = split_name
+        self.target_col = target_col
+        self.target_transform = target_transform
+        self.p_low = float(p_low)
+        self.p_high = float(p_high)
+        self.meta_path = self.root / segment / "enriched_meta.csv"
+        if not self.meta_path.exists():
+            raise FileNotFoundError(f"CHAMMI metadata not found: {self.meta_path}")
+        if target_transform not in {"none", "log1p"}:
+            raise ValueError(f"Unsupported target_transform={target_transform!r}")
+
+        samples: list[tuple[Path, float, int]] = []
+        with self.meta_path.open(newline="", encoding="utf-8", errors="replace") as handle:
+            for row in csv.DictReader(handle):
+                if row.get("train_test_split") != split_name or not row.get("file_path"):
+                    continue
+                try:
+                    target = float(row.get(target_col, ""))
+                    channel_width = int(float(row.get("channel_width", "0")))
+                except (TypeError, ValueError):
+                    continue
+                if not np.isfinite(target) or target < 0:
+                    continue
+                if target_transform == "log1p":
+                    target = float(np.log1p(target))
+                samples.append((self.root / row["file_path"], target, channel_width))
+                if max_samples is not None and len(samples) >= max_samples:
+                    break
+        if not samples:
+            raise ValueError(
+                f"No CHAMMI regression rows for segment={segment} split={split_name} target={target_col}"
+            )
+        self.samples = samples
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int):
+        path, target, channel_width = self.samples[idx]
+        image = load_flattened_multichannel_image(
+            path,
+            channel_width,
+            p_low=self.p_low,
+            p_high=self.p_high,
+        )
+        return image, float(target), str(path)
+
+
 class ParquetClassificationDataset(Dataset):
     """HuggingFace-style parquet shards with an ``image`` struct ``{bytes, path}``
     column and an integer ``label`` column (e.g. NCT-CRC-HE, PatchCamelyon parquet).
@@ -452,6 +528,66 @@ class BBBC005RegressionDataset(Dataset):
     def __getitem__(self, idx: int):
         s = self.samples[idx]
         return load_image(s.image_path), float(s.target), str(s.image_path)
+
+
+class CoNICCellCountRegressionDataset(Dataset):
+    """Official central-region nuclei counts on source-image-grouped CoNIC splits."""
+
+    def __init__(self, root: str | Path, split: str, max_samples: int | None = None):
+        self.root = Path(root)
+        self.images_path = self.root / "data/images.npy"
+        self.images = np.load(self.images_path, mmap_mode="r")
+        samples: list[tuple[int, float]] = []
+        with (self.root / "conic_cell_count.csv").open(newline="") as handle:
+            for row in csv.DictReader(handle):
+                if row["split"] != split:
+                    continue
+                samples.append((int(row["image_index"]), float(row["cell_count"])))
+                if max_samples is not None and len(samples) >= max_samples:
+                    break
+        if not samples:
+            raise ValueError(f"No CoNIC cell-count samples for split={split}")
+        self.samples = samples
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int):
+        image_index, target = self.samples[idx]
+        image_array = _to_rgb_uint8(self.images[image_index])
+        image = Image.fromarray(image_array[16:240, 16:240])
+        return image, float(target), f"{self.images_path}:{image_index}"
+
+
+class LIVECellCountRegressionDataset(Dataset):
+    """Full-image cell counts from official LIVECell COCO splits."""
+
+    def __init__(self, root: str | Path, split: str, max_samples: int | None = None):
+        self.root = Path(root)
+        samples: list[RegressionSample] = []
+        with (self.root / "livecell_cell_count.csv").open(newline="") as handle:
+            for row in csv.DictReader(handle):
+                if row["split"] != split:
+                    continue
+                samples.append(
+                    RegressionSample(
+                        self.root / "data" / row["image_path"],
+                        float(row["cell_count"]),
+                    )
+                )
+                if max_samples is not None and len(samples) >= max_samples:
+                    break
+        if not samples:
+            raise ValueError(f"No LIVECell count samples for split={split}")
+        self.samples = samples
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int):
+        sample = self.samples[idx]
+        image = _pad_to_square(load_image(sample.image_path))
+        return image, float(sample.target), str(sample.image_path)
 
 
 def stratified_indices(labels: Iterable[int], train_fraction: float, seed: int) -> tuple[np.ndarray, np.ndarray]:

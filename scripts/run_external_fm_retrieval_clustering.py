@@ -273,16 +273,23 @@ def run_hpa(args, encoder) -> list[dict]:
 
 
 def run_rxrx1(args, encoder) -> list[dict]:
-    manifest = Path(args.protocol_root) / "rxrx1_official_cross_experiment.csv"
+    scope = "full" if args.rxrx1_full else "core"
+    manifest_name = (
+        "rxrx1_official_cross_experiment.csv"
+        if args.rxrx1_full
+        else "rxrx1_official_cross_experiment_core.csv"
+    )
+    manifest = Path(args.protocol_root) / manifest_name
     archive = Path(args.benchmark_root) / "Retrieval_Clustering/RxRx1/archives/rxrx1-images.zip"
     gallery_ds = RxRx1ZipDataset(archive, manifest, "gallery")
     query_ds = RxRx1ZipDataset(archive, manifest, "query")
     root = feature_root(args, "rxrx1-cross")
-    gallery_file, query_file = root / f"{args.model}_gallery.npz", root / f"{args.model}_query.npz"
+    gallery_file = root / f"{args.model}_{scope}_gallery.npz"
+    query_file = root / f"{args.model}_{scope}_query.npz"
     gallery_x, gallery_y = extract(gallery_ds, encoder, gallery_file, args)
     query_x, query_y = extract(query_ds, encoder, query_file, args)
     rows = [{
-        **base_row(args, "rxrx1", "retrieval", "official-train-gallery-to-test-query", str(gallery_file)),
+        **base_row(args, "rxrx1", "retrieval", f"official-train-gallery-to-test-query-{scope}", str(gallery_file)),
         "aggregation": "global",
         "n_gallery": len(gallery_y),
         "n_query": len(query_y),
@@ -299,7 +306,7 @@ def run_rxrx1(args, encoder) -> list[dict]:
         )
         cell_metrics.append(metrics)
         rows.append({
-            **base_row(args, "rxrx1", "retrieval", "official-cross-experiment-same-cell-type", str(gallery_file)),
+            **base_row(args, "rxrx1", "retrieval", f"official-cross-experiment-same-cell-type-{scope}", str(gallery_file)),
             "aggregation": cell_type,
             "n_gallery": int(gallery_mask.sum()),
             "n_query": int(query_mask.sum()),
@@ -308,7 +315,7 @@ def run_rxrx1(args, encoder) -> list[dict]:
         })
     metric_names = list(cell_metrics[0])
     rows.append({
-        **base_row(args, "rxrx1", "retrieval", "official-cross-experiment-same-cell-type", str(gallery_file)),
+        **base_row(args, "rxrx1", "retrieval", f"official-cross-experiment-same-cell-type-{scope}", str(gallery_file)),
         "aggregation": "macro-cell-type",
         "n_gallery": len(gallery_y),
         "n_query": len(query_y),
@@ -317,14 +324,14 @@ def run_rxrx1(args, encoder) -> list[dict]:
     })
     rows.extend([
         {
-            **base_row(args, "rxrx1", "clustering", "official-test-query-perturbation", str(query_file)),
+            **base_row(args, "rxrx1", "clustering", f"official-test-query-perturbation-{scope}", str(query_file)),
             "aggregation": "sirna",
             "n_samples": len(query_y),
             "n_classes": len(np.unique(query_y)),
             **clustering_metrics(query_x, remap_labels(query_y), seed=args.seed),
         },
         {
-            **base_row(args, "rxrx1", "clustering", "official-test-query-cell-type", str(query_file)),
+            **base_row(args, "rxrx1", "clustering", f"official-test-query-cell-type-{scope}", str(query_file)),
             "aggregation": "cell-type",
             "n_samples": len(query_y),
             "n_classes": len(np.unique(query_ds.cell_types)),
@@ -365,6 +372,12 @@ RUNNERS = {
 }
 
 
+def completion_name(protocol: str, rxrx1_full: bool) -> str:
+    if protocol == "rxrx1-cross":
+        return f"{protocol}-{'full' if rxrx1_full else 'core'}"
+    return protocol
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, choices=sorted(MODEL_REGISTRY))
@@ -383,6 +396,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-samples", type=int)
+    parser.add_argument(
+        "--rxrx1-full",
+        action="store_true",
+        help="Use all 112,824 treatment views instead of the balanced core manifest.",
+    )
     parser.add_argument("--overwrite-features", action="store_true")
     parser.add_argument("--overwrite-results", action="store_true")
     return parser.parse_args()
@@ -394,7 +412,10 @@ def main() -> int:
     summary_path = out_root / "summary.csv"
     pending = [
         protocol for protocol in args.protocols
-        if args.overwrite_results or not (out_root / "done" / args.model / f"{protocol}.json").exists()
+        if args.overwrite_results
+        or not (
+            out_root / "done" / args.model / f"{completion_name(protocol, args.rxrx1_full)}.json"
+        ).exists()
     ]
     if not pending:
         print(f"[complete] {args.model}: all requested protocols already complete", flush=True)
@@ -408,7 +429,7 @@ def main() -> int:
             for row in rows:
                 append_csv(summary_path, row)
                 print(json.dumps(row, indent=2), flush=True)
-            marker = out_root / "done" / args.model / f"{protocol}.json"
+            marker = out_root / "done" / args.model / f"{completion_name(protocol, args.rxrx1_full)}.json"
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(json.dumps({"model": args.model, "protocol": protocol, "rows": rows}, indent=2))
         except Exception as exc:

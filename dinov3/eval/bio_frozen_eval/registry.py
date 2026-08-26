@@ -14,12 +14,15 @@ from .datasets import (
     BBBC005RegressionDataset,
     BBBC013RegressionDataset,
     CHAMMIClassificationDataset,
+    CHAMMIRegressionDataset,
+    CoNICCellCountRegressionDataset,
     CSVImageClassificationDataset,
     ImageFolderDataset,
     MappedImageFolderDataset,
     NPZClassificationDataset,
     NPZMultiLabelClassificationDataset,
     ParquetClassificationDataset,
+    LIVECellCountRegressionDataset,
 )
 
 DEFAULT_BENCHMARK_ROOT = Path("/mnt/huawei_deepcad/benchmark")
@@ -58,15 +61,25 @@ UNSUPPORTED_OFFICIAL_SPLIT_DATASETS = CHAMMI_DATASETS - CHAMMI_CLOSED_SET_DATASE
 _ADDED_CLASSIFICATION = {"nct-crc-he", "lc25000", "pcam"} | CHAMMI_CLOSED_SET_DATASETS
 CLASSIFICATION_DATASETS = sorted(_BASE_CLASSIFICATION | _ADDED_CLASSIFICATION)
 MULTILABEL_DATASETS = ["chestmnist"]
-REGRESSION_DATASETS = ["bbbc013", "bbbc005"]
-ALL_DATASETS = sorted(set(CLASSIFICATION_DATASETS) | set(MULTILABEL_DATASETS) | set(REGRESSION_DATASETS))
+REGRESSION_DATASETS = ["bbbc013", "bbbc005", "conic-cell-count", "livecell-cell-count"]
+FINAL_FIGURE_DATASETS = ["allen-cell-volume"]
+ALL_DATASETS = sorted(
+    set(CLASSIFICATION_DATASETS)
+    | set(MULTILABEL_DATASETS)
+    | set(REGRESSION_DATASETS)
+    | set(FINAL_FIGURE_DATASETS)
+)
 
-# Datasets that ship a native (publication-standard) train/test split, evaluated
-# with the explicit-split probes instead of an internal stratified 80/20.
+# Datasets with a predefined held-out train/test protocol, evaluated with the
+# explicit-split probes instead of an internal stratified 80/20.
 # MedMNIST .npz files all carry official train/val/test arrays (chestmnist is the
 # multilabel one) -> fit on official train, score on official test. Only closed-
 # set CHAMMI tasks are included here.
-NATIVE_TEST_SPLIT_DATASETS = {"nct-crc-he", "pcam"} | MEDMNIST_NAMES | CHAMMI_CLOSED_SET_DATASETS
+NATIVE_TEST_SPLIT_DATASETS = (
+    {"nct-crc-he", "pcam", "allen-cell-volume", "conic-cell-count", "livecell-cell-count"}
+    | MEDMNIST_NAMES
+    | CHAMMI_CLOSED_SET_DATASETS
+)
 
 # NCT-CRC-HE parquet locations (relative to benchmark_root):
 #   train = NCT-CRC-HE-100K (NONORM, 100k tiles, 31 shards) -- the harder, stain-
@@ -106,7 +119,10 @@ def build_dataset(
                 return NPZMultiLabelClassificationDataset(med_path, split=split, max_samples=max_samples), "multilabel_classification"
             return NPZClassificationDataset(med_path, split=split, max_samples=max_samples), "classification"
         if name == "bloodmnist":
-            return NPZClassificationDataset(root / "Classification/bloodmnist_64.npz?download=1", split=split, max_samples=max_samples), "classification"
+            path = root / "Classification/bloodmnist_64.npz?download=1"
+            if not path.is_file():
+                path = root / "Classification/bloodmnist_64.npz"
+            return NPZClassificationDataset(path, split=split, max_samples=max_samples), "classification"
     if name == "midog25-atypical":
         return CSVImageClassificationDataset(
             root / "segmentation/MIDOG25_Atypical_Classification_Train_Set.csv",
@@ -152,6 +168,28 @@ def build_dataset(
             max_samples=max_samples,
             max_per_class=max_per_class,
         ), "classification"
+    if name == "allen-cell-volume":
+        split_name = "Train" if split == "train" else "Task_one"
+        return CHAMMIRegressionDataset(
+            root / "Classification/CHAMMI",
+            segment="Allen",
+            split_name=split_name,
+            target_col="cell_volume",
+            max_samples=max_samples,
+            target_transform="log1p",
+        ), "regression"
+    if name == "conic-cell-count":
+        return CoNICCellCountRegressionDataset(
+            root / "Regression/CoNIC_Cell_Count",
+            split=split,
+            max_samples=max_samples,
+        ), "regression"
+    if name == "livecell-cell-count":
+        return LIVECellCountRegressionDataset(
+            root / "Regression/LIVECell_Cell_Count",
+            split=split,
+            max_samples=max_samples,
+        ), "regression"
     if name == "bbbc013":
         return BBBC013RegressionDataset(root / "Regression/BBBC013", max_samples=max_samples), "regression"
     if name == "bbbc005":

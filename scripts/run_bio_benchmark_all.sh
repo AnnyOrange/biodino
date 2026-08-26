@@ -38,13 +38,20 @@ Optional env vars:
   FROZEN_CHANNEL_POLICY=auto        auto | native | first3 | compact3 | zerofill3 | mean3 | sample3_tta.
   FROZEN_CHANNEL_TTA_SAMPLES=8
   FROZEN_CHANNEL_POLICY_SEED=0
+  FROZEN_SPLIT_PROTOCOL=current    current | s0-internal for classification/regression.
+  RXRX1_FULL=0                    1 uses all 112,824 RxRx1 views; default uses the balanced core.
   AUTOCAST_DTYPE=bf16              bf16 | fp16 | fp32 for frozen feature extraction.
   CLASSIFICATION_RESOLUTION_PROTOCOL=best
                                    best | manual. best uses the 2026-06-23 5-dataset ablation table.
   CLASSIFICATION_IMAGE_SIZE=224    Manual/fallback final square crop size for classification/multilabel.
   CLASSIFICATION_RESIZE_SIZE=0     Optional pre-crop resize size; 0 uses ImageNet eval ratio.
+  REGRESSION_RESOLUTION_PROTOCOL=best
+  REGRESSION_IMAGE_SIZE=224
+  REGRESSION_RESIZE_SIZE=0
   TRAIN_FRACTION=0.8               Fallback internal frozen-probe train fraction.
   SEED=0                           Split seed for fallback internal frozen probes.
+  MAX_SAMPLES_PER_SPLIT=0         Optional non-smoke cap for classification/regression/detection.
+  SMOKE_MAX_SAMPLES=8             Per-split cap in SMOKE mode; retrieval keeps a safe floor.
   *_DATASETS                       CLASSIFICATION_/REGRESSION_/RETRIEVAL_/SEGMENTATION_/DETECTION_DATASETS.
   SEG_FEATURE_BATCH_SIZE=32
   SEG_FEATURE_NUM_WORKERS=4
@@ -153,9 +160,9 @@ export VECLIB_MAXIMUM_THREADS="$EVAL_BLAS_THREADS"
 # Full supported default suite. Override *_DATASETS for cheap checkpoint sweeps.
 DEFAULT_SEGMENTATION_DATASETS="bbbc038 conic monuseg pannuke tissuenet livecell multimodal_cellseg cellpose"
 DEFAULT_CLASSIFICATION_DATASETS="bloodmnist pathmnist tissuemnist breastmnist organamnist organcmnist organsmnist dermamnist octmnist pneumoniamnist retinamnist chestmnist bbbc048-cellcycle cyclops-protein-loc midog25-atypical pcam nct-crc-he lc25000 chammi-allen-task1 chammi-allen-task2 chammi-cp-task1 chammi-cp-task2 chammi-cp-task3 chammi-hpa-task1 chammi-hpa-task2"
-DEFAULT_REGRESSION_DATASETS="bbbc013 bbbc005"
-DEFAULT_RETRIEVAL_DATASETS="lc25000 nct-crc-he-100 nct-crc-he-1k crc-val-he-7k"
-DEFAULT_DETECTION_DATASETS="livecell"
+DEFAULT_REGRESSION_DATASETS="bbbc013 bbbc005 conic-cell-count livecell-cell-count"
+DEFAULT_RETRIEVAL_DATASETS="lc25000 nct-crc-he-100 nct-crc-he-1k crc-val-he-7k hpa-subcellular rxrx1-cross"
+DEFAULT_DETECTION_DATASETS="livecell bbbc038 conic"
 
 SEGMENTATION_DATASETS="${SEGMENTATION_DATASETS:-$DEFAULT_SEGMENTATION_DATASETS}"
 # Names must match the dinov3.eval.bio_frozen_eval registry (chestmnist = multilabel).
@@ -169,12 +176,19 @@ FROZEN_BATCH_SIZE="${FROZEN_BATCH_SIZE:-64}"
 FROZEN_CHANNEL_POLICY="${FROZEN_CHANNEL_POLICY:-auto}"
 FROZEN_CHANNEL_TTA_SAMPLES="${FROZEN_CHANNEL_TTA_SAMPLES:-8}"
 FROZEN_CHANNEL_POLICY_SEED="${FROZEN_CHANNEL_POLICY_SEED:-0}"
+FROZEN_SPLIT_PROTOCOL="${FROZEN_SPLIT_PROTOCOL:-current}"
+RXRX1_FULL="${RXRX1_FULL:-0}"
 AUTOCAST_DTYPE="${AUTOCAST_DTYPE:-bf16}"
 CLASSIFICATION_RESOLUTION_PROTOCOL="${CLASSIFICATION_RESOLUTION_PROTOCOL:-best}"
 CLASSIFICATION_IMAGE_SIZE="${CLASSIFICATION_IMAGE_SIZE:-224}"
 CLASSIFICATION_RESIZE_SIZE="${CLASSIFICATION_RESIZE_SIZE:-0}"
+REGRESSION_RESOLUTION_PROTOCOL="${REGRESSION_RESOLUTION_PROTOCOL:-best}"
+REGRESSION_IMAGE_SIZE="${REGRESSION_IMAGE_SIZE:-224}"
+REGRESSION_RESIZE_SIZE="${REGRESSION_RESIZE_SIZE:-0}"
 SEED="${SEED:-0}"
 TRAIN_FRACTION="${TRAIN_FRACTION:-0.8}"
+MAX_SAMPLES_PER_SPLIT="${MAX_SAMPLES_PER_SPLIT:-0}"
+SMOKE_MAX_SAMPLES="${SMOKE_MAX_SAMPLES:-8}"
 SEG_FEATURE_BATCH_SIZE="${SEG_FEATURE_BATCH_SIZE:-32}"
 SEG_FEATURE_NUM_WORKERS="${SEG_FEATURE_NUM_WORKERS:-4}"
 SEG_PROBE_EPOCHS="${SEG_PROBE_EPOCHS:-50}"
@@ -219,10 +233,16 @@ if [[ "${#BIO_TASKS[@]}" -gt 0 ]]; then
   --frozen-channel-policy "$FROZEN_CHANNEL_POLICY"
   --frozen-channel-tta-samples "$FROZEN_CHANNEL_TTA_SAMPLES"
   --frozen-channel-policy-seed "$FROZEN_CHANNEL_POLICY_SEED"
+  --frozen-split-protocol "$FROZEN_SPLIT_PROTOCOL"
+  --max-samples-per-split "$MAX_SAMPLES_PER_SPLIT"
+  --smoke-max-samples "$SMOKE_MAX_SAMPLES"
   --autocast-dtype "$AUTOCAST_DTYPE"
   --classification-resolution-protocol "$CLASSIFICATION_RESOLUTION_PROTOCOL"
   --classification-image-size "$CLASSIFICATION_IMAGE_SIZE"
   --classification-resize-size "$CLASSIFICATION_RESIZE_SIZE"
+  --regression-resolution-protocol "$REGRESSION_RESOLUTION_PROTOCOL"
+  --regression-image-size "$REGRESSION_IMAGE_SIZE"
+  --regression-resize-size "$REGRESSION_RESIZE_SIZE"
   --seed "$SEED"
   --train-fraction "$TRAIN_FRACTION"
   --segmentation-protocol "$SEGMENTATION_PROTOCOL"
@@ -251,6 +271,10 @@ fi
 
 if [[ "${#cmd[@]}" -gt 0 && "$SEGMENTATION_MULTICHANNEL" == "1" ]]; then
   cmd+=(--segmentation-multichannel)
+fi
+
+if [[ "${#cmd[@]}" -gt 0 && "$RXRX1_FULL" == "1" ]]; then
+  cmd+=(--rxrx1-full)
 fi
 
 if [[ "${#cmd[@]}" -gt 0 && "${DRY_RUN:-0}" == "1" ]]; then
