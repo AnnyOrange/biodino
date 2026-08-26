@@ -114,6 +114,7 @@ def build_rxrx1(source: Path, output_dir: Path) -> dict:
             })
     rows.sort(key=lambda row: (row["role"], row["cell_type"], row["experiment"], row["site_id"]))
     output = output_dir / "rxrx1_official_cross_experiment.csv"
+    core_output = output_dir / "rxrx1_official_cross_experiment_core.csv"
     fields = ["site_id", "role", "sirna_id", "cell_type", "experiment", "plate"] + [
         f"c{channel}" for channel in range(1, 7)
     ]
@@ -127,6 +128,34 @@ def build_rxrx1(source: Path, output_dir: Path) -> dict:
     missing = query_sirna - gallery_sirna
     if missing:
         raise ValueError(f"RxRx1 query perturbations absent from gallery: {sorted(missing)[:10]}")
+
+    # Keep two sites per (cell type, perturbation, role). Restricting the core
+    # to pairs represented on both sides preserves the cross-experiment
+    # query/gallery contract while making repeated checkpoint sweeps tractable.
+    pair_role_rows: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    for row in rows:
+        pair_role_rows[(row["cell_type"], row["sirna_id"], row["role"])].append(row)
+    eligible_pairs = sorted({
+        (cell_type, sirna_id)
+        for cell_type, sirna_id, _ in pair_role_rows
+        if (cell_type, sirna_id, "gallery") in pair_role_rows
+        and (cell_type, sirna_id, "query") in pair_role_rows
+    })
+    core_rows: list[dict] = []
+    for cell_type, sirna_id in eligible_pairs:
+        for role in ("gallery", "query"):
+            selected = sorted(
+                pair_role_rows[(cell_type, sirna_id, role)],
+                key=lambda row: (row["experiment"], row["plate"], row["site_id"]),
+            )[:2]
+            core_rows.extend(selected)
+    core_rows.sort(key=lambda row: (row["role"], row["cell_type"], row["sirna_id"], row["site_id"]))
+    write_csv(core_output, fields, core_rows)
+
+    core_gallery_sirna = {row["sirna_id"] for row in core_rows if row["role"] == "gallery"}
+    core_query_sirna = {row["sirna_id"] for row in core_rows if row["role"] == "query"}
+    if core_query_sirna - core_gallery_sirna:
+        raise ValueError("RxRx1 core query perturbations are absent from the core gallery")
     return {
         "source": str(source),
         "source_sha256": sha256(source),
@@ -139,6 +168,13 @@ def build_rxrx1(source: Path, output_dir: Path) -> dict:
         "query_experiments": len(query_experiments),
         "sirna_classes": len(gallery_sirna | query_sirna),
         "cell_types": sorted({row["cell_type"] for row in rows}),
+        "core_manifest": str(core_output),
+        "core_manifest_sha256": sha256(core_output),
+        "core_rows": len(core_rows),
+        "core_gallery_rows": sum(row["role"] == "gallery" for row in core_rows),
+        "core_query_rows": sum(row["role"] == "query" for row in core_rows),
+        "core_paired_cell_type_sirna": len(eligible_pairs),
+        "core_sirna_classes": len(core_gallery_sirna | core_query_sirna),
     }
 
 

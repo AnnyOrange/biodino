@@ -363,9 +363,11 @@ def _load_dcp_backbone_for_eval(
         msg,
     )
 
-    model = model.to(device)
-    if freeze and str(getattr(cfg.student, "arch", "")) == "vit_7b":
+    if freeze:
+        # Cast while still on CPU so reduced-precision Frozen backbones never
+        # materialize a transient fp32 parameter set on the target GPU.
         model = model.to(dtype=torch.bfloat16)
+    model = model.to(device)
     model.eval()
     if freeze:
         for param in model.parameters():

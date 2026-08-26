@@ -8,10 +8,13 @@
 from __future__ import annotations
 
 import io
+import csv
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import torch
 from PIL import Image
 from torch.utils.data import Dataset
 
@@ -55,6 +58,137 @@ class ParquetImageDataset(Dataset):
         image_bytes, label, sample_id = self.rows[idx]
         with Image.open(io.BytesIO(image_bytes)) as img:
             return img.convert("RGB"), int(label), sample_id
+
+
+class ManifestImageDataset(Dataset):
+    """Image dataset backed by a committed retrieval/clustering manifest."""
+
+    def __init__(
+        self,
+        root: str | Path,
+        manifest: str | Path,
+        role: str | None = None,
+        robust_only: bool = False,
+        max_samples: int | None = None,
+    ):
+        self.root = Path(root)
+        self.manifest = Path(manifest)
+        with self.manifest.open(newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        if role is not None:
+            rows = [row for row in rows if row.get("role") == role]
+        if robust_only:
+            rows = [row for row in rows if row.get("robust_ge10") == "1"]
+        if max_samples is not None and len(rows) > max_samples:
+            by_label: dict[int, list[dict]] = {}
+            for row in rows:
+                by_label.setdefault(int(row["label"]), []).append(row)
+            rows = []
+            depth = 0
+            while len(rows) < max_samples:
+                added = False
+                for label in sorted(by_label):
+                    if depth < len(by_label[label]):
+                        rows.append(by_label[label][depth])
+                        added = True
+                        if len(rows) >= max_samples:
+                            break
+                if not added:
+                    break
+                depth += 1
+        if not rows:
+            raise ValueError(f"No rows selected from {self.manifest}")
+        self.rows = rows
+        self.labels = np.asarray([int(row["label"]) for row in rows], dtype=np.int64)
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __getitem__(self, idx: int):
+        row = self.rows[idx]
+        path = self.root / row["image_path"]
+        with Image.open(path) as image:
+            image = image.convert("RGB")
+        return image, int(row["label"]), str(path)
+
+
+class RxRx1ZipDataset(Dataset):
+    """Six-channel RxRx1 views read lazily from the official image archive."""
+
+    def __init__(
+        self,
+        archive: str | Path,
+        manifest: str | Path,
+        role: str,
+        max_samples: int | None = None,
+    ):
+        self.archive = Path(archive)
+        self.manifest = Path(manifest)
+        with self.manifest.open(newline="") as handle:
+            all_rows = list(csv.DictReader(handle))
+        gallery_pairs = {
+            (row["cell_type"], row["sirna_id"])
+            for row in all_rows
+            if row["role"] == "gallery"
+        }
+        query_pairs = {
+            (row["cell_type"], row["sirna_id"])
+            for row in all_rows
+            if row["role"] == "query"
+        }
+        eligible_pairs = gallery_pairs & query_pairs
+        rows = [
+            row for row in all_rows
+            if row["role"] == role and (row["cell_type"], row["sirna_id"]) in eligible_pairs
+        ]
+        if max_samples is not None and len(rows) > max_samples:
+            by_pair: dict[tuple[str, int], list[dict]] = {}
+            for row in rows:
+                key = (row["cell_type"], int(row["sirna_id"]))
+                by_pair.setdefault(key, []).append(row)
+            rows = []
+            depth = 0
+            while len(rows) < max_samples:
+                added = False
+                for key in sorted(by_pair, key=lambda item: (item[1], item[0])):
+                    if depth < len(by_pair[key]):
+                        rows.append(by_pair[key][depth])
+                        added = True
+                        if len(rows) >= max_samples:
+                            break
+                if not added:
+                    break
+                depth += 1
+        if not rows:
+            raise ValueError(f"No RxRx1 rows for role={role} in {self.manifest}")
+        self.rows = rows
+        self.labels = np.asarray([int(row["sirna_id"]) for row in rows], dtype=np.int64)
+        self.cell_types = np.asarray([row["cell_type"] for row in rows])
+        self._zip: zipfile.ZipFile | None = None
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_zip"] = None
+        return state
+
+    def _reader(self) -> zipfile.ZipFile:
+        if self._zip is None:
+            self._zip = zipfile.ZipFile(self.archive)
+        return self._zip
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __getitem__(self, idx: int):
+        row = self.rows[idx]
+        channels = []
+        reader = self._reader()
+        for key in ("c1", "c2", "c3", "c4", "c5", "c6"):
+            with reader.open(row[key]) as handle:
+                with Image.open(io.BytesIO(handle.read())) as image:
+                    channels.append(np.asarray(image.convert("L"), dtype=np.float32) / 255.0)
+        image = torch.from_numpy(np.ascontiguousarray(np.stack(channels, axis=0)))
+        return image, int(row["sirna_id"]), row["site_id"]
 
 
 def _class_folder_samples(class_dirs: list[Path]) -> tuple[list[tuple[Path, int]], list[str]]:
@@ -167,6 +301,68 @@ def retrieval_metrics(features: np.ndarray, labels: np.ndarray, k_values: tuple[
         out[f"recall_at_{k}"] = hits[k] / n
         out[f"map_at_{k}"] = ap_sum[k] / n
     return out
+
+
+def query_gallery_metrics(
+    gallery_features: np.ndarray,
+    gallery_labels: np.ndarray,
+    query_features: np.ndarray,
+    query_labels: np.ndarray,
+    k_values: tuple[int, ...] = (1, 5, 10),
+    chunk_size: int = 256,
+    metric_device: str = "auto",
+) -> dict[str, float]:
+    """Compute retrieval metrics for disjoint query and gallery sets."""
+    gallery_labels = np.asarray(gallery_labels).reshape(-1)
+    query_labels = np.asarray(query_labels).reshape(-1)
+    if not set(np.unique(query_labels)).issubset(set(np.unique(gallery_labels))):
+        raise ValueError("Query labels are absent from the gallery")
+    if metric_device not in {"auto", "cpu", "cuda"}:
+        raise ValueError(f"Unknown metric_device={metric_device!r}")
+
+    use_cuda = metric_device == "cuda" or (metric_device == "auto" and torch.cuda.is_available())
+    device = torch.device("cuda" if use_cuda else "cpu")
+    gallery = torch.as_tensor(gallery_features, dtype=torch.float32, device=device)
+    gallery = torch.nn.functional.normalize(gallery, dim=1)
+    gallery_y = torch.as_tensor(gallery_labels, device=device)
+    max_k = min(max(k_values), len(gallery_labels))
+    hits = {k: 0 for k in k_values}
+    ap_sum = {k: 0.0 for k in k_values}
+    reciprocal_sum = 0.0
+    class_counts = {label: int((gallery_labels == label).sum()) for label in np.unique(gallery_labels)}
+
+    for start in range(0, len(query_labels), chunk_size):
+        end = min(start + chunk_size, len(query_labels))
+        query = torch.as_tensor(query_features[start:end], dtype=torch.float32, device=device)
+        query = torch.nn.functional.normalize(query, dim=1)
+        query_y = torch.as_tensor(query_labels[start:end], device=device)
+        top_idx = torch.topk(query @ gallery.T, k=max_k, dim=1, largest=True, sorted=True).indices
+        relevant = (gallery_y[top_idx] == query_y[:, None]).cpu().numpy()
+        for local_idx, rel in enumerate(relevant):
+            positives = class_counts[query_labels[start + local_idx]]
+            positive_ranks = np.flatnonzero(rel)
+            if len(positive_ranks):
+                reciprocal_sum += 1.0 / float(positive_ranks[0] + 1)
+            for k in k_values:
+                kk = min(k, max_k)
+                rel_k = rel[:kk]
+                hits[k] += int(np.any(rel_k))
+                denom = min(positives, kk)
+                if denom:
+                    precision = np.cumsum(rel_k) / np.arange(1, kk + 1)
+                    ap_sum[k] += float((precision * rel_k).sum() / denom)
+
+    n_query = len(query_labels)
+    result = {"mrr": reciprocal_sum / n_query}
+    for k in k_values:
+        result[f"recall_at_{k}"] = hits[k] / n_query
+        result[f"map_at_{k}"] = ap_sum[k] / n_query
+    return result
+
+
+def remap_labels(labels: np.ndarray) -> np.ndarray:
+    """Map arbitrary string/integer labels to contiguous KMeans IDs."""
+    return np.unique(np.asarray(labels), return_inverse=True)[1].astype(np.int64)
 
 
 def clustering_metrics(features: np.ndarray, labels: np.ndarray, seed: int = 0) -> dict[str, float]:

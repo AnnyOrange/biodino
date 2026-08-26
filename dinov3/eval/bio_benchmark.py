@@ -10,7 +10,7 @@ import shlex
 import subprocess
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
@@ -45,9 +45,16 @@ DEFAULT_CLASSIFICATION_DATASETS = [
     "chammi-hpa-task1",
     "chammi-hpa-task2",
 ]
-DEFAULT_REGRESSION_DATASETS = ["bbbc013", "bbbc005"]
-DEFAULT_RETRIEVAL_DATASETS = ["lc25000", "nct-crc-he-100", "nct-crc-he-1k", "crc-val-he-7k"]
-DEFAULT_DETECTION_DATASETS = ["livecell"]
+DEFAULT_REGRESSION_DATASETS = ["bbbc013", "bbbc005", "conic-cell-count", "livecell-cell-count"]
+DEFAULT_RETRIEVAL_DATASETS = [
+    "lc25000",
+    "nct-crc-he-100",
+    "nct-crc-he-1k",
+    "crc-val-he-7k",
+    "hpa-subcellular",
+    "rxrx1-cross",
+]
+DEFAULT_DETECTION_DATASETS = ["livecell", "bbbc038", "conic"]
 DEFAULT_SEGMENTATION_DATASETS = [
     "bbbc038",
     "conic",
@@ -151,19 +158,58 @@ def _successful_result_exists(job: Job) -> bool:
     return False
 
 
-def _run_job(job: Job, dry_run: bool, cpu_slots: threading.Semaphore | None = None) -> Tuple[Job, int, str]:
+class _GpuSlotPool:
+    """Runtime GPU slots. Jobs take any free card instead of a round-robin pin."""
+
+    def __init__(self, gpus: Sequence[str], jobs_per_gpu: int) -> None:
+        self._available: List[str] = []
+        for gpu in gpus:
+            self._available.extend([gpu] * max(1, int(jobs_per_gpu)))
+        self._cv = threading.Condition()
+
+    def acquire(self) -> str:
+        with self._cv:
+            while not self._available:
+                self._cv.wait()
+            return self._available.pop(0)
+
+    def release(self, gpu: str) -> None:
+        with self._cv:
+            self._available.append(gpu)
+            self._cv.notify()
+
+
+def _bind_job_to_gpu(job: Job, gpu: str) -> Job:
+    cmd = list(job.cmd)
+    if "--gpu" in cmd:
+        idx = cmd.index("--gpu")
+        if idx + 1 < len(cmd):
+            cmd[idx + 1] = gpu
+    return replace(job, gpu=gpu, cmd=cmd)
+
+
+def _run_job(
+    job: Job,
+    dry_run: bool,
+    cpu_slots: threading.Semaphore | None = None,
+    gpu_pool: _GpuSlotPool | None = None,
+) -> Tuple[Job, int, str]:
     job.output_dir.mkdir(parents=True, exist_ok=True)
     if not dry_run and job.task != "segmentation" and _successful_result_exists(job):
         return job, 0, "cached-success"
+    assigned = job.gpu
+    if gpu_pool is not None and not dry_run:
+        assigned = gpu_pool.acquire()
+        job = _bind_job_to_gpu(job, assigned)
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = job.gpu
+    env["CUDA_VISIBLE_DEVICES"] = assigned
     env["PYTHONUNBUFFERED"] = "1"
     for name, value in DEFAULT_THREAD_LIMITS.items():
         env.setdefault(name, value)
     cmd_str = shlex.join(job.cmd)
     dataset_tag = re.sub(r"[^A-Za-z0-9_.-]+", "_", job.dataset)
     log_path = job.output_dir / f"run_{job.task}_{dataset_tag}_{job.ckpt_id}.log"
-    logger.info("[gpu %s] %s/%s ckpt=%s $ %s", job.gpu, job.task, job.dataset, job.ckpt_id, cmd_str)
+    logger.info("[gpu %s] %s/%s ckpt=%s $ %s", assigned, job.task, job.dataset, job.ckpt_id, cmd_str)
     if dry_run:
         log_path.write_text(cmd_str + "\n")
         return job, 0, "dry-run"
@@ -177,6 +223,8 @@ def _run_job(job: Job, dry_run: bool, cpu_slots: threading.Semaphore | None = No
     finally:
         if cpu_slots is not None:
             cpu_slots.release()
+        if gpu_pool is not None:
+            gpu_pool.release(assigned)
     return job, proc.returncode, str(log_path)
 
 
@@ -292,6 +340,7 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
             "--num-workers", str(args.num_workers),
             "--train-fraction", str(args.train_fraction),
             "--seed", str(args.seed),
+            "--split-protocol", args.frozen_split_protocol,
             "--channel-policy", args.frozen_channel_policy,
             "--channel-tta-samples", str(args.frozen_channel_tta_samples),
             "--channel-policy-seed", str(args.frozen_channel_policy_seed),
@@ -326,7 +375,15 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
                 od = out / "bio_regression" / dataset_tag / str(ckpt_id)
                 cmd = [
                     py, "-m", "dinov3.eval.bio_frozen_eval.run_classification",
-                    "--datasets", *datasets, "--output-dir", str(od), *frozen_common, *frozen_cap,
+                    "--datasets", *datasets, "--output-dir", str(od), *frozen_common,
+                    "--resolution-protocol", args.regression_resolution_protocol,
+                    "--image-size", str(args.regression_image_size),
+                    *(
+                        ["--resize-size", str(args.regression_resize_size)]
+                        if args.regression_resize_size > 0
+                        else []
+                    ),
+                    *frozen_cap,
                 ]
                 jobs.append(Job("regression", "+".join(datasets), ckpt_id, next(gpu_iter), cmd, od))
 
@@ -349,6 +406,9 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
         if "retrieval" in args.tasks:
             for datasets in _chunks(args.retrieval_datasets, args.frozen_datasets_per_job):
                 dataset_tag = datasets[0] if len(datasets) == 1 else f"shard_{datasets[0]}_{datasets[-1]}"
+                uses_rxrx1_full = args.rxrx1_full and "rxrx1-cross" in datasets
+                if uses_rxrx1_full:
+                    dataset_tag = f"{dataset_tag}_full"
                 od = out / "bio_retrieval" / dataset_tag / str(ckpt_id)
                 cmd = [
                     py, "-m", "dinov3.eval.bio_frozen_eval.run_retrieval_clustering",
@@ -366,6 +426,8 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
                     "--channel-tta-samples", str(args.frozen_channel_tta_samples),
                     "--channel-policy-seed", str(args.frozen_channel_policy_seed),
                 ]
+                if uses_rxrx1_full:
+                    cmd.append("--rxrx1-full")
                 if args.smoke:
                     # clustering needs more than n_clusters samples; keep a floor.
                     cmd += ["--max-samples", str(max(args.smoke_max_samples, 64))]
@@ -399,6 +461,11 @@ def parse_args(argv=None):
     parser.add_argument("--classification-datasets", nargs="+", default=DEFAULT_CLASSIFICATION_DATASETS)
     parser.add_argument("--regression-datasets", nargs="+", default=DEFAULT_REGRESSION_DATASETS)
     parser.add_argument("--retrieval-datasets", nargs="+", default=DEFAULT_RETRIEVAL_DATASETS)
+    parser.add_argument(
+        "--rxrx1-full",
+        action="store_true",
+        help="Use all 112,824 RxRx1 treatment views; default uses the balanced 17,728-view core.",
+    )
     parser.add_argument("--detection-datasets", nargs="+", default=DEFAULT_DETECTION_DATASETS)
     parser.add_argument("--segmentation-datasets", nargs="+", default=DEFAULT_SEGMENTATION_DATASETS)
     parser.add_argument(
@@ -418,6 +485,12 @@ def parse_args(argv=None):
     parser.add_argument("--frozen-datasets-per-job", type=int, default=1, help="Evaluate this many frozen datasets per model load.")
     parser.add_argument("--frozen-n-last-blocks", type=int, default=1)
     parser.add_argument("--autocast-dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
+    parser.add_argument(
+        "--frozen-split-protocol",
+        default="current",
+        choices=["current", "s0-internal"],
+        help="Dataset split used by classification and regression frozen probes.",
+    )
     parser.add_argument(
         "--frozen-channel-policy",
         default="auto",
@@ -439,6 +512,9 @@ def parse_args(argv=None):
     parser.add_argument("--classification-resolution-protocol", default="best", choices=["manual", "best"])
     parser.add_argument("--classification-image-size", type=int, default=224, help="Manual/fallback final square crop size for classification/multilabel frozen features.")
     parser.add_argument("--classification-resize-size", type=int, default=0, help="Optional pre-crop resize size for classification; 0 keeps the ImageNet eval ratio.")
+    parser.add_argument("--regression-resolution-protocol", default="best", choices=["manual", "best"])
+    parser.add_argument("--regression-image-size", type=int, default=224)
+    parser.add_argument("--regression-resize-size", type=int, default=0)
     parser.add_argument("--train-fraction", type=float, default=0.8)
     parser.add_argument("--seed", type=int, default=0)
     # segmentation / detection dense linear probe (repo code in bio_segmentation / bio_detection)
@@ -480,8 +556,9 @@ def _run_jobs(args, jobs: Sequence[Job], gpus: Sequence[str]) -> Dict[str, List[
     max_workers = max(1, args.max_concurrent_jobs or default_workers)
     cpu_limit = max(1, args.max_cpu_jobs or max_workers)
     cpu_slots = threading.Semaphore(cpu_limit)
+    gpu_pool = _GpuSlotPool(gpus, args.jobs_per_gpu)
     with futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = [ex.submit(_run_job, job, args.dry_run, cpu_slots) for job in jobs]
+        futs = [ex.submit(_run_job, job, args.dry_run, cpu_slots, gpu_pool) for job in jobs]
         for fut in futures.as_completed(futs):
             job, code, msg = fut.result()
             rows_by_task[job.task].append((job, code, msg))

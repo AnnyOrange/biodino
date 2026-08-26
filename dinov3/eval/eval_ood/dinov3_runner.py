@@ -44,9 +44,9 @@ from dinov3.eval.eval_ood.metrics import (
 logger = logging.getLogger("dinov3.eval_ood")
 
 
-DINOV3_ROOT = Path("/mnt/huawei_deepcad/dinov3")
-DEFAULT_OOD_ROOT = Path("/mnt/huawei_deepcad/benchmark/ood")
-DEFAULT_BENCHMARK_ROOT = Path("/mnt/huawei_deepcad/benchmark")
+DINOV3_ROOT = Path(os.environ.get("DINOV3_ROOT", Path(__file__).resolve().parents[3]))
+DEFAULT_BENCHMARK_ROOT = Path(os.environ.get("BENCHMARK_ROOT", "/mnt/huawei_deepcad/benchmark"))
+DEFAULT_OOD_ROOT = Path(os.environ.get("OOD_ROOT", DEFAULT_BENCHMARK_ROOT / "ood"))
 
 
 @dataclass(frozen=True)

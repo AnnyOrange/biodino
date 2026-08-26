@@ -64,9 +64,11 @@ def _probe_split_for_task(task: str):
 
 
 def split_protocol_for_dataset(dataset_name: str) -> str:
-    """Return the published evaluation split protocol label for a dataset."""
+    """Return the evaluation split protocol label for a dataset."""
     if dataset_name == "bbbc013":
         return BBBC013_SPLIT_PROTOCOL
+    if dataset_name == "conic-cell-count":
+        return "source-image-grouped-test"
     if dataset_name in UNSUPPORTED_OFFICIAL_SPLIT_DATASETS:
         return "unsupported-open-set-official"
     if dataset_name in NATIVE_TEST_SPLIT_DATASETS:
@@ -97,6 +99,10 @@ BEST_IMAGE_SIZE_BY_DATASET = {
     "chestmnist": 512,
 }
 
+# These loaders return exactly the image region covered by the count target.
+# Resizing straight to the model input avoids dropping counted cells.
+FULL_IMAGE_REGRESSION_DATASETS = {"conic-cell-count", "livecell-cell-count"}
+
 
 CSV_FIELDS = [
     "model", "dataset", "task", "split", "resolution_protocol", "n_train", "n_test",
@@ -108,7 +114,8 @@ CSV_FIELDS = [
     "ly294002_mae", "ly294002_r2", "ly294002_spearman",
     "target_transform", "fold_protocol", "ridge_alpha", "n_compounds", "n_folds", "oof_samples",
     "feature_file",
-    "image_size", "resize_size", "channel_policy", "channel_tta_samples",
+    "image_size", "resize_size", "batch_size", "seed", "train_fraction",
+    "channel_policy", "channel_tta_samples", "channel_policy_seed",
     "checkpoint", "train_config", "error",
 ]
 
@@ -133,6 +140,17 @@ def resolve_resize_size(image_size: int, resize_size: int | None) -> int:
             raise ValueError("--resize-size must be >= --image-size")
         return int(resize_size)
     return int(round(256 * image_size / 224))
+
+
+def resolve_dataset_resize_size(dataset_name: str, image_size: int, resize_size: int | None) -> int:
+    if dataset_name in FULL_IMAGE_REGRESSION_DATASETS:
+        if resize_size and resize_size != image_size:
+            raise ValueError(
+                f"{dataset_name} preserves the complete counted region; "
+                "--resize-size must be 0 or equal --image-size"
+            )
+        return image_size
+    return resolve_resize_size(image_size, resize_size)
 
 
 def resolve_image_size(dataset_name: str, protocol: str, manual_image_size: int) -> int:
@@ -214,6 +232,15 @@ def parse_args(argv=None):
     p.add_argument("--num-workers", type=int, default=0)
     p.add_argument("--train-fraction", type=float, default=0.8)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument(
+        "--split-protocol",
+        default="current",
+        choices=["current", "s0-internal"],
+        help=(
+            "current uses official/group-held-out splits when available; "
+            "s0-internal reproduces the original S0 train-set 80/20 protocol."
+        ),
+    )
     p.add_argument("--max-samples", type=int)
     p.add_argument("--max-per-class", type=int)
     p.add_argument("--n-last-blocks", type=int, default=1)
@@ -327,23 +354,28 @@ def main(argv=None) -> int:
         return current_encoder
 
     for dataset_name in args.datasets:
-        split_label = split_protocol_for_dataset(dataset_name)
+        split_label = (
+            "internal-80-20"
+            if args.split_protocol == "s0-internal"
+            else split_protocol_for_dataset(dataset_name)
+        )
         capped_subset = args.max_samples is not None or args.max_per_class is not None
         if capped_subset and dataset_name not in UNSUPPORTED_OFFICIAL_SPLIT_DATASETS:
             # Capped runs are smoke/debug subsets. Keep them separate from
             # reportable full-dataset protocols in summaries and feature caches.
-            base_split = (
-                "subset-official-test"
-                if dataset_name in NATIVE_TEST_SPLIT_DATASETS
-                else "subset-internal-80-20"
-            )
+            if dataset_name == "conic-cell-count":
+                base_split = "subset-source-image-grouped-test"
+            elif dataset_name in NATIVE_TEST_SPLIT_DATASETS:
+                base_split = "subset-official-test"
+            else:
+                base_split = "subset-internal-80-20"
             split_label = capped_split_protocol_label(
                 base_split,
                 args.max_samples,
                 args.max_per_class,
             )
         image_size = resolve_image_size(dataset_name, args.resolution_protocol, args.image_size)
-        resize_size = resolve_resize_size(image_size, args.resize_size)
+        resize_size = resolve_dataset_resize_size(dataset_name, image_size, args.resize_size)
         if (
             completed(
                 summary_path,
@@ -383,7 +415,7 @@ def main(argv=None) -> int:
                     "open-set/transfer protocol before reporting this task."
                 )
             encoder = get_encoder(image_size, resize_size)
-            if dataset_name in NATIVE_TEST_SPLIT_DATASETS:
+            if args.split_protocol == "current" and dataset_name in NATIVE_TEST_SPLIT_DATASETS:
                 # Datasets with a publication-standard train/test split: extract
                 # features for each split and probe on the official held-out test set.
                 train_ds, task = build_dataset(
@@ -458,8 +490,12 @@ def main(argv=None) -> int:
                 "feature_file": str(feature_file),
                 "image_size": image_size,
                 "resize_size": resize_size,
+                "batch_size": args.batch_size,
+                "seed": args.seed,
+                "train_fraction": args.train_fraction,
                 "channel_policy": args.channel_policy,
                 "channel_tta_samples": args.channel_tta_samples,
+                "channel_policy_seed": args.channel_policy_seed,
                 "checkpoint": str(checkpoint),
                 "train_config": str(train_config),
                 **result.to_dict(),
@@ -469,6 +505,27 @@ def main(argv=None) -> int:
                     {
                         "target_transform": "log1p",
                         "fold_protocol": "leave-one-replicate-row-out",
+                    }
+                )
+            elif dataset_name == "allen-cell-volume":
+                row.update(
+                    {
+                        "target_transform": "log1p(cell_volume)",
+                        "fold_protocol": "CHAMMI-Train-to-Task_one",
+                    }
+                )
+            elif dataset_name == "conic-cell-count":
+                row.update(
+                    {
+                        "target_transform": "raw_official_central_224px_total_cell_count",
+                        "fold_protocol": "source-image-grouped-CoNIC-10fold-v1",
+                    }
+                )
+            elif dataset_name == "livecell-cell-count":
+                row.update(
+                    {
+                        "target_transform": "raw_COCO_instance_count",
+                        "fold_protocol": "official-LIVECell-train-to-test",
                     }
                 )
         except Exception as exc:
@@ -482,8 +539,12 @@ def main(argv=None) -> int:
                 "feature_file": str(feature_file),
                 "image_size": image_size,
                 "resize_size": resize_size,
+                "batch_size": args.batch_size,
+                "seed": args.seed,
+                "train_fraction": args.train_fraction,
                 "channel_policy": args.channel_policy,
                 "channel_tta_samples": args.channel_tta_samples,
+                "channel_policy_seed": args.channel_policy_seed,
                 "checkpoint": str(checkpoint),
                 "train_config": str(train_config),
                 "error": f"{type(exc).__name__}: {exc}",

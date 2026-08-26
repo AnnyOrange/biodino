@@ -139,6 +139,9 @@ def _collect_class_folder(root: Path, *, only_merged: bool = False) -> Tuple[Lis
 def _build_bloodmnist(benchmark_root: Path, split: str, transform: Optional[Callable]) -> Dataset:
     path = benchmark_root / "Classification" / "bloodmnist_64.npz?download=1"
     if not path.is_file():
+        # NTFS-backed benchmark mounts reject '?' in filenames.
+        path = benchmark_root / "Classification" / "bloodmnist_64.npz"
+    if not path.is_file():
         raise FileNotFoundError(path)
     split_key = "val" if split == "valid" else split
     data = np.load(path)

@@ -16,6 +16,8 @@ from torch.utils.data import DataLoader, Dataset
 
 import dinov3.distributed as distributed
 from dinov3.eval.bio_classification.common import checkpoint_stem, load_backbone, parse_autocast_dtype
+from dinov3.eval.bio_segmentation.datasets.bbbc038 import BBBC038Dataset, get_bbbc038_paths
+from dinov3.eval.bio_segmentation.datasets.conic import CoNICDataset, get_conic_paths
 from dinov3.eval.bio_segmentation.datasets.livecell import get_livecell_paths
 from dinov3.eval.helpers import write_results
 from dinov3.utils.bio_io import read_bio_image_as_numpy
@@ -86,6 +88,98 @@ class LiveCellCenterDataset(Dataset):
             gy = min(self.grid - 1, max(0, int((cy * sy) // self.patch_size)))
             label[gy, gx] = 1.0
         return x, label.reshape(-1)
+
+
+class InstanceCenterDataset(Dataset):
+    """Convert instance masks from a BioSeg dataset into center-patch labels."""
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        image_size: int,
+        patch_size: int = 16,
+        max_samples: int = 0,
+        seed: int = 0,
+    ):
+        self.dataset = dataset
+        self.image_size = int(image_size)
+        self.patch_size = int(patch_size)
+        self.grid = self.image_size // self.patch_size
+        indices = np.arange(len(dataset))
+        if max_samples > 0 and len(indices) > max_samples:
+            rng = np.random.default_rng(seed)
+            indices = np.sort(rng.choice(indices, size=max_samples, replace=False))
+        self.indices = indices.tolist()
+        if not self.indices:
+            raise ValueError("Instance center dataset has no samples")
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, index: int):
+        image, _semantic, instances = self.dataset[self.indices[index]]
+        if image.shape[-2:] != (self.image_size, self.image_size):
+            raise ValueError(
+                f"Expected image size {(self.image_size, self.image_size)}, got {tuple(image.shape[-2:])}"
+            )
+        image = (image.float() - _IMAGE_NET_MEAN) / _IMAGE_NET_STD
+        label = torch.zeros(self.grid, self.grid, dtype=torch.float32)
+        instance_ids = torch.unique(instances)
+        for instance_id in instance_ids[instance_ids > 0]:
+            coords = torch.nonzero(instances == instance_id, as_tuple=False)
+            if coords.numel() == 0:
+                continue
+            cy, cx = coords.float().mean(dim=0)
+            gx = min(self.grid - 1, max(0, int(cx.item() // self.patch_size)))
+            gy = min(self.grid - 1, max(0, int(cy.item() // self.patch_size)))
+            label[gy, gx] = 1.0
+        return image, label.reshape(-1)
+
+
+def build_center_dataset(
+    dataset: str,
+    benchmark_root: str | Path,
+    split: str,
+    image_size: int,
+    max_samples: int,
+    seed: int,
+) -> Dataset:
+    root = Path(benchmark_root) / "segmentation"
+    if dataset == "livecell":
+        return LiveCellCenterDataset(
+            str(root / "LIVECell"),
+            split,
+            image_size=image_size,
+            max_samples=max_samples,
+            seed=seed,
+        )
+    if dataset == "bbbc038":
+        img_paths, mask_paths = get_bbbc038_paths(str(root / "bbbc038/extracted"), split=split)
+        base = BBBC038Dataset(
+            img_paths,
+            mask_paths,
+            size=(image_size, image_size),
+            augment=False,
+            do_normalize=False,
+        )
+    elif dataset == "conic":
+        images_npy, labels_npy, indices = get_conic_paths(str(root / "conic/extracted"), split=split)
+        base = CoNICDataset(
+            images_npy,
+            labels_npy,
+            indices=indices,
+            size=(image_size, image_size),
+            augment=False,
+            do_normalize=False,
+        )
+    else:
+        raise ValueError("Supported bio detection datasets: livecell, bbbc038, conic")
+    return InstanceCenterDataset(
+        base,
+        image_size=image_size,
+        max_samples=max_samples,
+        seed=seed,
+    )
 
 
 class PatchFeatureModel(nn.Module):
@@ -160,21 +254,27 @@ def run_bio_detection_eval(
     seed: int,
 ) -> Dict[str, float | str | int]:
     os.makedirs(output_dir, exist_ok=True)
-    if dataset.lower() != "livecell":
-        raise ValueError("Currently supported bio detection datasets: livecell")
+    dataset = dataset.lower()
+    if dataset not in {"livecell", "bbbc038", "conic"}:
+        raise ValueError("Supported bio detection datasets: livecell, bbbc038, conic")
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    data_root = Path(benchmark_root) / "segmentation" / "LIVECell"
     backbone = load_backbone(repo_dir=".", arch=arch, weights=weights, checkpoint=checkpoint, train_config=train_config)
     feature_model = PatchFeatureModel(
         backbone,
         autocast_dtype=autocast_dtype,
         channel_policy=channel_policy,
     ).cuda().eval()
-    train_ds = LiveCellCenterDataset(str(data_root), "train", image_size=image_size, max_samples=max_samples_per_split, seed=seed)
-    val_ds = LiveCellCenterDataset(str(data_root), "val", image_size=image_size, max_samples=max_samples_per_split, seed=seed)
-    test_ds = LiveCellCenterDataset(str(data_root), "test", image_size=image_size, max_samples=max_samples_per_split, seed=seed)
+    train_ds = build_center_dataset(
+        dataset, benchmark_root, "train", image_size, max_samples_per_split, seed
+    )
+    val_ds = build_center_dataset(
+        dataset, benchmark_root, "val", image_size, max_samples_per_split, seed
+    )
+    test_ds = build_center_dataset(
+        dataset, benchmark_root, "test", image_size, max_samples_per_split, seed
+    )
     train_generator = torch.Generator().manual_seed(seed)
     train_loader = DataLoader(
         train_ds,
@@ -215,7 +315,7 @@ def run_bio_detection_eval(
     results: Dict[str, float | str | int] = {
         "dataset": dataset,
         "checkpoint": checkpoint_stem(checkpoint, weights),
-        "probe": "livecell_center_patch_linear",
+        "probe": f"{dataset}_center_patch_linear",
         "image_size": image_size,
         "epochs": epochs,
         "batch_size": batch_size,
@@ -229,7 +329,10 @@ def run_bio_detection_eval(
     write_results(results, output_dir, RESULTS_FILENAME)
     with open(os.path.join(output_dir, "bio_detection.md"), "w") as f:
         f.write("# Bio Detection Probe\n\n")
-        f.write("This is a frozen-backbone LIVECell center-to-patch linear probe, not a full DETR/COCO mAP head.\n\n")
+        f.write(
+            f"This is a frozen-backbone {dataset} center-to-patch linear probe, "
+            "not a full DETR/COCO mAP head.\n\n"
+        )
         f.write(json.dumps(results, indent=2))
         f.write("\n")
     logger.info("Bio detection results: %s", results)
@@ -243,7 +346,7 @@ def parse_args(argv=None):
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--train-config", default=None)
     parser.add_argument("--benchmark-root", default="/mnt/huawei_deepcad/benchmark")
-    parser.add_argument("--dataset", default="livecell", choices=["livecell"])
+    parser.add_argument("--dataset", default="livecell", choices=["livecell", "bbbc038", "conic"])
     parser.add_argument("--output-dir", default="outputs/bio_detection/livecell")
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=4)
