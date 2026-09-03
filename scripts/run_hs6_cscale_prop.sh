@@ -26,10 +26,16 @@ EPOCH_LIST=${EPOCH_LIST:-"1 2 4"}
 SHARD_COUNT_EXPECTED=${SHARD_COUNT_EXPECTED:-326}
 
 case "$MODEL" in
-  Splus) LR=0.0002;   LR_TAG=lr2e4;    CONFIG_FILE=dinov3/configs/train/microscopy_continual_vits16.yaml ;;
-  B)     LR=0.00015;  LR_TAG=lr1p5e4;  CONFIG_FILE=dinov3/configs/train/microscopy_continual_vitb16_robust.yaml ;;
-  L)     LR=0.0001;   LR_TAG=lr1e4;    CONFIG_FILE=dinov3/configs/train/microscopy_continual_vitl16.yaml ;;
-  Hplus) LR=0.00005;  LR_TAG=lr5e5;    CONFIG_FILE=dinov3/configs/train/microscopy_continual_vith16plus.yaml ;;
+  Splus) LR=0.0002;   LR_TAG=lr2e4;    CONFIG_FILE=dinov3/configs/train/microscopy_continual_vits16.yaml
+         : "${BATCH_SIZE_PER_GPU:=64}"; : "${GRAD_ACCUM_STEPS:=2}" ;;
+  B)     LR=0.00015;  LR_TAG=lr1p5e4;  CONFIG_FILE=dinov3/configs/train/microscopy_continual_vitb16_robust.yaml
+         : "${BATCH_SIZE_PER_GPU:=64}"; : "${GRAD_ACCUM_STEPS:=2}" ;;
+  L)     LR=0.0001;   LR_TAG=lr1e4;    CONFIG_FILE=dinov3/configs/train/microscopy_continual_vitl16.yaml
+         # Proven 8x5090 L HS6 setting (bs32 OOM'd): 16×8×accum8 = 1024.
+         : "${BATCH_SIZE_PER_GPU:=16}"; : "${GRAD_ACCUM_STEPS:=8}" ;;
+  Hplus) LR=0.00005;  LR_TAG=lr5e5;    CONFIG_FILE=dinov3/configs/train/microscopy_continual_vith16plus.yaml
+         # 2xH100 80GB: 32×2×accum16 = 1024 (same as the 20260818 4xH100 recipe's GBS).
+         : "${BATCH_SIZE_PER_GPU:=32}"; : "${GRAD_ACCUM_STEPS:=16}" ;;
   *) echo "ERROR: unknown MODEL=$MODEL" >&2; exit 2 ;;
 esac
 
