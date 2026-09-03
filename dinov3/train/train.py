@@ -303,11 +303,17 @@ def build_schedulers(cfg):
         return build_schedulers_v2(cfg)
 
     OFFICIAL_EPOCH_LENGTH = cfg.train.OFFICIAL_EPOCH_LENGTH
+
+    def _iters(epochs):
+        # Fractional epochs are allowed so schedule shape can be held fixed
+        # across durations; np.linspace/slice bounds both require exact ints.
+        return int(round(float(epochs) * OFFICIAL_EPOCH_LENGTH))
+
     lr = dict(
         base_value=cfg.optim["lr"],
         final_value=cfg.optim["min_lr"],
         total_iters=cfg.optim["epochs"] * OFFICIAL_EPOCH_LENGTH,
-        warmup_iters=cfg.optim["warmup_epochs"] * OFFICIAL_EPOCH_LENGTH,
+        warmup_iters=_iters(cfg.optim["warmup_epochs"]),
         start_warmup_value=0,
         trunc_extra=cfg.optim["schedule_trunc_extra"],
     )
@@ -326,8 +332,8 @@ def build_schedulers(cfg):
     teacher_temp = dict(
         base_value=cfg.teacher["teacher_temp"],
         final_value=cfg.teacher["teacher_temp"],
-        total_iters=cfg.teacher["warmup_teacher_temp_epochs"] * OFFICIAL_EPOCH_LENGTH,
-        warmup_iters=cfg.teacher["warmup_teacher_temp_epochs"] * OFFICIAL_EPOCH_LENGTH,
+        total_iters=_iters(cfg.teacher["warmup_teacher_temp_epochs"]),
+        warmup_iters=_iters(cfg.teacher["warmup_teacher_temp_epochs"]),
         start_warmup_value=cfg.teacher["warmup_teacher_temp"],
     )
 
@@ -337,7 +343,7 @@ def build_schedulers(cfg):
     teacher_temp_schedule = CosineScheduler(**teacher_temp)
     last_layer_lr_schedule = CosineScheduler(**lr)
 
-    last_layer_lr_schedule.schedule[: cfg.optim["freeze_last_layer_epochs"] * OFFICIAL_EPOCH_LENGTH] = (
+    last_layer_lr_schedule.schedule[: _iters(cfg.optim["freeze_last_layer_epochs"])] = (
         0  # mimicking the original schedules
     )
     logger.info("Schedulers ready.")

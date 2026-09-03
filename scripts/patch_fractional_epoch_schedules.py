@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Allow fractional warmup/freeze epochs in build_schedulers.
+"""One-shot migrator for checkouts that have not yet pulled main.
+
+The canonical fix lives in dinov3/train/train.py on origin/main (_iters casts).
+New hosts: git pull --ff-only. Do not scp this file around or patch in place.
 
 np.linspace's `num` and the last-layer slice bound both require exact ints, so
 a fractional epoch count silently becomes a float and either raises or trips
-the `len(schedule) == total_iters` assert. Casting at the four call sites lets
-every duration hold the same schedule *shape* (warmup/freeze as a fixed
-fraction of the run) instead of the same absolute epoch counts.
+the `len(schedule) == total_iters` assert.
 
-Idempotent. Run on each host's repo: python patch_fractional_epoch_schedules.py <repo>
+Idempotent: python patch_fractional_epoch_schedules.py <repo>
 """
 
 import sys
