@@ -44,7 +44,13 @@ class WdsConfig:
 
 
 class WeightedIterableDataset(torch.utils.data.IterableDataset):
-    """Randomly interleave multiple infinite iterable datasets by weight."""
+    """Randomly interleave infinite datasets while retaining source identity.
+
+    ``domain_block_size`` keeps consecutive samples on one source.  Setting it
+    to the local DataLoader batch size yields domain-homogeneous microbatches,
+    which makes scalar SSL losses attributable to a data domain without
+    changing the samples within that domain.
+    """
 
     def __init__(
         self,
@@ -53,12 +59,16 @@ class WeightedIterableDataset(torch.utils.data.IterableDataset):
         *,
         seed: int = 0,
         names: Optional[Iterable[str]] = None,
+        domain_block_size: int = 1,
+        synchronize_domain_choices: bool = False,
     ) -> None:
         super().__init__()
         self.datasets = list(datasets)
         self.weights = [float(w) for w in weights]
         self.names = list(names) if names is not None else [str(i) for i in range(len(self.datasets))]
         self.seed = int(seed)
+        self.domain_block_size = int(domain_block_size)
+        self.synchronize_domain_choices = bool(synchronize_domain_choices)
         if not self.datasets:
             raise ValueError("WeightedIterableDataset requires at least one dataset")
         if len(self.datasets) != len(self.weights):
@@ -67,6 +77,19 @@ class WeightedIterableDataset(torch.utils.data.IterableDataset):
             raise ValueError("names and datasets must have the same length")
         if any(w < 0 for w in self.weights) or sum(self.weights) <= 0:
             raise ValueError(f"weights must be non-negative and sum to > 0, got {self.weights}")
+        if self.domain_block_size <= 0:
+            raise ValueError(f"domain_block_size must be positive, got {self.domain_block_size}")
+
+    def _tag_sample(self, sample, domain_index: int):
+        if not (isinstance(sample, tuple) and sample and isinstance(sample[0], dict)):
+            raise TypeError(
+                "WeightedIterableDataset expects (sample_dict, target) entries "
+                f"so the mixture domain can be audited, got {type(sample)!r}"
+            )
+        tagged = dict(sample[0])
+        tagged["mixture_domain_index"] = domain_index
+        tagged["mixture_domain_name"] = self.names[domain_index]
+        return (tagged, *sample[1:])
 
     def __iter__(self):
         worker = torch.utils.data.get_worker_info()
@@ -77,16 +100,19 @@ class WeightedIterableDataset(torch.utils.data.IterableDataset):
             rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
         except Exception:
             rank = 0
-        rng = random.Random(self.seed + 1009 * worker_id + 9176 * rank)
+        rank_offset = 0 if self.synchronize_domain_choices else 9176 * rank
+        rng = random.Random(self.seed + 1009 * worker_id + rank_offset)
         iterators = [iter(dataset) for dataset in self.datasets]
         choices = list(range(len(iterators)))
         while True:
             idx = rng.choices(choices, weights=self.weights, k=1)[0]
-            try:
-                yield next(iterators[idx])
-            except StopIteration:
-                iterators[idx] = iter(self.datasets[idx])
-                yield next(iterators[idx])
+            for _ in range(self.domain_block_size):
+                try:
+                    sample = next(iterators[idx])
+                except StopIteration:
+                    iterators[idx] = iter(self.datasets[idx])
+                    sample = next(iterators[idx])
+                yield self._tag_sample(sample, idx)
 
 
 def _make_shard_source(wds, config: WdsConfig):

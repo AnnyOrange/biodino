@@ -228,6 +228,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--expected-points", type=int, default=90)
     parser.add_argument("--min-metrics", type=int, default=46)
+    parser.add_argument(
+        "--metric-families",
+        nargs="*",
+        default=(),
+        help="Only rank metric prefixes such as segmentation and detection.",
+    )
+    parser.add_argument("--state-subdir", default="_full_peak_monitor")
     parser.add_argument("--decline-window", type=int, default=3)
     parser.add_argument("--loss-fraction-required", type=float, default=0.60)
     parser.add_argument("--poll-seconds", type=float, default=60)
@@ -236,7 +243,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def update(args: argparse.Namespace) -> int:
-    state_root = args.eval_root / "_full_peak_monitor"
+    state_root = args.eval_root / args.state_subdir
     completed = sorted(
         int(path.name.removeprefix("ckpt_").removesuffix(".done"))
         for path in (args.eval_root / "_online_status").glob("ckpt_*.done")
@@ -245,6 +252,9 @@ def update(args: argparse.Namespace) -> int:
     incomplete: dict[int, int] = {}
     for checkpoint in completed:
         metrics = collect_metrics(args.eval_root / f"point_{checkpoint}", checkpoint)
+        if args.metric_families:
+            prefixes = tuple(f"{family}:" for family in args.metric_families)
+            metrics = {key: value for key, value in metrics.items() if key.startswith(prefixes)}
         if len(metrics) >= args.min_metrics:
             points[checkpoint] = metrics
         else:
@@ -295,6 +305,7 @@ def update(args: argparse.Namespace) -> int:
             "complete_checkpoint_markers": len(completed),
             "expected_points": args.expected_points,
             "incomplete_metric_counts": incomplete,
+            "metric_families": list(args.metric_families),
             "ranked_full_suite_points": len(points),
             "updated_at_utc": utc_now(),
         },

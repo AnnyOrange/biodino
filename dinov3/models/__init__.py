@@ -121,7 +121,14 @@ def build_model_for_eval(
         from dinov3.checkpointer import init_model_from_checkpoint_for_evals
 
         # consolidated checkpoint codepath
-        model.to_empty(device="cuda")
+        # Keep the 7B consolidated load on CPU.  Moving an fp32 empty model to
+        # CUDA before loading, then casting to bf16, creates a transient fp32
+        # allocation that exceeds a 24 GiB card.  The caller can cast and move
+        # the fully loaded CPU model atomically afterwards.
+        # Load consolidated frozen backbones on CPU so they can be cast to the
+        # requested reduced precision before the CUDA transfer.
+        is_frozen = str(getattr(config.MODEL, "DEVICE", "cuda")) == "cuda"
+        model.to_empty(device="cpu" if is_frozen else "cuda")
         init_model_from_checkpoint_for_evals(model, pretrained_weights, consolidated_checkpoint_key)
     if shard_unsharded_model:
         logger.info("Sharding model")

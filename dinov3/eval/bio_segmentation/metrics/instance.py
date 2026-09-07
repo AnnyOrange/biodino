@@ -8,6 +8,8 @@ Implements:
     PQ      Panoptic Quality  (SQ × RQ)
     bPQ     binary PQ  (treat all instances as one class)
     mPQ     mean PQ   (average per-class PQ, excluding background)
+    ObjectAP  Object-level AP used by Cellpose/TissueNet/DSB2018
+    SEG     Cell Tracking Challenge segmentation accuracy
 
 All functions accept NumPy integer arrays:
     pred_instance : (H, W) int  – predicted instance map  (0 = background)
@@ -374,6 +376,103 @@ def compute_ap(
 
 
 # ============================================================================
+# Object AP (Cellpose / TissueNet / 2018 Data Science Bowl convention)
+# ============================================================================
+
+def compute_object_ap(
+    pred_instance: np.ndarray,
+    gt_instance: np.ndarray,
+    iou_thresholds: Optional[List[float]] = None,
+) -> Dict[str, float]:
+    """Compute object-level AP = TP / (TP + FP + FN).
+
+    This is the metric called ``average precision`` by Cellpose and used by
+    TissueNet and the 2018 Data Science Bowl. Scores are averaged over IoU
+    thresholds 0.50, 0.55, ..., 0.95; unlike COCO AP, object confidence scores
+    and a precision-recall integral are not involved.
+    """
+    if iou_thresholds is None:
+        iou_thresholds = [round(0.5 + 0.05 * i, 2) for i in range(10)]
+
+    pred_ids = _get_instance_ids(pred_instance)
+    gt_ids = _get_instance_ids(gt_instance)
+    n_pred, n_gt = len(pred_ids), len(gt_ids)
+
+    if n_gt == 0 and n_pred == 0:
+        return {"ObjectAP": 1.0, "ObjectAP50": 1.0, "ObjectAP75": 1.0,
+                "CellposeStyleAP": 1.0, "CellposeStyleAP50": 1.0, "CellposeStyleAP75": 1.0}
+    if n_gt == 0 or n_pred == 0:
+        return {"ObjectAP": 0.0, "ObjectAP50": 0.0, "ObjectAP75": 0.0,
+                "CellposeStyleAP": 0.0, "CellposeStyleAP50": 0.0, "CellposeStyleAP75": 0.0}
+
+    iou_mat = _pairwise_iou(pred_instance, gt_instance, pred_ids, gt_ids)
+    values: List[float] = []
+    results: Dict[str, float] = {}
+    for thresh in iou_thresholds:
+        # At thresholds >= 0.5, descending-IoU one-to-one matching is the
+        # standard object-counting equivalent of the challenge metric.
+        matched_gt = set()
+        matched_pred = set()
+        for flat_idx in np.argsort(-iou_mat, axis=None):
+            gi, pi = divmod(int(flat_idx), n_pred)
+            if iou_mat[gi, pi] < thresh:
+                break
+            if gi in matched_gt or pi in matched_pred:
+                continue
+            matched_gt.add(gi)
+            matched_pred.add(pi)
+
+        tp = len(matched_gt)
+        fp = n_pred - tp
+        fn = n_gt - tp
+        score = float(tp / (tp + fp + fn + 1e-8))
+        values.append(score)
+        if abs(thresh - 0.50) < 0.001:
+            results["ObjectAP50"] = score
+        if abs(thresh - 0.75) < 0.001:
+            results["ObjectAP75"] = score
+
+    results["ObjectAP"] = float(np.mean(values))
+    # Canonical names; retain ObjectAP aliases for old result consumers.
+    results["CellposeStyleAP"] = results["ObjectAP"]
+    results["CellposeStyleAP50"] = results["ObjectAP50"]
+    results["CellposeStyleAP75"] = results["ObjectAP75"]
+    return results
+
+
+# ============================================================================
+# SEG (Cell Tracking Challenge convention, used by LIVECell/DINOCell)
+# ============================================================================
+
+def compute_seg(pred_instance: np.ndarray, gt_instance: np.ndarray) -> float:
+    """Compute the Cell Tracking Challenge SEG score for one image.
+
+    Each ground-truth object contributes the IoU of its matching prediction
+    only when the prediction covers more than half of that ground-truth object;
+    unmatched objects contribute zero.
+    """
+    pred_ids = _get_instance_ids(pred_instance)
+    gt_ids = _get_instance_ids(gt_instance)
+    if len(gt_ids) == 0:
+        return 1.0 if len(pred_ids) == 0 else 0.0
+    if len(pred_ids) == 0:
+        return 0.0
+
+    iou_mat = _pairwise_iou(pred_instance, gt_instance, pred_ids, gt_ids)
+    pred_areas = np.asarray([(pred_instance == pid).sum() for pid in pred_ids], dtype=np.float64)
+    gt_areas = np.asarray([(gt_instance == gid).sum() for gid in gt_ids], dtype=np.float64)
+    # Recover intersections from IoU and object areas: I = IoU*(A+B)/(1+IoU).
+    intersections = iou_mat * (gt_areas[:, None] + pred_areas[None, :]) / (1.0 + iou_mat)
+
+    score = 0.0
+    for gi in range(len(gt_ids)):
+        eligible = intersections[gi] > 0.5 * gt_areas[gi]
+        if np.any(eligible):
+            score += float(np.max(iou_mat[gi, eligible]))
+    return score / len(gt_ids)
+
+
+# ============================================================================
 # Convenience: accumulate across images
 # ============================================================================
 
@@ -399,15 +498,25 @@ def accumulate_instance_metrics(
     Returns:
         Averaged dict with keys 'AJI', 'AP', 'AP50', 'AP75', 'bPQ', 'mPQ'.
     """
-    aji_list, ap_list, ap50_list, ap75_list, bpq_list, mpq_list = [], [], [], [], [], []
+    aji_list, dice_list, ap_list, ap50_list, ap75_list = [], [], [], [], []
+    object_ap_list, object_ap50_list, object_ap75_list = [], [], []
+    seg_list, bpq_list, mpq_list = [], [], []
 
     for i, (p_inst, g_inst) in enumerate(zip(pred_instances, gt_instances)):
         aji_list.append(compute_aji(p_inst, g_inst))
+        p_fg, g_fg = p_inst > 0, g_inst > 0
+        dice_list.append(float(2.0 * np.logical_and(p_fg, g_fg).sum() / (p_fg.sum() + g_fg.sum() + 1e-8)))
 
         ap_dict = compute_ap(p_inst, g_inst)
         ap_list.append(ap_dict['AP'])
         ap50_list.append(ap_dict['AP50'])
         ap75_list.append(ap_dict['AP75'])
+
+        object_ap = compute_object_ap(p_inst, g_inst)
+        object_ap_list.append(object_ap['ObjectAP'])
+        object_ap50_list.append(object_ap['ObjectAP50'])
+        object_ap75_list.append(object_ap['ObjectAP75'])
+        seg_list.append(compute_seg(p_inst, g_inst))
 
         if pred_semantics is not None and gt_semantics is not None:
             pq_dict = compute_multi_class_pq(
@@ -424,9 +533,17 @@ def accumulate_instance_metrics(
 
     results: Dict[str, float] = {
         'AJI':  float(np.nanmean(aji_list)),
+        'Dice': float(np.nanmean(dice_list)),
         'AP':   float(np.nanmean(ap_list)),
         'AP50': float(np.nanmean(ap50_list)),
         'AP75': float(np.nanmean(ap75_list)),
+        'ObjectAP': float(np.nanmean(object_ap_list)),
+        'ObjectAP50': float(np.nanmean(object_ap50_list)),
+        'ObjectAP75': float(np.nanmean(object_ap75_list)),
+        'CellposeStyleAP': float(np.nanmean(object_ap_list)),
+        'CellposeStyleAP50': float(np.nanmean(object_ap50_list)),
+        'CellposeStyleAP75': float(np.nanmean(object_ap75_list)),
+        'SEG': float(np.nanmean(seg_list)),
         'bPQ':  float(np.nanmean(bpq_list)),
     }
     if mpq_list:

@@ -1,0 +1,105 @@
+# Mature-HS6 continuation with full-bank cross-domain bridge transport.
+
+compute_precision:
+  param_dtype: bf16
+  reduce_dtype: fp32
+  distributed_mode: ddp
+
+train:
+  dataset_path: "packwds_robust:/mnt/data/microscopy-100k-patched/filtered_mixed_train_w00-{000000..000020}.tar::pct=1,99"
+  batch_size_per_gpu: 64
+  num_workers: 2
+  OFFICIAL_EPOCH_LENGTH: 64
+  max_updates: 64
+  output_dir: ./outputs/01_training_runs/global_bridge
+  wds_deterministic_resampling: true
+  wds_shuffle_buffer: 50
+  prefetch_factor: 1
+  pin_memory: false
+  compile: false
+  checkpointing: true
+  checkpointing_full: false
+
+student:
+  arch: vit_large
+  patch_size: 16
+  ffn_layer: mlp
+  ffn_ratio: 4.0
+  drop_path_rate: 0.25
+  layerscale: 1.0e-5
+  in_chans: 3
+  enable_channelvit: false
+  norm_layer: layernormbf16
+  n_storage_tokens: 4
+  mask_k_bias: true
+  pos_embed_rope_rescale_coords: 2
+  pos_embed_rope_dtype: fp32
+  resume_from_teacher_chkpt: /path/to/mature_hs6_teacher_checkpoint.pth
+
+teacher:
+  in_chans: 3
+  enable_channelvit: false
+  momentum_teacher: 0.992
+  final_momentum_teacher: 1.0
+  warmup_teacher_temp: 0.07
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 0
+
+optim:
+  epochs: 15
+  optimizer: adamw
+  lr: 1.0e-5
+  min_lr: 1.0e-6
+  warmup_epochs: 0
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 0
+  scaling_rule: fixed
+  gradient_accumulation_steps: 4
+  patch_embed_lr_mult: 0.2
+  layerwise_decay: 0.9
+
+crops:
+  global_crops_scale: [0.32, 1.0]
+  local_crops_number: 8
+  local_crops_scale: [0.05, 0.32]
+  global_crops_size: 256
+  local_crops_size: 112
+  horizontal_flips: true
+  augmentation_policy: bio_safe
+  float_input: false
+  rgb_mean: [0.514666, 0.488834, 0.498267]
+  rgb_std: [0.338707, 0.339202, 0.336091]
+
+sigreg:
+  enabled: false
+
+channel_subset:
+  enabled: false
+
+gram:
+  use_loss: false
+  compute_stats: false
+
+expert_consensus_residual:
+  enabled: false
+
+global_bridge_transport:
+  enabled: true
+  loss_weight: 0.1
+  target_bank_path: /path/to/global_bridge_targets.npz
+  control: false
+  min_batch_samples: 1
+  feature_protocol: final_cls
+  observation_protocol: masked_main
+  input_normalization: train
+  observation_crop_size: 0
+
+evaluation:
+  eval_period_iterations: 64
+
+checkpointing:
+  period: 64
+  max_to_keep: 2
+  sharded: false

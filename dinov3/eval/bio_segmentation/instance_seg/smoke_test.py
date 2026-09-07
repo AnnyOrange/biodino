@@ -25,6 +25,7 @@ from .losses import HoVerNetLoss
 from .model import DINOHoVerNet
 from .postproc import postprocess
 from .targets import gen_instance_hv_map, make_targets
+from .tiling import _apply_dihedral, _dihedral_matrix, _invert_dihedral_map
 
 
 class StubBackbone(nn.Module):
@@ -100,6 +101,47 @@ def test_backward():
     print(f"[ok] backward step (loss={comps['total']:.3f}, components={list(comps)})")
 
 
+def test_hv_auxiliary_backward():
+    backbone = StubBackbone(embed_dim=32, patch_size=16, depth=12)
+    model = DINOHoVerNet(backbone, layers=[2, 5, 8, 11], num_types=0,
+                         freeze_backbone=True, feature_size=8, embed_proj=16,
+                         hv_auxiliary=True)
+    img = torch.randn(1, 3, 64, 64)
+    out = model(img)
+    assert out["hv_aux"] is not None and out["hv_aux"].shape == (1, 2, 64, 64)
+    target = {
+        "np": torch.randint(0, 2, (1, 64, 64)),
+        "hv": torch.randn(1, 2, 64, 64).clamp(-1, 1),
+        "tp": torch.zeros(1, 64, 64, dtype=torch.long),
+    }
+    loss, comps = HoVerNetLoss(num_types=0, hv_auxiliary_weight=1.0)(out, target)
+    loss.backward()
+    aux_grads = [p.grad for p in model.decoder.hv_aux_branch.parameters() if p.grad is not None]
+    assert aux_grads and any(torch.isfinite(g).all() and g.abs().sum() > 0 for g in aux_grads), "HV auxiliary branch has no finite nonzero gradient"
+    assert "hv_aux_mse" in comps and "hv_aux_msge" in comps, comps
+    assert all(p.grad is None for p in model.backbone.parameters())
+    print(f"[ok] HV auxiliary shape and nonzero gradient (loss={comps['total']:.3f})")
+
+
+def test_focal_tversky_backward():
+    backbone = StubBackbone(embed_dim=32, patch_size=16, depth=12)
+    model = DINOHoVerNet(backbone, layers=[2, 5, 8, 11], num_types=0,
+                         freeze_backbone=True, feature_size=8, embed_proj=16)
+    img = torch.randn(1, 3, 64, 64)
+    out = model(img)
+    target = {
+        "np": torch.randint(0, 2, (1, 64, 64)),
+        "hv": torch.randn(1, 2, 64, 64).clamp(-1, 1),
+        "tp": torch.zeros(1, 64, 64, dtype=torch.long),
+    }
+    loss, comps = HoVerNetLoss(num_types=0, np_loss_mode="focal_tversky")(out, target)
+    loss.backward()
+    assert torch.isfinite(loss), comps
+    assert "np_focal" in comps and "np_tversky" in comps, comps
+    assert [p.grad for p in model.decoder.parameters() if p.grad is not None], "no decoder gradients"
+    print(f"[ok] focal/Tversky backward (loss={comps['total']:.3f})")
+
+
 def test_partial_unfreeze():
     backbone = StubBackbone(embed_dim=32, patch_size=16, depth=12)
     model = DINOHoVerNet(
@@ -153,13 +195,47 @@ def test_targets():
     print("[ok] target generation (NP/HV/TP, ignore propagation)")
 
 
+def test_dihedral_hv_roundtrip():
+    H = W = 17
+    yy, xx = torch.meshgrid(torch.arange(H), torch.arange(W), indexing="ij")
+    hv0 = torch.stack(
+        [
+            (xx - (W - 1) / 2).float(),
+            (yy - (H - 1) / 2).float(),
+        ],
+        dim=0,
+    ).unsqueeze(0)
+
+    for rot_k in range(4):
+        for hflip in (False, True):
+            mat = _dihedral_matrix(rot_k, hflip)
+            hv_aug = _apply_dihedral(hv0, rot_k, hflip).clone()
+            h = hv_aug[:, 0].clone()
+            v = hv_aug[:, 1].clone()
+            hv_aug[:, 0] = mat[0, 0] * h + mat[0, 1] * v
+            hv_aug[:, 1] = mat[1, 0] * h + mat[1, 1] * v
+
+            hv_back = _invert_dihedral_map(hv_aug, rot_k, hflip).clone()
+            inv = mat.t()
+            h = hv_back[:, 0].clone()
+            v = hv_back[:, 1].clone()
+            hv_back[:, 0] = inv[0, 0] * h + inv[0, 1] * v
+            hv_back[:, 1] = inv[1, 0] * h + inv[1, 1] * v
+
+            assert torch.max(torch.abs(hv_back - hv0)).item() < 1e-6
+    print("[ok] dihedral HV channel/sign roundtrip")
+
+
 def main():
     torch.manual_seed(0)
     np.random.seed(0)
     test_buckets()
     test_targets()
+    test_dihedral_hv_roundtrip()
     test_shapes()
     test_backward()
+    test_hv_auxiliary_backward()
+    test_focal_tversky_backward()
     test_partial_unfreeze()
     test_postproc_splits()
     print("\nALL SMOKE TESTS PASSED")

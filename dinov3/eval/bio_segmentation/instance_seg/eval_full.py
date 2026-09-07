@@ -16,13 +16,13 @@ import json
 import logging
 import os
 from collections import OrderedDict
+from types import SimpleNamespace
 from typing import Dict, Tuple
 
 import torch
 
-from ..feature_extractor import _build_dataset
 from .model import build_dino_hovernet
-from .train import DATASET_NUM_TYPES, evaluate
+from .train import DATASET_NUM_TYPES, _build_instance_dataset, evaluate
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("bio_seg.instance_seg.eval_full")
@@ -58,7 +58,16 @@ def _infer_checkpoint_kind(state: Dict[str, torch.Tensor], requested: str) -> st
 
 
 def _load_hover_state(model, path: str, device: torch.device, kind: str) -> Tuple[str, int]:
-    state = _normalise_state_dict(torch.load(path, map_location=device))
+    checkpoint = torch.load(path, map_location=device)
+    if isinstance(checkpoint, dict) and checkpoint.get("format_version") == 2:
+        model.decoder.load_state_dict(checkpoint["decoder"], strict=True)
+        backbone_state = checkpoint.get("backbone", {})
+        model.backbone.load_state_dict(backbone_state, strict=False)
+        tensor_count = len(checkpoint["decoder"]) + len(backbone_state)
+        logger.info("Loaded v2 last-block checkpoint (%d tensors) from %s", tensor_count, path)
+        return "v2-last-blocks", tensor_count
+
+    state = _normalise_state_dict(checkpoint)
     kind = _infer_checkpoint_kind(state, kind)
     if kind == "decoder":
         model.decoder.load_state_dict(state, strict=True)
@@ -103,7 +112,11 @@ def main():
         embed_proj=args.embed_proj, device=device,
     )
     loaded_kind, n_tensors = _load_hover_state(model, args.head_path, device, args.checkpoint_kind)
-    base = _build_dataset(args.dataset, args.data_root, args.split, None)
+    base = _build_instance_dataset(
+        SimpleNamespace(dataset=args.dataset, data_root=args.data_root),
+        args.split,
+        do_normalize=True,
+    )
     metrics = evaluate(
         model, base, device, num_types, crop_size=args.crop_size, stride=args.stride,
         patch_size=int(model.backbone.patch_size), max_images=args.max_eval_images,
@@ -112,7 +125,7 @@ def main():
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     out = {
         "split": args.split,
-        "n": args.max_eval_images,
+        "n": min(len(base), args.max_eval_images) if args.max_eval_images is not None else len(base),
         "metrics": metrics,
         "_meta": {
             "dataset": args.dataset,

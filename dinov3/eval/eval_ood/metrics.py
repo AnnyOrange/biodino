@@ -403,6 +403,80 @@ def xray_pair_retrieval(volume_features: np.ndarray, tomo_ids: np.ndarray, varia
     }
 
 
+def cross_modality_pair_retrieval(
+    features: np.ndarray,
+    pair_ids: np.ndarray,
+    modalities: np.ndarray,
+    *,
+    source: str,
+    target: str,
+    k_values: tuple[int, ...] = (1, 5, 10),
+) -> dict[str, float]:
+    """Retrieve the matching FOV/wavelength across WF and SR domains."""
+    x = l2_normalize(features)
+    pair_ids = np.asarray([str(v) for v in pair_ids])
+    modalities = np.asarray([str(v).upper() for v in modalities])
+    query_indices = np.flatnonzero(modalities == source.upper())
+    candidate_indices = np.flatnonzero(modalities == target.upper())
+    hits = {k: 0 for k in k_values}
+    reciprocal_ranks: list[float] = []
+    valid = 0
+    for query_idx in query_indices:
+        positives = pair_ids[candidate_indices] == pair_ids[query_idx]
+        if not positives.any():
+            continue
+        order = np.argsort(-(x[candidate_indices] @ x[query_idx]))
+        ranked_positive = positives[order]
+        rank = int(np.flatnonzero(ranked_positive)[0]) + 1
+        reciprocal_ranks.append(1.0 / rank)
+        for k in k_values:
+            hits[k] += int(rank <= k)
+        valid += 1
+    prefix = f"{source.lower()}_to_{target.lower()}"
+    if valid == 0:
+        out = {f"{prefix}_recall_at_{k}": float("nan") for k in k_values}
+        out.update({f"{prefix}_mrr": float("nan"), f"{prefix}_queries": 0})
+        return out
+    out = {f"{prefix}_recall_at_{k}": float(hits[k] / valid) for k in k_values}
+    out.update({f"{prefix}_mrr": float(np.mean(reciprocal_ranks)), f"{prefix}_queries": int(valid)})
+    return out
+
+
+def diffractive_sim_metrics(features: np.ndarray, metas: list[dict[str, Any]], *, seed: int = 0) -> dict[str, float]:
+    record_ids = np.asarray([int(m["record_id"]) for m in metas], dtype=np.int64)
+    modalities = np.asarray([str(m["modality"]) for m in metas])
+    pair_ids = np.asarray([str(m["pair_id"]) for m in metas])
+    wavelengths = np.asarray([float(m.get("wavelength_nm", float("nan"))) for m in metas], dtype=np.float32)
+    modality_labels = (np.char.upper(modalities.astype(str)) == "SR").astype(np.int64)
+
+    out: dict[str, float] = {
+        "n_images": int(len(features)),
+        "n_groups": int(len({str(m["group_id"]) for m in metas})),
+        "n_pairs": int(len(set(pair_ids.tolist()))),
+        "n_wavelength_images": int(np.isfinite(wavelengths).sum()),
+    }
+    for record_id in sorted(np.unique(record_ids).tolist()):
+        out[f"record_{record_id}_n"] = int((record_ids == record_id).sum())
+    n_record_classes = len(np.unique(record_ids))
+    record_train_fraction = min(0.8, 1.0 - (n_record_classes / max(1, len(record_ids))))
+    out.update(
+        {
+            f"record_{k}": v
+            for k, v in classification_probe(
+                features,
+                record_ids,
+                train_fraction=record_train_fraction,
+                seed=seed,
+            ).items()
+        }
+    )
+    out.update({f"modality_{k}": v for k, v in binary_classification_probe(features, modality_labels, seed=seed).items()})
+    out.update({f"wavelength_{k}": v for k, v in regression_probe(features, wavelengths, seed=seed).items()})
+    out.update(cross_modality_pair_retrieval(features, pair_ids, modalities, source="WF", target="SR"))
+    out.update(cross_modality_pair_retrieval(features, pair_ids, modalities, source="SR", target="WF"))
+    return out
+
+
 def dump_json(path: str | Path, payload: dict[str, Any]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

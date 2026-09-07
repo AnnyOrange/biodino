@@ -13,6 +13,9 @@ GPU_GROUP=${GPU_GROUP:-0,1,2,3,4,5,6,7}
 MASTER_PORT=${MASTER_PORT:-31827}
 POLL_SECONDS=${POLL_SECONDS:-60}
 DRY_RUN=${DRY_RUN:-0}
+RESUME=${RESUME:-0}
+NUM_WORKERS=${NUM_WORKERS:-2}
+PREFETCH_FACTOR=${PREFETCH_FACTOR:-1}
 
 NPROC_PER_NODE=8
 BATCH_SIZE_PER_GPU=${BATCH_SIZE_PER_GPU:-16}
@@ -62,7 +65,14 @@ new_shards=$(find /mnt/huawei_blm/deepcad_10t_v1/wds_patched_shuffle -maxdepth 1
   exit 2
 }
 
-if [[ -d "$OUTPUT_DIR" && -n "$(find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+if [[ "$RESUME" == 1 ]]; then
+  latest_checkpoint=$(find "$OUTPUT_DIR/ckpt" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+    | awk '/^[0-9]+$/' | sort -n | tail -1)
+  [[ -n "$latest_checkpoint" && -s "$OUTPUT_DIR/ckpt/$latest_checkpoint/checkpoint.pth" ]] || {
+    echo "ERROR: RESUME=1 but no complete optimizer checkpoint exists in $OUTPUT_DIR/ckpt" >&2
+    exit 2
+  }
+elif [[ -d "$OUTPUT_DIR" && -n "$(find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
   echo "ERROR: refusing to overwrite non-empty output: $OUTPUT_DIR" >&2
   exit 2
 fi
@@ -72,6 +82,11 @@ effective_batch=$((NPROC_PER_NODE * BATCH_SIZE_PER_GPU * GRAD_ACCUM_STEPS))
   echo "ERROR: effective global batch $effective_batch != $GLOBAL_BATCH_SIZE" >&2
   exit 2
 }
+
+resume_args=()
+if [[ "$RESUME" != 1 ]]; then
+  resume_args+=(--no-resume)
+fi
 
 cmd=(
   "$PYTHON_BIN" -m torch.distributed.run
@@ -83,16 +98,16 @@ cmd=(
   dinov3/train/train.py
   --config-file dinov3/configs/train/microscopy_continual_vitl16.yaml
   --output-dir "$OUTPUT_DIR"
-  --no-resume
+  "${resume_args[@]}"
   "train.dataset_path=$DATASET_PATH"
   train.batch_size_per_gpu="$BATCH_SIZE_PER_GPU"
-  train.num_workers=2
+  train.num_workers="$NUM_WORKERS"
   train.seed=0
   train.OFFICIAL_EPOCH_LENGTH="$OFFICIAL_EPOCH_LENGTH"
   train.cache_dataset=false
   train.compile=false
   train.wds_shuffle_buffer=50
-  train.prefetch_factor=1
+  train.prefetch_factor="$PREFETCH_FACTOR"
   train.pin_memory=false
   train.checkpointing=false
   student.in_chans=3
@@ -136,6 +151,11 @@ log "output=$OUTPUT_DIR"
 log "HS6: mixwds_robust 0.3/0.7, bio_safe 256/112, LR=1e-4, wu=3, tw=30, nosig"
 log "schedule=$EPOCHS epochs x $OFFICIAL_EPOCH_LENGTH updates; final_ckpt=$((EPOCHS * OFFICIAL_EPOCH_LENGTH - 1))"
 log "batch=$NPROC_PER_NODE GPUs x $BATCH_SIZE_PER_GPU/GPU x accum $GRAD_ACCUM_STEPS = $effective_batch"
+if [[ "$RESUME" == 1 ]]; then
+  log "resume=ckpt/$latest_checkpoint workers=$NUM_WORKERS prefetch_factor=$PREFETCH_FACTOR"
+else
+  log "resume=disabled workers=$NUM_WORKERS prefetch_factor=$PREFETCH_FACTOR"
+fi
 log "snapshots=teacher every $EVAL_PERIOD updates (~$((EVAL_PERIOD * effective_batch)) images); resumable every $CHECKPOINT_PERIOD updates (~$((CHECKPOINT_PERIOD * effective_batch)) images), keep=$CHECKPOINT_MAX_TO_KEEP"
 log "mean/std robust mix from mix_1m_0.3_plus_10t_v1_0.7_wds_rgb.json"
 printf 'CUDA_VISIBLE_DEVICES=%q' "$GPU_GROUP"

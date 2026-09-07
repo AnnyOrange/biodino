@@ -1,0 +1,106 @@
+# ViT-L screen for Direct Conditional Graph Innovation (DCGI).
+# The auxiliary branch estimates the conditional expectation of local teacher
+# edges directly, then preserves only the realized full-channel innovation.
+
+compute_precision:
+  distributed_mode: ddp
+
+train:
+  dataset_path: "packwds_chvit_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-*.tar::min_channels=2,pct=1,99"
+  batch_size_per_gpu: 12
+  num_workers: 2
+  OFFICIAL_EPOCH_LENGTH: 128
+  output_dir: ./outputs/01_training_runs/dcgi_vitl
+  compile: false
+  checkpointing: true
+  checkpointing_full: false
+  wds_shuffle_buffer: 100
+  prefetch_factor: 1
+  pin_memory: false
+
+student:
+  arch: vit_large
+  patch_size: 16
+  ffn_layer: mlp
+  ffn_ratio: 4.0
+  drop_path_rate: 0.0
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: residual_mc_v2
+  residual_mc_extra_scale_init: 0.01
+  n_storage_tokens: 4
+  mask_k_bias: true
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+
+teacher:
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: residual_mc_v2
+  residual_mc_extra_scale_init: 0.01
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 1
+
+sigreg:
+  enabled: false
+
+channel_subset:
+  enabled: false
+
+nested_channel_innovation:
+  enabled: false
+
+nested_resolution_innovation:
+  enabled: false
+
+conditional_morphology_graph:
+  enabled: true
+  # Exact-one S creates the sharpest test of what extra channels contribute.
+  min_channels: 1
+  max_channels: 1
+  loss_weight: 1.0
+  predictor_mode: edge
+  # A small low-rank pair function keeps the conditional predictor far below
+  # the ViT-L capacity, so it cannot become a competing image encoder.
+  edge_predictor_dim: 64
+  predictor_hidden_dim: 0
+  predictor_lr_multiplier: 10.0
+  stop_gradient: true
+  condition_source: teacher
+  predictor_loss_weight: 1.0
+  graph_loss_weight: 1.0
+  local_radius: 2
+  min_innovation: 0.0
+  selection_fraction: 0.25
+  max_edge_weight: 4.0
+  huber_beta: 0.05
+  gate_mode: conditional
+
+optim:
+  epochs: 8
+  optimizer: adamw
+  lr: 5.0e-5
+  min_lr: 1.0e-6
+  warmup_epochs: 1
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 1
+
+crops:
+  augmentation_policy: bio_safe
+  float_input: true
+  global_crops_size: 224
+  local_crops_size: 96
+  rgb_mean: [0.514666, 0.488834, 0.498267, 0.226684, 0.232035, 0.166374, 0.483261, 0.523779]
+  rgb_std: [0.338707, 0.339202, 0.336091, 0.280818, 0.278247, 0.235296, 0.196605, 0.137569]
+
+evaluation:
+  eval_period_iterations: 0
+
+checkpointing:
+  period: 1024
+  max_to_keep: 2
+  sharded: false

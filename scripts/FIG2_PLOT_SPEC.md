@@ -144,7 +144,7 @@ C 面板还要出 **两种 D 口径**（文件名再加后缀，不是偷偷换�
 | `allD` | 0.1/0.2/0.5/1M 全放（现在这版） | `_allD` | 报告「D 已饱和时前沿被小 D 占住」这个反常结论 |
 | `1Monly` | **只放 unique-D = 1M**（e1/e2/e4/e15，e8 仍按 lineA/B） | `_1Monly` | 固定最大数据量、只变 duration，才是 Chinchilla Approach 1 的 C |
 
-两口径都出。正文主图用哪张，看完再定，不要只留好看的那张。
+**正文主图用 `1Monly` + lineB。** allD 进附录，用来报告「D 已饱和、前沿被小 D 占住」。不能把 allD 当 compute law——那不是 duration 的曲线，是 D 饱和的副作用。旧 C-scale e2（50% warmup）可画点，**不进 Pareto / 不进黑虚线**，等 `prop15` 的 e2 换上去。
 
 共同禁止：跨 0.1M↔1M；跨模型；1-pass；中间 ckpt；**跨过缺测档硬连**（见 §3.6）。0.1/0.2/0.5M 永远单点。
 

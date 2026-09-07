@@ -23,6 +23,7 @@ from dinov3.eval.bio_frozen_eval.encoder import CHANNEL_POLICIES, Dinov3CkptEnco
 from dinov3.eval.bio_segmentation.model_utils import load_dinov3_backbone
 from dinov3.eval.eval_ood.datasets import (
     CryoParticleDataset,
+    DiffractiveSIMDataset,
     XrayTomogramSliceDataset,
     build_id_reference_dataset,
 )
@@ -30,6 +31,7 @@ from dinov3.eval.eval_ood.metrics import (
     binary_classification_probe,
     classification_probe,
     clustering_metrics,
+    diffractive_sim_metrics,
     dump_json,
     encode_strings,
     first_by_group,
@@ -377,6 +379,9 @@ def run_one(args) -> dict[str, Any]:
         "xray_input_mode": args.xray_input_mode,
         "xray_slices_per_volume": int(args.xray_slices_per_volume),
         "cryo_invert": bool(args.cryo_invert),
+        "diffractive_normalization": args.diffractive_normalization,
+        "diffractive_records": ",".join(str(v) for v in args.diffractive_records),
+        "diffractive_max_images_per_record": args.diffractive_max_images_per_record,
     }
 
     id_features = None
@@ -459,6 +464,35 @@ def run_one(args) -> dict[str, Any]:
             if id_features is not None:
                 row.update({f"cryo_ood_{k}": v for k, v in id_vs_ood_knn(id_features, cryo_features, seed=args.seed).items()})
 
+    if "diffractive" in args.tasks:
+        cap = args.diffractive_max_images_per_record
+        suffix = f"{args.diffractive_normalization}_mpr{cap or 'all'}"
+        diffractive_cache = out_dir / f"features/diffractive_{suffix}.npz"
+        if args.phase == "metrics":
+            diffractive_features, _diffractive_labels, diffractive_metas = load_feature_cache(diffractive_cache)
+        else:
+            diffractive_ds = DiffractiveSIMDataset(
+                args.ood_root,
+                transform=encoder.transform,
+                percentiles=(args.percentile_low, args.percentile_high),
+                normalization=args.diffractive_normalization,
+                include_records=args.diffractive_records,
+                max_images_per_record=cap,
+            )
+            diffractive_features, _diffractive_labels, diffractive_metas = extract_features(
+                diffractive_ds,
+                encoder,
+                output_path=diffractive_cache,
+                batch_size=args.batch_size,
+                num_workers=args.num_workers,
+                overwrite=args.overwrite_features,
+                desc=f"{model_name}:diffractive",
+            )
+        if args.phase != "extract":
+            row.update({f"diffractive_{k}": v for k, v in diffractive_sim_metrics(diffractive_features, diffractive_metas, seed=args.seed).items()})
+            if id_features is not None:
+                row.update({f"diffractive_ood_{k}": v for k, v in id_vs_ood_knn(id_features, diffractive_features, seed=args.seed).items()})
+
     if args.phase == "extract":
         dump_json(
             out_dir / "features_complete.json",
@@ -475,7 +509,7 @@ def run_one(args) -> dict[str, Any]:
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="DINOv3 frozen-feature OOD benchmark for X-ray tomography and cryo-EM.")
+    parser = argparse.ArgumentParser(description="DINOv3 frozen-feature OOD benchmark for X-ray, cryo-EM, and diffractive SIM.")
     parser.add_argument("--model-name", required=True)
     parser.add_argument("--ckpt-root", required=True)
     parser.add_argument("--ckpt-iter", required=True)
@@ -483,7 +517,7 @@ def parse_args(argv=None):
     parser.add_argument("--output-dir", default="benchmark_runs/eval_ood")
     parser.add_argument("--ood-root", default=str(DEFAULT_OOD_ROOT))
     parser.add_argument("--benchmark-root", default=str(DEFAULT_BENCHMARK_ROOT))
-    parser.add_argument("--tasks", nargs="+", default=["xray", "cryo"], choices=["xray", "cryo"])
+    parser.add_argument("--tasks", nargs="+", default=["xray", "cryo"], choices=["xray", "cryo", "diffractive"])
     parser.add_argument("--metrics", nargs="+", default=["ood"], choices=["ood"])
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--batch-size", type=int, default=64)
@@ -507,6 +541,9 @@ def parse_args(argv=None):
     parser.add_argument("--cryo-max-projects", type=int)
     parser.add_argument("--cryo-max-particles-per-project", type=int, default=20000)
     parser.add_argument("--cryo-max-per-class", type=int)
+    parser.add_argument("--diffractive-records", nargs="+", type=int, default=[1, 2, 3, 4, 5], choices=[1, 2, 3, 4, 5])
+    parser.add_argument("--diffractive-max-images-per-record", type=int)
+    parser.add_argument("--diffractive-normalization", default="per_image", choices=["per_image", "uint16"])
     parser.add_argument("--id-max-samples", type=int, default=3000)
     parser.add_argument("--id-datasets", nargs="+", default=["bloodmnist", "bbbc048", "cyclops"])
     parser.add_argument("--overwrite-features", action="store_true")

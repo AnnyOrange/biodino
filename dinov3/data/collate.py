@@ -40,6 +40,25 @@ def collate_data_and_cast(
     n_local_crops = len(samples_list[0][0]["local_crops"])
     has_channel_ids = "channel_ids" in samples_list[0][0]
     sample_keys = [_format_sample_key(s[0]) for s in samples_list]
+    has_mixture_domains = "mixture_domain_index" in samples_list[0][0]
+    if has_mixture_domains and not all(
+        "mixture_domain_index" in sample[0] and "mixture_domain_name" in sample[0]
+        for sample in samples_list
+    ):
+        raise ValueError("mixture domain metadata must be present on every sample in a batch")
+    mixture_domain_indices = (
+        torch.tensor(
+            [int(sample[0]["mixture_domain_index"]) for sample in samples_list],
+            dtype=torch.long,
+        )
+        if has_mixture_domains
+        else None
+    )
+    mixture_domain_names = (
+        [str(sample[0]["mixture_domain_name"]) for sample in samples_list]
+        if has_mixture_domains
+        else None
+    )
     sample_channel_ids = (
         [s[0]["channel_ids"].detach().cpu().tolist() for s in samples_list]
         if has_channel_ids
@@ -173,6 +192,9 @@ def collate_data_and_cast(
     }
     if sample_channel_ids is not None:
         out["sample_channel_ids"] = sample_channel_ids
+    if mixture_domain_indices is not None:
+        out["mixture_domain_indices"] = mixture_domain_indices
+        out["mixture_domain_names"] = mixture_domain_names
     if collated_gram_teacher_crops is not None:
         out["collated_gram_teacher_crops"] = collated_gram_teacher_crops.to(dtype)
     if collated_global_channel_ids is not None:
@@ -263,6 +285,9 @@ def get_batch_subset(collated_data_batch, divide_by):
         new_batch["sample_keys"] = collated_data_batch["sample_keys"][:target_bs]
     if "sample_channel_ids" in collated_data_batch:
         new_batch["sample_channel_ids"] = collated_data_batch["sample_channel_ids"][:target_bs]
+    if "mixture_domain_indices" in collated_data_batch:
+        new_batch["mixture_domain_indices"] = collated_data_batch["mixture_domain_indices"][:target_bs]
+        new_batch["mixture_domain_names"] = collated_data_batch["mixture_domain_names"][:target_bs]
     if collated_global_channel_ids is not None:
         new_batch["collated_global_channel_ids"] = collated_global_channel_ids
         new_batch["collated_local_channel_ids"] = collated_local_channel_ids

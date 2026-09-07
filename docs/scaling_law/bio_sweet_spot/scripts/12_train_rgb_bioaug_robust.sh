@@ -3,10 +3,10 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Train one B/L/H+/7B run with the locked S+ microscopy recipe.
+Train one S/B/L/H+/7B run with the locked S+ microscopy recipe.
 
 The default is DRY_RUN=1. Required environment variables:
-  MODEL_SIZE=b|l|hplus|7b
+  MODEL_SIZE=s|b|l|hplus|7b
   DATASET_GLOB=/path/to/filtered_mixed_train_w*-{000000..000999}.tar
   WEIGHTS_DIR=/path/to/dinov3_official_weights
 
@@ -56,6 +56,18 @@ if [[ -z "$MODEL_SIZE" || -z "$DATASET_GLOB" || ( -z "$WEIGHTS_DIR" && -z "${INI
 fi
 
 case "$MODEL_SIZE" in
+  s|splus)
+    MODEL_SIZE=s
+    MODEL_TAG=vits16plus
+    CONFIG_FILE="${CONFIG_FILE:-dinov3/configs/train/microscopy_continual_vits16_sigreg.yaml}"
+    INIT_FILENAME=dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth
+    DEFAULT_BATCH_SIZE=64
+    DEFAULT_LR=0.00010
+    DEFAULT_ACTIVATION_CHECKPOINTING=false
+    DEFAULT_SHARDED_CHECKPOINT=false
+    DEFAULT_MAX_TO_KEEP=30
+    SCHEDULE_VERSION=legacy
+    ;;
   b)
     MODEL_TAG=vitb16
     CONFIG_FILE="${CONFIG_FILE:-dinov3/configs/train/microscopy_continual_vitb16.yaml}"
@@ -103,7 +115,7 @@ case "$MODEL_SIZE" in
     SCHEDULE_VERSION=v2
     ;;
   *)
-    echo "ERROR: MODEL_SIZE must be b, l, hplus, or 7b; got '$MODEL_SIZE'." >&2
+    echo "ERROR: MODEL_SIZE must be s, b, l, hplus, or 7b; got '$MODEL_SIZE'." >&2
     exit 2
     ;;
 esac

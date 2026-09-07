@@ -12,3 +12,10 @@ from .masking import MaskingGenerator
 from .transforms import make_classification_eval_transform, make_classification_train_transform
 from .wds_decoder import create_tiff_decoder, decode_tiff_bytes
 from .wds_pipeline import WdsConfig, is_webdataset
+from .expert_feature_bank import (
+    ExpertFeatureBank,
+    ExpertFeatureBatch,
+    build_cross_domain_edge_mask,
+    stable_metadata_codes,
+)
+from .global_bridge_target_bank import GlobalBridgeTargetBank, GlobalBridgeTargetBatch

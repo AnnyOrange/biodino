@@ -58,9 +58,11 @@ class LoRALinear(nn.Module):
         for param in self.original_layer.parameters():
             param.requires_grad = False
         
+        param_kwargs = {"device": original_layer.weight.device, "dtype": original_layer.weight.dtype}
+
         # Create LoRA parameters
-        self.lora_A = nn.Parameter(torch.empty(r, in_features))
-        self.lora_B = nn.Parameter(torch.empty(out_features, r))
+        self.lora_A = nn.Parameter(torch.empty(r, in_features, **param_kwargs))
+        self.lora_B = nn.Parameter(torch.empty(out_features, r, **param_kwargs))
         
         # Dropout
         if lora_dropout > 0:
@@ -174,17 +176,19 @@ class LoRAQKVLinear(nn.Module):
         self.enable_lora_k = enable_lora_k
         self.enable_lora_v = enable_lora_v
         
+        param_kwargs = {"device": original_layer.weight.device, "dtype": original_layer.weight.dtype}
+
         if enable_lora_q:
-            self.lora_A_q = nn.Parameter(torch.empty(r, in_features))
-            self.lora_B_q = nn.Parameter(torch.empty(self.qkv_dim, r))
+            self.lora_A_q = nn.Parameter(torch.empty(r, in_features, **param_kwargs))
+            self.lora_B_q = nn.Parameter(torch.empty(self.qkv_dim, r, **param_kwargs))
         
         if enable_lora_k:
-            self.lora_A_k = nn.Parameter(torch.empty(r, in_features))
-            self.lora_B_k = nn.Parameter(torch.empty(self.qkv_dim, r))
+            self.lora_A_k = nn.Parameter(torch.empty(r, in_features, **param_kwargs))
+            self.lora_B_k = nn.Parameter(torch.empty(self.qkv_dim, r, **param_kwargs))
         
         if enable_lora_v:
-            self.lora_A_v = nn.Parameter(torch.empty(r, in_features))
-            self.lora_B_v = nn.Parameter(torch.empty(self.qkv_dim, r))
+            self.lora_A_v = nn.Parameter(torch.empty(r, in_features, **param_kwargs))
+            self.lora_B_v = nn.Parameter(torch.empty(self.qkv_dim, r, **param_kwargs))
         
         # Dropout
         if lora_dropout > 0:
@@ -306,4 +310,3 @@ def lora_state_dict(model: nn.Module, bias: str = "none") -> dict:
         return {k: v for k, v in state_dict.items() if k in lora_keys or k in bias_keys}
     
     return {k: v for k, v in state_dict.items() if "lora_" in k}
-

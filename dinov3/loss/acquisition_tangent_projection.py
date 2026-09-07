@@ -132,6 +132,32 @@ def rank_matched_random_tangent_basis(tangent_basis: Tensor) -> Tensor:
     return orthogonal_columns.transpose(-2, -1).to(dtype=tangent_basis.dtype)
 
 
+def shift_tangent_correspondence(
+    tangent_basis: Tensor,
+    active_rows: Tensor,
+    *,
+    shift: int = 1,
+) -> tuple[Tensor, Tensor]:
+    """Break sample correspondence while preserving the tangent-bank distribution."""
+    if tangent_basis.ndim != 3:
+        raise ValueError(f"Expected tangent_basis [B, M, D], got {tuple(tangent_basis.shape)}")
+    if active_rows.shape != tangent_basis.shape[:2]:
+        raise ValueError(
+            "active_rows must have shape [B, M], got "
+            f"{tuple(active_rows.shape)} for basis {tuple(tangent_basis.shape)}"
+        )
+    batch_size = tangent_basis.shape[0]
+    if batch_size < 2:
+        raise ValueError("At least two samples are required to shuffle tangent correspondence")
+    normalized_shift = int(shift) % batch_size
+    if normalized_shift == 0:
+        raise ValueError("shift must change sample correspondence")
+    return (
+        torch.roll(tangent_basis, shifts=normalized_shift, dims=0),
+        torch.roll(active_rows, shifts=normalized_shift, dims=0),
+    )
+
+
 class _TangentGradientProjection(torch.autograd.Function):
     @staticmethod
     def forward(
