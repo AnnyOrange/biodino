@@ -15,6 +15,7 @@ from .acquisition_tangent_projection import (
     build_acquisition_tangent_basis,
     project_onto_acquisition_tangent,
     rank_matched_random_tangent_basis,
+    shift_tangent_correspondence,
 )
 from .nested_channel_innovation_loss import (
     ConditionalFeaturePredictor,
@@ -32,4 +33,18 @@ from .conditional_morphology_graph_loss import (
     ConditionalEdgeGraphPredictor,
     ConditionalMorphologyGraphLoss,
     ConditionalMorphologyGraphWeights,
+)
+from .expert_consensus_residual_loss import ExpertConsensusResidualLoss
+from .global_bridge_transport_loss import (
+    GLOBAL_BRIDGE_FEATURE_PROTOCOLS,
+    GlobalBridgeTransportLoss,
+    compose_global_bridge_readout,
+)
+from .intervention_factorized_topology_loss import (
+    INTERVENTION_FACTORIZATION_MODES,
+    InterventionContextHead,
+    InterventionFactorizedTopologyLoss,
+    InterventionFactorizedTopologyWeights,
+    make_balanced_intervention_assignments,
+    value_and_gradient_matched_shuffled_mse,
 )

@@ -49,6 +49,62 @@ def forward_tta(model: torch.nn.Module, tile: torch.Tensor) -> Dict[str, Optiona
     return out
 
 
+def _dihedral_matrix(rot_k: int, hflip: bool) -> torch.Tensor:
+    """Coordinate transform matrix for torch.rot90(k) followed by horizontal flip."""
+    mats = [
+        torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
+        torch.tensor([[0.0, 1.0], [-1.0, 0.0]]),
+        torch.tensor([[-1.0, 0.0], [0.0, -1.0]]),
+        torch.tensor([[0.0, -1.0], [1.0, 0.0]]),
+    ]
+    mat = mats[rot_k % 4]
+    if hflip:
+        mat = torch.tensor([[-1.0, 0.0], [0.0, 1.0]]) @ mat
+    return mat
+
+
+def _apply_dihedral(x: torch.Tensor, rot_k: int, hflip: bool) -> torch.Tensor:
+    y = torch.rot90(x, k=rot_k, dims=[2, 3]) if rot_k else x
+    return torch.flip(y, dims=[3]) if hflip else y
+
+
+def _invert_dihedral_map(x: torch.Tensor, rot_k: int, hflip: bool) -> torch.Tensor:
+    y = torch.flip(x, dims=[3]) if hflip else x
+    return torch.rot90(y, k=-rot_k, dims=[2, 3]) if rot_k else y
+
+
+@torch.inference_mode()
+def forward_dihedral_tta(model: torch.nn.Module, tile: torch.Tensor) -> Dict[str, Optional[torch.Tensor]]:
+    """8-way dihedral TTA for one square tile.
+
+    Predictions are merged before watershed.  HV channels are vector components:
+    channel 0 is horizontal/x and channel 1 is vertical/y.  After undoing the
+    spatial transform, we multiply the vector by the inverse transform matrix.
+    """
+    acc_np = acc_hv = acc_tp = None
+    n = 0
+    for rot_k in range(4):
+        for hflip in (False, True):
+            t = _apply_dihedral(tile, rot_k, hflip)
+            o = model(t)
+            npm = _invert_dihedral_map(o["np"], rot_k, hflip)
+            hv = _invert_dihedral_map(o["hv"], rot_k, hflip).clone()
+            tp = _invert_dihedral_map(o["tp"], rot_k, hflip) if o.get("tp") is not None else None
+
+            inv = _dihedral_matrix(rot_k, hflip).t().to(device=hv.device, dtype=hv.dtype)
+            h = hv[:, 0].clone()
+            v = hv[:, 1].clone()
+            hv[:, 0] = inv[0, 0] * h + inv[0, 1] * v
+            hv[:, 1] = inv[1, 0] * h + inv[1, 1] * v
+
+            acc_np = npm.float() if acc_np is None else acc_np + npm.float()
+            acc_hv = hv.float() if acc_hv is None else acc_hv + hv.float()
+            if tp is not None:
+                acc_tp = tp.float() if acc_tp is None else acc_tp + tp.float()
+            n += 1
+    return {"np": acc_np / n, "hv": acc_hv / n, "tp": (acc_tp / n) if acc_tp is not None else None}
+
+
 def _starts(length: int, crop: int, stride: int) -> List[int]:
     if length <= crop:
         return [0]
@@ -62,6 +118,18 @@ def _round_up(x: int, m: int) -> int:
     return int(math.ceil(x / m) * m)
 
 
+def _blend_window(crop_size: int, mode: str) -> np.ndarray:
+    if mode == "uniform":
+        return np.ones((crop_size, crop_size), dtype=np.float32)
+    if mode != "gaussian":
+        raise ValueError(f"Unsupported blend mode: {mode}")
+    coords = np.linspace(-1.0, 1.0, crop_size, dtype=np.float32)
+    yy, xx = np.meshgrid(coords, coords, indexing="ij")
+    sigma = 0.45
+    win = np.exp(-(xx * xx + yy * yy) / (2.0 * sigma * sigma)).astype(np.float32)
+    return np.maximum(win, 1e-3)
+
+
 @torch.inference_mode()
 def sliding_window_predict(
     model: torch.nn.Module,
@@ -71,6 +139,8 @@ def sliding_window_predict(
     patch_size: int = 16,
     num_types: int = 0,
     tta: bool = False,
+    tta_mode: str = "flip4",
+    blend_mode: str = "uniform",
 ) -> Dict[str, Optional[np.ndarray]]:
     """Run a DINOHoVerNet over a single (possibly large) image.
 
@@ -97,16 +167,24 @@ def sliding_window_predict(
     hv_acc = np.zeros((2, ph, pw), dtype=np.float32)
     tp_acc = np.zeros((num_types, ph, pw), dtype=np.float32) if num_types else None
     count = np.zeros((ph, pw), dtype=np.float32)
+    blend = _blend_window(crop_size, blend_mode)
 
     for y in _starts(ph, crop_size, stride):
         for x in _starts(pw, crop_size, stride):
             tile = img[:, y : y + crop_size, x : x + crop_size].unsqueeze(0)
-            out = forward_tta(model, tile) if tta else model(tile)
-            np_acc[:, y : y + crop_size, x : x + crop_size] += out["np"][0].float().cpu().numpy()
-            hv_acc[:, y : y + crop_size, x : x + crop_size] += out["hv"][0].float().cpu().numpy()
+            if not tta:
+                out = model(tile)
+            elif tta_mode == "flip4":
+                out = forward_tta(model, tile)
+            elif tta_mode == "dihedral8":
+                out = forward_dihedral_tta(model, tile)
+            else:
+                raise ValueError(f"Unsupported TTA mode: {tta_mode}")
+            np_acc[:, y : y + crop_size, x : x + crop_size] += out["np"][0].float().cpu().numpy() * blend[None]
+            hv_acc[:, y : y + crop_size, x : x + crop_size] += out["hv"][0].float().cpu().numpy() * blend[None]
             if tp_acc is not None and out.get("tp") is not None:
-                tp_acc[:, y : y + crop_size, x : x + crop_size] += out["tp"][0].float().cpu().numpy()
-            count[y : y + crop_size, x : x + crop_size] += 1.0
+                tp_acc[:, y : y + crop_size, x : x + crop_size] += out["tp"][0].float().cpu().numpy() * blend[None]
+            count[y : y + crop_size, x : x + crop_size] += blend
 
     count = np.maximum(count, 1e-6)
     np_acc /= count[None]

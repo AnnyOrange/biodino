@@ -22,7 +22,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
+import time
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -52,6 +54,32 @@ DATASET_NUM_TYPES = {
     "bbbc038": 0,
     "tissuenet": 0,
 }
+
+
+def _backbone_param_groups(model, base_lr: float, layer_decay: float) -> List[Dict]:
+    params = list(model.trainable_backbone_parameters())
+    if layer_decay >= 0.999 or not params:
+        return [{"params": params, "lr": base_lr}]
+
+    blocks = getattr(model.backbone, "blocks", None)
+    if blocks is None:
+        return [{"params": params, "lr": base_lr}]
+    n_blocks = len(blocks)
+    named = [(name, param) for name, param in model.backbone.named_parameters() if param.requires_grad]
+    groups: Dict[int, List[torch.nn.Parameter]] = {}
+    for name, param in named:
+        depth = n_blocks
+        if name.startswith("blocks."):
+            parts = name.split(".")
+            if len(parts) > 1 and parts[1].isdigit():
+                depth = int(parts[1])
+        scale = layer_decay ** max(0, n_blocks - 1 - depth)
+        key = int(round(scale * 1000000))
+        groups.setdefault(key, []).append(param)
+    return [
+        {"params": group_params, "lr": base_lr * (key / 1000000.0)}
+        for key, group_params in sorted(groups.items())
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +202,7 @@ def evaluate(
 # ---------------------------------------------------------------------------
 
 def _save_best(model, path: str):
-    if model.freeze_backbone:
+    if model.freeze_backbone and model.lora_rank is None:
         # Keep the historical decoder-only format consumable by standalone evaluators.
         torch.save(model.decoder.state_dict(), path)
         return
@@ -244,12 +272,15 @@ def _build_instance_dataset(args, split: str, do_normalize: bool = True) -> Data
 
 
 def run(args) -> Dict:
+    run_started = time.perf_counter()
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     num_types = DATASET_NUM_TYPES.get(args.dataset, 0)
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -260,8 +291,18 @@ def run(args) -> Dict:
         num_types=num_types,
         freeze_backbone=args.freeze_backbone,
         trainable_backbone_blocks=args.unfreeze_last_blocks,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        adapter=args.adapter,
+        adapter_dim=args.adapter_dim,
         feature_size=args.feature_size,
         embed_proj=args.embed_proj,
+        fusion_mode=args.fusion_mode,
+        decoder_variant=args.decoder_variant,
+        spatial_adapter=args.spatial_adapter,
+        spatial_adapter_width=args.spatial_adapter_width,
+        hv_auxiliary=args.hv_auxiliary,
         device=device,
     )
     patch_size = int(model.backbone.patch_size)
@@ -280,37 +321,60 @@ def run(args) -> Dict:
         generator=loader_generator,
     )
 
-    criterion = HoVerNetLoss(num_types=num_types).to(device)
-    if args.freeze_backbone:
+    criterion = HoVerNetLoss(
+        num_types=num_types,
+        np_loss_mode=args.np_loss_mode,
+        focal_gamma=args.focal_gamma,
+        tversky_alpha=args.tversky_alpha,
+        tversky_beta=args.tversky_beta,
+        hv_auxiliary_weight=args.hv_aux_weight if args.hv_auxiliary else 0.0,
+    ).to(device)
+    if args.freeze_backbone and args.lora_rank is None and not args.adapter:
         optimizer = torch.optim.AdamW(model.decoder.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     else:
         # Fine-tune: decoder at --lr, backbone at a much lower --backbone-lr so the
         # pretrained features are adapted, not destroyed.
         bb_lr = args.backbone_lr if args.backbone_lr is not None else args.lr * 0.02
         trainable_backbone = list(model.trainable_backbone_parameters())
-        optimizer = torch.optim.AdamW(
-            [
-                {"params": model.decoder.parameters(), "lr": args.lr},
-                {"params": trainable_backbone, "lr": bb_lr},
-            ],
-            weight_decay=args.weight_decay,
-        )
+        param_groups = [{"params": model.decoder.parameters(), "lr": args.lr}]
+        if args.adapter:
+            param_groups.append({"params": model.feature_adapters.parameters(), "lr": args.lr})
+        param_groups += _backbone_param_groups(model, bb_lr, args.layer_wise_lr_decay)
+        optimizer = torch.optim.AdamW(param_groups, weight_decay=args.weight_decay)
         logger.info(
-            "Fine-tuning mode=%s: decoder lr=%.2e, backbone lr=%.2e, trainable backbone params=%d",
+            "Fine-tuning mode=%s: decoder lr=%.2e, backbone lr=%.2e, layer_decay=%.3f, trainable backbone params=%d",
             model.backbone_mode,
             args.lr,
             bb_lr,
+            args.layer_wise_lr_decay,
             sum(param.numel() for param in trainable_backbone),
         )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    trainable_param_count = sum(param.numel() for param in model.parameters() if param.requires_grad)
+    trainable_backbone_param_count = sum(param.numel() for param in model.trainable_backbone_parameters())
+    total_steps = max(1, args.epochs * max(1, math.ceil(len(tr_loader) / args.grad_accum_steps)))
+    warmup_steps = int(round(total_steps * args.warmup_ratio))
+
+    def lr_factor(step: int) -> float:
+        if warmup_steps > 0 and step < warmup_steps:
+            return float(step + 1) / float(warmup_steps)
+        denom = max(1, total_steps - warmup_steps)
+        progress = min(1.0, max(0.0, (step - warmup_steps) / denom))
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_factor)
     amp_dtype = {"none": None, "bf16": torch.bfloat16, "fp16": torch.float16}[args.amp_dtype]
     amp_enabled = device.type == "cuda" and amp_dtype is not None
     scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled and amp_dtype == torch.float16)
 
-    sel_key = "mPQ" if num_types > 0 else "bPQ"
+    sel_key = args.select_metric or ("mPQ" if num_types > 0 else "bPQ")
     best_val = -1.0
     best_path = os.path.join(args.output_dir, "best_head.pth")
     eval_every = max(1, int(args.eval_every))
+    global_step = 0
+    validation_seconds = 0.0
+    training_started = time.perf_counter()
+    hv_aux_gradient_l1 = 0.0
+    backbone_gradient_l1 = 0.0
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -335,22 +399,65 @@ def run(args) -> Dict:
                 loss, comps = criterion(pred, target)
                 scaled_loss = loss / args.grad_accum_steps
             scaler.scale(scaled_loss).backward()
+            if args.verify_backbone_grad and global_step == 0 and epoch == 1 and bi == 0:
+                grads = [
+                    param.grad
+                    for param in model.trainable_backbone_parameters()
+                    if param.grad is not None
+                ]
+                backbone_gradient_l1 = sum(float(grad.detach().abs().sum()) for grad in grads)
+                if not math.isfinite(backbone_gradient_l1) or backbone_gradient_l1 <= 0.0:
+                    raise RuntimeError(
+                        "Backbone gradient is not finite/nonzero: "
+                        f"{backbone_gradient_l1} ({len(grads)} tensors)"
+                    )
+                logger.info(
+                    "BACKBONE_GRAD_L1=%.9g tensors=%d",
+                    backbone_gradient_l1,
+                    len(grads),
+                )
+            if args.verify_hv_aux_grad and global_step == 0 and epoch == 1 and bi == 0:
+                aux_branch = model.decoder.hv_aux_branch
+                if aux_branch is None:
+                    raise RuntimeError("--verify-hv-aux-grad requires --hv-auxiliary")
+                grad_l1 = sum(
+                    float(param.grad.detach().abs().sum())
+                    for param in aux_branch.parameters()
+                    if param.grad is not None
+                )
+                if not math.isfinite(grad_l1) or grad_l1 <= 0.0:
+                    raise RuntimeError(f"HV auxiliary branch gradient is not finite/nonzero: {grad_l1}")
+                hv_aux_gradient_l1 = grad_l1
+                logger.info("HV_AUX_GRAD_L1=%.9g", hv_aux_gradient_l1)
             should_step = (bi + 1) % args.grad_accum_steps == 0 or (bi + 1) >= total_train_batches
             if should_step:
+                if args.grad_clip_norm is not None and args.grad_clip_norm > 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        [param for param in model.parameters() if param.requires_grad],
+                        args.grad_clip_norm,
+                    )
+                old_scale = scaler.get_scale()
                 scaler.step(optimizer)
                 scaler.update()
+                if not scaler.is_enabled() or scaler.get_scale() >= old_scale:
+                    scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
+                global_step += 1
             running += comps["total"]
             nb += 1
             pbar.set_postfix(loss=f"{comps['total']:.3f}")
-        scheduler.step()
 
         if epoch % eval_every == 0 or epoch == args.epochs:
+            validation_started = time.perf_counter()
             val = evaluate(
                 model, base_val, device, num_types,
                 crop_size=args.crop_size, stride=args.stride, patch_size=patch_size,
                 max_images=args.max_eval_images,
             )
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            validation_seconds += time.perf_counter() - validation_started
             logger.info(
                 "Epoch %3d/%d  loss=%.4f  val_%s=%.4f  val_AJI=%.4f  val_AP50=%.4f",
                 epoch, args.epochs, running / max(nb, 1), sel_key, val.get(sel_key, float("nan")),
@@ -364,13 +471,27 @@ def run(args) -> Dict:
     if os.path.exists(best_path):
         _load_best(model, best_path, device)
 
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    training_seconds = time.perf_counter() - training_started - validation_seconds
+    final_inference_started = time.perf_counter()
+    val_results = evaluate(
+        model, base_val, device, num_types,
+        crop_size=args.crop_size, stride=args.stride, patch_size=patch_size,
+        max_images=args.max_eval_images, tta=args.tta,
+        fg_thresh=args.fg_thresh, energy_thresh=args.energy_thresh,
+    )
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    inference_seconds = time.perf_counter() - final_inference_started
+    peak_cuda_memory_gib = (
+        torch.cuda.max_memory_allocated(device) / (1024.0 ** 3)
+        if device.type == "cuda"
+        else 0.0
+    )
+
     results: Dict = {
-        "val": evaluate(
-            model, base_val, device, num_types,
-            crop_size=args.crop_size, stride=args.stride, patch_size=patch_size,
-            max_images=args.max_eval_images, tta=args.tta,
-            fg_thresh=args.fg_thresh, energy_thresh=args.energy_thresh,
-        ),
+        "val": val_results,
         "_meta": {
             "dataset": args.dataset,
             "layers": model.layers,
@@ -380,16 +501,49 @@ def run(args) -> Dict:
             "unfreeze_last_blocks": args.unfreeze_last_blocks,
             "feature_size": args.feature_size,
             "embed_proj": args.embed_proj,
+            "fusion_mode": args.fusion_mode,
+            "decoder_variant": args.decoder_variant,
+            "spatial_adapter": bool(args.spatial_adapter),
+            "spatial_adapter_fusion": "additive" if args.spatial_adapter else "none",
+            "spatial_adapter_width": args.spatial_adapter_width,
+            "hv_auxiliary": bool(args.hv_auxiliary),
+            "hv_aux_weight": args.hv_aux_weight if args.hv_auxiliary else 0.0,
+            "hv_auxiliary_trainable_params": (
+                sum(param.numel() for param in model.decoder.hv_aux_branch.parameters() if param.requires_grad)
+                if model.decoder.hv_aux_branch is not None else 0
+            ),
+            "hv_aux_gradient_l1": hv_aux_gradient_l1,
+            "backbone_gradient_l1": backbone_gradient_l1,
+            "lora_rank": args.lora_rank,
+            "lora_alpha": args.lora_alpha,
+            "lora_dropout": args.lora_dropout,
+            "trainable_params": trainable_param_count,
+            "trainable_backbone_params": trainable_backbone_param_count,
             "crop_size": args.crop_size,
             "stride": args.stride,
             "batch_size": args.batch_size,
             "grad_accum_steps": args.grad_accum_steps,
             "effective_batch_size": args.batch_size * args.grad_accum_steps,
             "decoder_lr": args.lr,
-            "backbone_lr": None if args.freeze_backbone else bb_lr,
+            "backbone_lr": None if (args.freeze_backbone and args.lora_rank is None) else bb_lr,
             "amp_dtype": args.amp_dtype,
             "seed": args.seed,
             "select_metric": sel_key,
+            "warmup_ratio": args.warmup_ratio,
+            "warmup_steps": warmup_steps,
+            "total_steps": total_steps,
+            "global_steps": global_step,
+            "grad_clip_norm": args.grad_clip_norm,
+            "layer_wise_lr_decay": args.layer_wise_lr_decay,
+            "np_loss_mode": args.np_loss_mode,
+            "focal_gamma": args.focal_gamma,
+            "tversky_alpha": args.tversky_alpha,
+            "tversky_beta": args.tversky_beta,
+            "training_seconds": training_seconds,
+            "validation_during_training_seconds": validation_seconds,
+            "inference_seconds": inference_seconds,
+            "peak_cuda_memory_gib": peak_cuda_memory_gib,
+            "run_wall_seconds": time.perf_counter() - run_started,
         },
     }
     if not args.skip_test_eval:
@@ -432,8 +586,29 @@ def main():
         default=None,
         help="With --finetune, update only the last N transformer blocks plus final norm.",
     )
+    p.add_argument("--lora-rank", type=int, default=None,
+                   help="Enable LoRA on backbone attention qkv/proj with this rank.")
+    p.add_argument("--lora-alpha", type=float, default=16.0)
+    p.add_argument("--lora-dropout", type=float, default=0.0)
+    p.add_argument("--adapter", action="store_true")
+    p.add_argument("--adapter-dim", type=int, default=128)
     p.add_argument("--feature-size", type=int, default=32)
     p.add_argument("--embed-proj", type=int, default=384)
+    p.add_argument("--fusion-mode", choices=["bucket_concat", "weighted_sum"], default="bucket_concat",
+                   help="How tapped ViT features are fused into the four decoder skip buckets.")
+    p.add_argument("--decoder-variant", choices=["current", "fpn", "unet", "multi_layer_fpn"], default="current",
+                   help="Structural decoder variant; current preserves the historical decoder.")
+    p.add_argument("--spatial-adapter", action="store_true",
+                   help="Enable the lightweight 1/4, 1/8, 1/16 CNN image pyramid with additive fusion.")
+    p.add_argument("--spatial-adapter-width", type=int, default=32)
+    p.add_argument("--hv-auxiliary", action="store_true",
+                   help="Add an independent auxiliary HV-distance branch; the primary HV/postprocess path is unchanged.")
+    p.add_argument("--hv-aux-weight", type=float, default=1.0,
+                   help="Weight for the optional independent HV auxiliary loss.")
+    p.add_argument("--verify-hv-aux-grad", action="store_true",
+                   help="Assert a finite nonzero auxiliary-branch gradient on the first training batch.")
+    p.add_argument("--verify-backbone-grad", action="store_true",
+                   help="Assert a finite nonzero trainable-backbone gradient on the first batch.")
     p.add_argument("--crop-size", type=int, default=256)
     p.add_argument("--stride", type=int, default=192)
     p.add_argument("--epochs", type=int, default=50)
@@ -442,7 +617,13 @@ def main():
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--backbone-lr", type=float, default=None,
                    help="Backbone LR when fine-tuning (default: lr*0.02). Ignored if frozen.")
+    p.add_argument("--layer-wise-lr-decay", type=float, default=1.0,
+                   help="Backbone layer-wise LR decay; 1.0 disables it.")
     p.add_argument("--weight-decay", type=float, default=1e-4)
+    p.add_argument("--warmup-ratio", type=float, default=0.0)
+    p.add_argument("--grad-clip-norm", type=float, default=None)
+    p.add_argument("--select-metric", type=str, default=None,
+                   help="Validation metric used for best checkpoint selection. Default mPQ for typed datasets, bPQ otherwise.")
     p.add_argument("--amp-dtype", choices=["none", "bf16", "fp16"], default="none")
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--eval-every", type=int, default=5)
@@ -459,14 +640,43 @@ def main():
     p.add_argument("--tta", action="store_true", help="4-way flip TTA at eval.")
     p.add_argument("--fg-thresh", type=float, default=0.5)
     p.add_argument("--energy-thresh", type=float, default=0.4)
+    p.add_argument("--np-loss-mode", choices=["ce_dice", "focal_tversky"], default="ce_dice",
+                   help="NP branch objective. ce_dice preserves the original HoVerNet loss.")
+    p.add_argument("--focal-gamma", type=float, default=2.0)
+    p.add_argument("--tversky-alpha", type=float, default=0.3)
+    p.add_argument("--tversky-beta", type=float, default=0.7)
     args = p.parse_args()
 
     if args.freeze_backbone and args.unfreeze_last_blocks is not None:
         p.error("--unfreeze-last-blocks requires --finetune")
+    if args.lora_rank is not None and not args.freeze_backbone:
+        p.error("--lora-rank uses frozen base backbone; do not combine with --finetune")
+    if args.adapter and not args.freeze_backbone:
+        p.error("--adapter currently expects a frozen backbone")
+    if args.lora_rank is not None and args.lora_rank <= 0:
+        p.error("--lora-rank must be positive")
     if args.unfreeze_last_blocks is not None and args.unfreeze_last_blocks <= 0:
         p.error("--unfreeze-last-blocks must be positive")
     if args.grad_accum_steps <= 0:
         p.error("--grad-accum-steps must be positive")
+    if args.warmup_ratio < 0 or args.warmup_ratio >= 1:
+        p.error("--warmup-ratio must be in [0, 1)")
+    if args.layer_wise_lr_decay <= 0 or args.layer_wise_lr_decay > 1:
+        p.error("--layer-wise-lr-decay must be in (0, 1]")
+    if args.focal_gamma < 0:
+        p.error("--focal-gamma must be non-negative")
+    if args.tversky_alpha < 0 or args.tversky_beta < 0:
+        p.error("--tversky-alpha/beta must be non-negative")
+    if args.tversky_alpha == 0 and args.tversky_beta == 0:
+        p.error("--tversky-alpha and --tversky-beta cannot both be zero")
+    if args.spatial_adapter_width <= 0:
+        p.error("--spatial-adapter-width must be positive")
+    if args.hv_aux_weight < 0:
+        p.error("--hv-aux-weight must be non-negative")
+    if args.verify_hv_aux_grad and not args.hv_auxiliary:
+        p.error("--verify-hv-aux-grad requires --hv-auxiliary")
+    if args.verify_backbone_grad and args.freeze_backbone:
+        p.error("--verify-backbone-grad requires --finetune")
 
     if args.layers is None:
         # Resolve even-4 from backbone depth lazily inside build; here pick a

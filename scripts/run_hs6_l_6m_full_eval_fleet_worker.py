@@ -12,15 +12,13 @@ import shutil
 import socket
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 
-OFFICIAL_EPOCH_LENGTH = 5899
-SNAPSHOT_PERIOD = 488
-FULL_EVAL_PERIOD = 2 * SNAPSHOT_PERIOD
-TOTAL_UPDATES = 15 * OFFICIAL_EPOCH_LENGTH
-EXPECTED_CHECKPOINTS = TOTAL_UPDATES // FULL_EVAL_PERIOD
+DEFAULT_OFFICIAL_EPOCH_LENGTH = 5899
+DEFAULT_FULL_EVAL_PERIOD = 488
 
 
 @dataclass(frozen=True)
@@ -108,6 +106,7 @@ LANES = (
     ),
     Lane("ood", "ood", "OOD_TASKS", "xray cryo", jobs=1),
 )
+DENSE_LANE_NAMES = {"detection", "segmentation_a", "segmentation_b", "segmentation_c", "segmentation_d"}
 
 
 def utc_now() -> str:
@@ -116,9 +115,12 @@ def utc_now() -> str:
 
 def atomic_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp.{socket.gethostname()}.{os.getpid()}")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    os.replace(temporary, path)
+    temporary = path.with_name(f".{path.name}.tmp.{uuid.uuid4().hex}")
+    try:
+        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -127,6 +129,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=repo)
     parser.add_argument("--train-run", type=Path, default=repo / "outputs/01_training_runs" / run_name)
+    parser.add_argument("--snapshot-root", type=Path, default=None)
+    parser.add_argument("--snapshot-dir-prefix", default="training_")
+    parser.add_argument("--snapshot-filename", default="teacher_checkpoint.pth")
     parser.add_argument(
         "--input-root",
         type=Path,
@@ -145,6 +150,40 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ready-age-seconds", type=float, default=30)
     parser.add_argument("--claim-stale-seconds", type=float, default=12 * 3600)
     parser.add_argument("--max-attempts", type=int, default=3)
+    parser.add_argument("--official-epoch-length", type=int, default=DEFAULT_OFFICIAL_EPOCH_LENGTH)
+    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument("--full-eval-period", type=int, default=DEFAULT_FULL_EVAL_PERIOD)
+    parser.add_argument("--expected-checkpoints", type=int, default=0)
+    parser.add_argument(
+        "--min-local-checkpoint-id",
+        type=int,
+        default=0,
+        help="Ignore teacher snapshots before this local checkpoint id.",
+    )
+    parser.add_argument(
+        "--checkpoint-id-offset",
+        type=int,
+        default=0,
+        help="Add this update-count offset to local snapshot ids in manifests and outputs.",
+    )
+    parser.add_argument("--dense-first", action="store_true")
+    parser.add_argument(
+        "--jobs-cap",
+        type=int,
+        default=0,
+        help="Cap concurrent benchmark children per lane; zero keeps the lane default.",
+    )
+    parser.add_argument(
+        "--jobs-per-gpu",
+        type=int,
+        default=0,
+        help="Override each lane's concurrent benchmark children on this GPU.",
+    )
+    parser.add_argument(
+        "--allow-busy-gpu",
+        action="store_true",
+        help="Run even when another compute process is present on the selected GPU.",
+    )
     parser.add_argument("--once", action="store_true", help="Exit after one lane or one idle scan.")
     return parser.parse_args()
 
@@ -165,17 +204,23 @@ def gpu_is_idle(gpu: str) -> bool:
     return result.returncode == 0 and not result.stdout.strip()
 
 
-def discover_snapshots(train_run: Path, ready_age_seconds: float) -> list[tuple[int, Path]]:
+def discover_snapshots(
+    snapshot_root: Path,
+    snapshot_dir_prefix: str,
+    snapshot_filename: str,
+    ready_age_seconds: float,
+    full_eval_period: int,
+) -> list[tuple[int, Path]]:
     now = time.time()
     snapshots: list[tuple[int, Path]] = []
-    for directory in (train_run / "eval").glob("training_*"):
+    for directory in snapshot_root.glob(f"{snapshot_dir_prefix}*"):
         try:
-            checkpoint_id = int(directory.name.removeprefix("training_"))
+            checkpoint_id = int(directory.name.removeprefix(snapshot_dir_prefix))
         except ValueError:
             continue
-        if (checkpoint_id + 1) % FULL_EVAL_PERIOD:
+        if (checkpoint_id + 1) % full_eval_period:
             continue
-        checkpoint = directory / "teacher_checkpoint.pth"
+        checkpoint = directory / snapshot_filename
         if not checkpoint.is_file() or checkpoint.stat().st_size == 0:
             continue
         if now - checkpoint.stat().st_mtime < ready_age_seconds:
@@ -184,7 +229,12 @@ def discover_snapshots(train_run: Path, ready_age_seconds: float) -> list[tuple[
     return sorted(snapshots)
 
 
-def prepare_adapter(input_root: Path, checkpoint_id: int, source: Path) -> None:
+def prepare_adapter(
+    input_root: Path,
+    checkpoint_id: int,
+    source: Path,
+    official_epoch_length: int,
+) -> None:
     input_root.mkdir(parents=True, exist_ok=True)
     with (input_root / ".manifest.lock").open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -210,7 +260,7 @@ def prepare_adapter(input_root: Path, checkpoint_id: int, source: Path) -> None:
             with manifest.open("a") as handle:
                 handle.write(
                     f"{checkpoint_id}\t{updates * 1024}\t"
-                    f"{updates / OFFICIAL_EPOCH_LENGTH:.8f}\tteacher\t{source}\n"
+                    f"{updates / official_epoch_length:.8f}\tteacher\t{source}\n"
                 )
 
 
@@ -274,7 +324,7 @@ def base_env(args: argparse.Namespace, checkpoint_id: int, jobs: int) -> dict[st
             "MAX_CPU_JOBS": str(jobs),
             "CONCURRENT_TASK_GROUPS": "0",
             "FROZEN_DATASETS_PER_JOB": "1",
-            "FROZEN_BATCH_SIZE": "32",
+            "FROZEN_BATCH_SIZE": os.environ.get("FROZEN_BATCH_SIZE", "32"),
             "FROZEN_CHANNEL_POLICY": "auto",
             "FROZEN_SPLIT_PROTOCOL": "current",
             "AUTOCAST_DTYPE": "bf16",
@@ -305,7 +355,11 @@ def base_env(args: argparse.Namespace, checkpoint_id: int, jobs: int) -> dict[st
 
 def run_lane(args: argparse.Namespace, checkpoint_id: int, lane: Lane, log_path: Path) -> int:
     output = args.output_root / f"point_{checkpoint_id}" / lane.name
-    env = base_env(args, checkpoint_id, lane.jobs)
+    if args.jobs_per_gpu > 0:
+        jobs = args.jobs_per_gpu
+    else:
+        jobs = min(lane.jobs, args.jobs_cap) if args.jobs_cap > 0 else lane.jobs
+    env = base_env(args, checkpoint_id, jobs)
     env.update({"TASKS": lane.tasks, lane.datasets_env: lane.datasets})
     env.update(dict(lane.extra_env))
     command = [
@@ -331,11 +385,11 @@ def run_lane(args: argparse.Namespace, checkpoint_id: int, lane: Lane, log_path:
     return result.returncode
 
 
-def update_checkpoint_status(output_root: Path, checkpoint_id: int) -> None:
+def update_checkpoint_status(output_root: Path, checkpoint_id: int, lanes: tuple[Lane, ...]) -> None:
     done_root = output_root / "_state/done"
     terminal_root = output_root / "_state/terminal"
     online_root = output_root / "_online_status"
-    keys = [lane_key(checkpoint_id, lane) for lane in LANES]
+    keys = [lane_key(checkpoint_id, lane) for lane in lanes]
     done = [key for key in keys if (done_root / f"{key}.json").exists()]
     terminal = [key for key in keys if (terminal_root / f"{key}.json").exists()]
     payload: dict[str, object] = {
@@ -346,13 +400,22 @@ def update_checkpoint_status(output_root: Path, checkpoint_id: int) -> None:
         "updated_at_utc": utc_now(),
     }
     atomic_json(online_root / f"ckpt_{checkpoint_id}.status.json", payload)
+    done_marker = online_root / f"ckpt_{checkpoint_id}.done"
+    failed_marker = online_root / f"ckpt_{checkpoint_id}.failed"
     if len(done) == len(keys):
-        atomic_json(online_root / f"ckpt_{checkpoint_id}.done", payload)
-    elif terminal:
-        atomic_json(online_root / f"ckpt_{checkpoint_id}.failed", payload)
+        atomic_json(done_marker, payload)
+        failed_marker.unlink(missing_ok=True)
+    else:
+        done_marker.unlink(missing_ok=True)
+        if terminal:
+            atomic_json(failed_marker, payload)
+        else:
+            failed_marker.unlink(missing_ok=True)
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    if args.official_epoch_length <= 0 or args.epochs <= 0 or args.full_eval_period <= 0:
+        raise SystemExit("epoch length, epochs, and full eval period must be positive")
     required = (
         args.python_bin,
         args.train_run / "config.yaml",
@@ -368,7 +431,16 @@ def main() -> int:
     args = parse_args()
     for name in ("repo", "train_run", "input_root", "output_root", "benchmark_root", "python_bin"):
         setattr(args, name, getattr(args, name).resolve())
+    args.snapshot_root = (
+        args.snapshot_root.resolve() if args.snapshot_root is not None else args.train_run / "eval"
+    )
     validate_args(args)
+    expected_checkpoints = args.expected_checkpoints or (
+        args.official_epoch_length * args.epochs // args.full_eval_period
+    )
+    lanes = LANES
+    if args.dense_first:
+        lanes = tuple(sorted(LANES, key=lambda lane: lane.name not in DENSE_LANE_NAMES))
 
     state_root = args.output_root / "_state"
     claim_root = state_root / "claims"
@@ -384,13 +456,29 @@ def main() -> int:
     worker = args.worker or f"{host}-gpu{args.gpu}-pid{os.getpid()}"
     worker_status = worker_root / f"{worker}.json"
     while True:
-        snapshots = discover_snapshots(args.train_run, args.ready_age_seconds)
+        snapshots = discover_snapshots(
+            args.snapshot_root,
+            args.snapshot_dir_prefix,
+            args.snapshot_filename,
+            args.ready_age_seconds,
+            args.full_eval_period,
+        )
+        snapshots = [
+            snapshot for snapshot in snapshots
+            if snapshot[0] >= args.min_local_checkpoint_id
+        ]
         progressed = False
-        if gpu_is_idle(args.gpu):
-            for checkpoint_id, source in snapshots:
-                prepare_adapter(args.input_root, checkpoint_id, source)
-                update_checkpoint_status(args.output_root, checkpoint_id)
-                for lane in LANES:
+        if args.allow_busy_gpu or gpu_is_idle(args.gpu):
+            for local_checkpoint_id, source in snapshots:
+                checkpoint_id = local_checkpoint_id + args.checkpoint_id_offset
+                prepare_adapter(
+                    args.input_root,
+                    checkpoint_id,
+                    source,
+                    args.official_epoch_length,
+                )
+                update_checkpoint_status(args.output_root, checkpoint_id, lanes)
+                for lane in lanes:
                     key = lane_key(checkpoint_id, lane)
                     if (done_root / f"{key}.json").exists() or (terminal_root / f"{key}.json").exists():
                         continue
@@ -400,7 +488,7 @@ def main() -> int:
                             terminal_root / f"{key}.json",
                             {"checkpoint_id": checkpoint_id, "lane": lane.name, "attempts": attempts},
                         )
-                        update_checkpoint_status(args.output_root, checkpoint_id)
+                        update_checkpoint_status(args.output_root, checkpoint_id, lanes)
                         continue
                     owner: dict[str, object] = {
                         "attempt": attempts + 1,
@@ -421,6 +509,11 @@ def main() -> int:
                     started = time.time()
                     log_path = log_root / f"{key}.{host}.attempt{attempts + 1}.log"
                     returncode = run_lane(args, checkpoint_id, lane, log_path)
+                    if returncode == 0:
+                        shutil.rmtree(
+                            args.output_root / f"point_{checkpoint_id}" / lane.name / "cache",
+                            ignore_errors=True,
+                        )
                     result = {
                         **owner,
                         "elapsed_seconds": time.time() - started,
@@ -434,8 +527,8 @@ def main() -> int:
                             failure_root / f"{key}.attempt{attempts + 1}.json",
                             {**result, "failed_at_utc": utc_now()},
                         )
-                        shutil.rmtree(claim, ignore_errors=True)
-                    update_checkpoint_status(args.output_root, checkpoint_id)
+                    shutil.rmtree(claim, ignore_errors=True)
+                    update_checkpoint_status(args.output_root, checkpoint_id, lanes)
                     progressed = True
                     break
                 if progressed:
@@ -447,7 +540,7 @@ def main() -> int:
             {
                 "complete_checkpoints": complete_points,
                 "discovered_checkpoints": len(snapshots),
-                "expected_checkpoints": EXPECTED_CHECKPOINTS,
+                "expected_checkpoints": expected_checkpoints,
                 "gpu": args.gpu,
                 "gpu_idle": gpu_is_idle(args.gpu),
                 "host": host,
@@ -457,7 +550,7 @@ def main() -> int:
                 "worker": worker,
             },
         )
-        if complete_points >= EXPECTED_CHECKPOINTS:
+        if complete_points >= expected_checkpoints:
             return 0
         if args.once:
             return 0

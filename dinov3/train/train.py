@@ -42,6 +42,7 @@ from dinov3.data import (
 )
 from dinov3.logging import MetricLogger, setup_logging
 from dinov3.train.cosine_lr_scheduler import CosineScheduler, linear_warmup_cosine_decay
+from dinov3.train.ema_scaling import scale_ema_momentum_schedule
 from dinov3.train.multidist_meta_arch import MultiDistillationMetaArch
 from dinov3.train.ssl_meta_arch import SSLMetaArch
 from dinov3.train.ssl_meta_arch_lora import SSLMetaArchLoRA
@@ -173,6 +174,12 @@ def _build_raw_loss_static_fields(cfg, accum_steps, real_global_batch_size, effe
         "freeze_backbone_updates": int(getattr(cfg.optim, "freeze_backbone_updates", 0)),
         "trainable_last_blocks": int(getattr(cfg.optim, "trainable_last_blocks", -1)),
         "trainable_extra_stem": bool(getattr(cfg.optim, "trainable_extra_stem", False)),
+        "intervention_factorized_topology_enabled": bool(
+            getattr(cfg.intervention_factorized_topology, "enabled", False)
+        ),
+        "intervention_factorized_topology_mode": str(
+            getattr(cfg.intervention_factorized_topology, "mode", "baseline")
+        ),
         "channel_subset_enabled": bool(getattr(cfg.channel_subset, "enabled", False)),
         "channel_subset_min": int(getattr(cfg.channel_subset, "min_channels", 1)),
         "channel_subset_max": int(getattr(cfg.channel_subset, "max_channels", 3)),
@@ -297,6 +304,37 @@ def build_optimizer(cfg, params_groups):
     return torch.optim.AdamW(params_groups, betas=(cfg.optim.adamw_beta1, cfg.optim.adamw_beta2))
 
 
+def _effective_optimizer_batch(cfg):
+    accum_steps = max(1, int(getattr(cfg.optim, "gradient_accumulation_steps", 1)))
+    if cfg.multidistillation.enabled:
+        real_global_batch = int(cfg.multidistillation.global_batch_size)
+    else:
+        real_global_batch = int(cfg.train.batch_size_per_gpu) * distributed.get_world_size()
+    return real_global_batch * accum_steps
+
+
+def _apply_ema_batch_scaling(cfg, schedule):
+    reference_batch = getattr(cfg.teacher, "ema_reference_batch_size", None)
+    scaled, exponent = scale_ema_momentum_schedule(
+        schedule,
+        effective_batch_size=_effective_optimizer_batch(cfg),
+        reference_batch_size=reference_batch,
+    )
+    if reference_batch is not None:
+        logger.info(
+            "EMA batch scaling: effective_batch=%d reference_batch=%d exponent=%.6g "
+            "momentum_start=%.9f->%.9f momentum_end=%.9f->%.9f",
+            _effective_optimizer_batch(cfg),
+            int(reference_batch),
+            exponent,
+            float(schedule[0]),
+            float(scaled[0]),
+            float(schedule[-1]),
+            float(scaled[-1]),
+        )
+    return scaled
+
+
 def build_schedulers(cfg):
     if "schedules" in cfg:
         logger.info("Using schedules v2")
@@ -340,6 +378,12 @@ def build_schedulers(cfg):
     lr_schedule = CosineScheduler(**lr)
     wd_schedule = CosineScheduler(**wd)
     momentum_schedule = CosineScheduler(**momentum)
+    momentum_schedule.schedule = _apply_ema_batch_scaling(cfg, momentum_schedule.schedule)
+    momentum_schedule.final_value = momentum_schedule.final_value ** (
+        _effective_optimizer_batch(cfg) / int(cfg.teacher.ema_reference_batch_size)
+        if getattr(cfg.teacher, "ema_reference_batch_size", None) is not None
+        else 1.0
+    )
     teacher_temp_schedule = CosineScheduler(**teacher_temp)
     last_layer_lr_schedule = CosineScheduler(**lr)
 
@@ -415,6 +459,7 @@ def build_schedulers_v2(cfg):
             iter_per_epoch * cfg.schedules.momentum.cosine_epochs if "cosine_epochs" in cfg.schedules.momentum else None
         ),
     )
+    momentum = _apply_ema_batch_scaling(cfg, momentum)
     teacher_temp = linear_warmup_cosine_decay(
         start=cfg.schedules.teacher_temp.start,
         peak=cfg.schedules.teacher_temp.peak,
@@ -539,6 +584,15 @@ def build_data_loader_from_cfg(
     else:
         sampler_type = SamplerType.SHARDED_INFINITE if cfg.train.cache_dataset else SamplerType.INFINITE
 
+    deterministic_data_stream = bool(getattr(cfg.train, "wds_deterministic_resampling", False))
+    data_generator = None
+    if deterministic_data_stream:
+        # DataLoader derives Python, NumPy, and torch worker seeds from this
+        # generator. Keeping it separate from model RNG makes paired method
+        # arms reproducible even with asynchronous data workers.
+        data_generator = torch.Generator()
+        data_generator.manual_seed(cfg.train.seed + 1_000_003 * distributed.get_rank())
+
     data_loader = make_data_loader(
         dataset=dataset,
         batch_size=batch_size,
@@ -551,20 +605,21 @@ def build_data_loader_from_cfg(
         pin_memory=getattr(cfg.train, "pin_memory", True),
         prefetch_factor=getattr(cfg.train, "prefetch_factor", None),
         collate_fn=collate_fn,
+        generator=data_generator,
     )
-    if bool(getattr(cfg.train, "wds_deterministic_resampling", False)):
-        if num_workers != 0:
-            raise ValueError(
-                "train.wds_deterministic_resampling=true requires train.num_workers=0 "
-                "so augmentation and masking remain comparable across method arms"
+    if deterministic_data_stream:
+        if num_workers == 0:
+            data_loader = DeterministicDataStream(
+                data_loader,
+                seed=cfg.train.seed + 1_000_003 * distributed.get_rank(),
+                start_fetch_index=start_iter * accum_steps,
             )
-        data_loader = DeterministicDataStream(
-            data_loader,
-            seed=cfg.train.seed + 1_000_003 * distributed.get_rank(),
-            start_fetch_index=start_iter * accum_steps,
-        )
+            mode = "single-process per-fetch RNG isolation"
+        else:
+            mode = f"explicitly seeded worker pool (workers={num_workers})"
         logger.info(
-            "WebDataset controlled stream enabled: fixed shard/sample order and isolated per-batch augmentation RNG"
+            "WebDataset controlled stream enabled: fixed shard/sample order and %s",
+            mode,
         )
     return data_loader
 
@@ -656,6 +711,17 @@ def do_train(cfg, model, resume=False):
         )
     OFFICIAL_EPOCH_LENGTH = cfg.train.OFFICIAL_EPOCH_LENGTH
     max_iter = cfg.optim.epochs * OFFICIAL_EPOCH_LENGTH
+    configured_max_updates = getattr(cfg.train, "max_updates", None)
+    if configured_max_updates is not None:
+        configured_max_updates = int(configured_max_updates)
+        if configured_max_updates <= 0:
+            raise ValueError(f"train.max_updates must be positive, got {configured_max_updates}")
+        max_iter = min(max_iter, configured_max_updates)
+        logger.info(
+            "Matched-screen early stop: %d optimizer updates with schedules retained for %d updates",
+            max_iter,
+            cfg.optim.epochs * OFFICIAL_EPOCH_LENGTH,
+        )
     accum_steps = max(1, int(getattr(cfg.optim, "gradient_accumulation_steps", 1)))
     freeze_backbone_updates = max(0, int(getattr(cfg.optim, "freeze_backbone_updates", 0)))
 

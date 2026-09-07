@@ -11,6 +11,7 @@ from contextlib import nullcontext
 from functools import partial
 
 import torch
+import torch.distributed as torch_dist
 import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch import Tensor, nn
@@ -20,7 +21,14 @@ from torch.utils.checkpoint import checkpoint as activation_checkpoint
 import dinov3.distributed as distributed
 from dinov3.checkpointer import init_fsdp_model_from_checkpoint
 from dinov3.configs import get_default_config
-from dinov3.data import DataAugmentationDINO
+from dinov3.data import (
+    DataAugmentationDINO,
+    ExpertFeatureBank,
+    ExpertFeatureBatch,
+    GlobalBridgeTargetBank,
+    build_cross_domain_edge_mask,
+    stable_metadata_codes,
+)
 from dinov3.layers.dino_head import DINOHead
 from dinov3.loss import (
     AcquisitionOrbitDeflationLoss,
@@ -33,7 +41,14 @@ from dinov3.loss import (
     ConditionalFeaturePredictor,
     DINOLoss,
     DistributedSIGReg,
+    ExpertConsensusResidualLoss,
+    GLOBAL_BRIDGE_FEATURE_PROTOCOLS,
+    GlobalBridgeTransportLoss,
     GramLoss,
+    INTERVENTION_FACTORIZATION_MODES,
+    InterventionContextHead,
+    InterventionFactorizedTopologyLoss,
+    InterventionFactorizedTopologyWeights,
     KoLeoLoss,
     KoLeoLossDistributed,
     NestedChannelInnovationLoss,
@@ -41,18 +56,43 @@ from dinov3.loss import (
     ScoutKernelDeltaTransportLoss,
     conditional_innovation_residual,
     centered_cosine_kernel,
+    compose_global_bridge_readout,
     cross_view_stable_kernel_delta,
     iBOTPatchLoss,
+    make_balanced_intervention_assignments,
     martingale_increment_orthogonality,
     project_onto_acquisition_tangent,
     rank_matched_random_tangent_basis,
+    shift_tangent_correspondence,
 )
+from dinov3.data.transforms import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from dinov3.models import build_model_from_cfg
 from dinov3.train.cosine_lr_scheduler import linear_warmup_cosine_decay
 from dinov3.train.param_groups import fuse_params_groups, get_params_groups_with_decay_fsdp
 from dinov3.utils import count_parameters
 
 logger = logging.getLogger("dinov3")
+
+
+def _renormalize_rgb_images(
+    images: Tensor,
+    *,
+    source_mean: tuple[float, ...],
+    source_std: tuple[float, ...],
+    target_mean: tuple[float, ...],
+    target_std: tuple[float, ...],
+) -> Tensor:
+    if images.ndim != 5 or images.shape[2] != 3:
+        raise ValueError("Bridge renormalization requires [views, batch, 3, H, W]")
+    statistics = (source_mean, source_std, target_mean, target_std)
+    if any(len(values) != 3 for values in statistics):
+        raise ValueError("Bridge renormalization requires three-channel statistics")
+    source_mean_tensor = images.new_tensor(source_mean).view(1, 1, 3, 1, 1)
+    source_std_tensor = images.new_tensor(source_std).view(1, 1, 3, 1, 1)
+    target_mean_tensor = images.new_tensor(target_mean).view(1, 1, 3, 1, 1)
+    target_std_tensor = images.new_tensor(target_std).view(1, 1, 3, 1, 1)
+    raw_images = images * source_std_tensor + source_mean_tensor
+    return (raw_images - target_mean_tensor) / target_std_tensor
 
 
 def _configure_partial_backbone(
@@ -629,6 +669,90 @@ class SSLMetaArch(nn.Module):
                 ),
             )
 
+        ift_cfg = cfg.intervention_factorized_topology
+        self.ift_enabled = bool(ift_cfg.enabled)
+        self.ift_mode = str(ift_cfg.mode).lower()
+        self.ift_loss_weight = float(ift_cfg.loss_weight)
+        self.ift_num_interventions = int(ift_cfg.num_interventions)
+        self.ift_contrast_scale = float(ift_cfg.contrast_scale)
+        self.ift_background_scale = float(ift_cfg.background_scale)
+        self.ift_blur_mix = float(ift_cfg.blur_mix)
+        self.ift_context_head_lr_multiplier = float(ift_cfg.context_head_lr_multiplier)
+        self._ift_anchor_backbone: nn.Module | None = None
+        self.ift_loss: InterventionFactorizedTopologyLoss | None = None
+        if self.ift_enabled:
+            if self.distributed_mode != "ddp":
+                raise ValueError("intervention_factorized_topology currently requires distributed_mode=ddp")
+            if cfg.distillation.enabled or cfg.multidistillation.enabled:
+                raise ValueError("intervention_factorized_topology does not support distillation meta-architectures")
+            if bool(cfg.acquisition_orbit_deflation.enabled):
+                raise ValueError(
+                    "intervention_factorized_topology and acquisition_orbit_deflation cannot be enabled together"
+                )
+            if self.ift_mode not in INTERVENTION_FACTORIZATION_MODES:
+                raise ValueError(
+                    "intervention_factorized_topology.mode must be one of "
+                    f"{sorted(INTERVENTION_FACTORIZATION_MODES)}, got {self.ift_mode!r}"
+                )
+            if self.ift_loss_weight < 0:
+                raise ValueError(
+                    "intervention_factorized_topology.loss_weight must be non-negative, got "
+                    f"{self.ift_loss_weight}"
+                )
+            if self.ift_num_interventions != 3:
+                raise ValueError(
+                    "intervention_factorized_topology currently requires the three calibrated "
+                    "contrast/background/blur interventions"
+                )
+            if self.ift_context_head_lr_multiplier <= 0:
+                raise ValueError(
+                    "intervention_factorized_topology.context_head_lr_multiplier must be positive"
+                )
+            component_weights = (
+                float(ift_cfg.invariance_loss_weight),
+                float(ift_cfg.context_loss_weight),
+                float(ift_cfg.decorrelation_loss_weight),
+                float(ift_cfg.sample_topology_loss_weight),
+                float(ift_cfg.patch_topology_loss_weight),
+            )
+            if any(weight < 0 for weight in component_weights):
+                raise ValueError("intervention_factorized_topology component weights must be non-negative")
+            context_head_kwargs = {
+                "context_dim": int(ift_cfg.context_dim),
+                "hidden_dim": int(ift_cfg.context_hidden_dim),
+                "num_interventions": self.ift_num_interventions,
+            }
+            student_model_dict["ift_context_head"] = InterventionContextHead(
+                embed_dim,
+                **context_head_kwargs,
+            )
+            teacher_model_dict["ift_context_head"] = InterventionContextHead(
+                embed_dim,
+                **context_head_kwargs,
+            )
+            self.ift_loss = InterventionFactorizedTopologyLoss(
+                num_interventions=self.ift_num_interventions,
+                sample_topk=int(ift_cfg.sample_topk),
+                patch_radius=int(ift_cfg.patch_radius),
+                huber_beta=float(ift_cfg.huber_beta),
+                weights=InterventionFactorizedTopologyWeights(
+                    invariance=component_weights[0],
+                    context=component_weights[1],
+                    decorrelation=component_weights[2],
+                    sample_topology=component_weights[3],
+                    patch_topology=component_weights[4],
+                ),
+            )
+            logger.info(
+                "Intervention factorization enabled: mode=%s weight=%s context_dim=%d "
+                "sample_topk=%d patch_radius=%d",
+                self.ift_mode,
+                self.ift_loss_weight,
+                int(ift_cfg.context_dim),
+                int(ift_cfg.sample_topk),
+                int(ift_cfg.patch_radius),
+            )
+
         acq_cfg = cfg.acquisition_orbit_deflation
         self.acq_deflation_enabled = bool(acq_cfg.enabled)
         self.acq_deflation_mode = str(acq_cfg.mode)
@@ -657,20 +781,29 @@ class SSLMetaArch(nn.Module):
                 "direct_consistency",
                 "gradient_projection",
                 "random_gradient_projection",
+                "shuffled_gradient_projection",
             }:
                 raise ValueError(
                     "acquisition_orbit_deflation.mode must be deflate, random_tangent, direct_consistency, "
-                    "gradient_projection, or random_gradient_projection, got "
+                    "gradient_projection, random_gradient_projection, or shuffled_gradient_projection, got "
                     f"{self.acq_deflation_mode!r}"
                 )
-            if self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"} and not (
+            if self.acq_deflation_mode in {
+                "gradient_projection",
+                "random_gradient_projection",
+                "shuffled_gradient_projection",
+            } and not (
                 0.0 <= self.acq_projection_strength <= 1.0
             ):
                 raise ValueError(
                     "acquisition_orbit_deflation.projection_strength must be in [0, 1], got "
                     f"{self.acq_projection_strength}"
                 )
-            if self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"} and (
+            if self.acq_deflation_mode in {
+                "gradient_projection",
+                "random_gradient_projection",
+                "shuffled_gradient_projection",
+            } and (
                 self.acq_projection_scope not in {"cls", "cls_patch"}
             ):
                 raise ValueError(
@@ -708,6 +841,18 @@ class SSLMetaArch(nn.Module):
             getattr(scout_cfg, "stable_relative_eigenvalue", 0.05)
         )
         self.scout_stable_min_eigenvalue = float(getattr(scout_cfg, "stable_min_eigenvalue", 1.0e-6))
+        self.scout_transport_relation_scope = str(
+            getattr(scout_cfg, "relation_scope", "local")
+        ).lower()
+        self.scout_neighborhood_topk = int(getattr(scout_cfg, "neighborhood_topk", 0))
+        self.scout_spatial_loss_weight = float(getattr(scout_cfg, "spatial_loss_weight", 0.0))
+        self.scout_spatial_target_mode = str(
+            getattr(scout_cfg, "spatial_target_mode", "delta")
+        ).lower()
+        self.scout_spatial_neighborhood_topk = int(
+            getattr(scout_cfg, "spatial_neighborhood_topk", 0)
+        )
+        self.scout_spatial_enabled = self.scout_spatial_loss_weight > 0
         self.scout_config_path = scout_cfg.scout_config_path
         self.scout_anchor_checkpoint = scout_cfg.scout_anchor_checkpoint
         self.scout_adapted_checkpoint = scout_cfg.scout_adapted_checkpoint
@@ -718,6 +863,7 @@ class SSLMetaArch(nn.Module):
         # Otherwise it would also perturb future masks/augmentations and cease
         # to isolate the semantic effect of the scout target.
         self._scout_shuffled_target_step = 0
+        self._scout_spatial_shuffled_target_step = 0
         if self.scout_transport_enabled:
             if self.distributed_mode != "ddp":
                 raise ValueError("scout_kernel_transport currently requires distributed_mode=ddp")
@@ -734,11 +880,12 @@ class SSLMetaArch(nn.Module):
                 "shuffled_delta",
                 "shuffled_stable_delta",
                 "final_kernel",
+                "absolute_final_kernel",
             }:
                 raise ValueError(
                     "scout_kernel_transport.target_mode must be one of "
                     "{'delta', 'stable_delta', 'shuffled_delta', "
-                    "'shuffled_stable_delta', 'final_kernel'}, got "
+                    "'shuffled_stable_delta', 'final_kernel', 'absolute_final_kernel'}, got "
                     f"{self.scout_transport_target_mode!r}"
                 )
             if self.scout_transport_current_feature_protocol not in {
@@ -763,6 +910,26 @@ class SSLMetaArch(nn.Module):
                 )
             if self.scout_stable_relative_eigenvalue < 0 or self.scout_stable_min_eigenvalue < 0:
                 raise ValueError("scout stable eigenvalue thresholds must be non-negative")
+            if self.scout_transport_relation_scope not in {"local", "global"}:
+                raise ValueError(
+                    "scout_kernel_transport.relation_scope must be 'local' or 'global', got "
+                    f"{self.scout_transport_relation_scope!r}"
+                )
+            if self.scout_neighborhood_topk < 0 or self.scout_spatial_neighborhood_topk < 0:
+                raise ValueError("Scout neighborhood top-k values must be non-negative")
+            if self.scout_spatial_loss_weight < 0:
+                raise ValueError("scout_kernel_transport.spatial_loss_weight must be non-negative")
+            if self.scout_spatial_target_mode not in {
+                "delta",
+                "shuffled_delta",
+                "final_kernel",
+                "absolute_final_kernel",
+            }:
+                raise ValueError(
+                    "scout_kernel_transport.spatial_target_mode must be one of "
+                    "{'delta', 'shuffled_delta', 'final_kernel', 'absolute_final_kernel'}, got "
+                    f"{self.scout_spatial_target_mode!r}"
+                )
             for name, path in (
                 ("scout_config_path", self.scout_config_path),
                 ("scout_anchor_checkpoint", self.scout_anchor_checkpoint),
@@ -773,16 +940,213 @@ class SSLMetaArch(nn.Module):
             self.scout_transport_loss = ScoutKernelDeltaTransportLoss(
                 directional_damping=self.scout_transport_directional_damping,
                 displacement_budget_ratio=self.scout_transport_displacement_budget_ratio,
+                neighborhood_topk=self.scout_neighborhood_topk,
+            )
+            self.scout_spatial_transport_loss = ScoutKernelDeltaTransportLoss(
+                directional_damping=self.scout_transport_directional_damping,
+                displacement_budget_ratio=self.scout_transport_displacement_budget_ratio,
+                neighborhood_topk=self.scout_spatial_neighborhood_topk,
+                metric_prefix="skdt_spatial",
             )
             logger.info(
                 "Scout kernel transport enabled: weight=%s target=%s current_protocol=%s "
-                "directional_damping=%s displacement_budget_ratio=%s stable_relative_eigenvalue=%s",
+                "directional_damping=%s displacement_budget_ratio=%s stable_relative_eigenvalue=%s "
+                "relation_scope=%s neighborhood_topk=%s spatial_weight=%s spatial_target=%s "
+                "spatial_topk=%s",
                 self.scout_transport_loss_weight,
                 self.scout_transport_target_mode,
                 self.scout_transport_current_feature_protocol,
                 self.scout_transport_directional_damping,
                 self.scout_transport_displacement_budget_ratio,
                 self.scout_stable_relative_eigenvalue,
+                self.scout_transport_relation_scope,
+                self.scout_neighborhood_topk,
+                self.scout_spatial_loss_weight,
+                self.scout_spatial_target_mode,
+                self.scout_spatial_neighborhood_topk,
+            )
+
+        expert_cfg = cfg.expert_consensus_residual
+        self.expert_consensus_enabled = bool(expert_cfg.enabled)
+        self.expert_consensus_loss_weight = float(expert_cfg.loss_weight)
+        self.expert_consensus_min_batch_samples = int(expert_cfg.min_batch_samples)
+        self.expert_consensus_relation_scope = str(expert_cfg.relation_scope)
+        self.expert_consensus_edge_scope = str(expert_cfg.edge_scope)
+        self._expert_consensus_anchor_backbone: nn.Module | None = None
+        self._expert_consensus_bank: ExpertFeatureBank | None = None
+        self.expert_consensus_loss: ExpertConsensusResidualLoss | None = None
+        if self.expert_consensus_enabled:
+            if self.distributed_mode != "ddp":
+                raise ValueError("expert_consensus_residual currently requires distributed_mode=ddp")
+            if cfg.distillation.enabled or cfg.multidistillation.enabled:
+                raise ValueError(
+                    "expert_consensus_residual does not support distillation meta-architectures"
+                )
+            if self.expert_consensus_loss_weight < 0:
+                raise ValueError(
+                    "expert_consensus_residual.loss_weight must be non-negative, got "
+                    f"{self.expert_consensus_loss_weight}"
+                )
+            if self.expert_consensus_min_batch_samples < 2:
+                raise ValueError(
+                    "expert_consensus_residual.min_batch_samples must be at least two, got "
+                    f"{self.expert_consensus_min_batch_samples}"
+                )
+            if self.expert_consensus_relation_scope not in {"local", "global"}:
+                raise ValueError(
+                    "expert_consensus_residual.relation_scope must be local or global, got "
+                    f"{self.expert_consensus_relation_scope!r}"
+                )
+            bank_paths = [str(path) for path in expert_cfg.bank_paths]
+            if not bank_paths:
+                raise ValueError("expert_consensus_residual.bank_paths must not be empty")
+            self._expert_consensus_bank = ExpertFeatureBank(bank_paths)
+            self.expert_consensus_loss = ExpertConsensusResidualLoss(
+                neighborhood_topk=int(expert_cfg.neighborhood_topk),
+                min_experts=int(expert_cfg.min_experts),
+                temperature=float(expert_cfg.temperature),
+                min_residual=float(expert_cfg.min_residual),
+                residual_strength=float(expert_cfg.residual_strength),
+                shuffled_control=bool(expert_cfg.shuffled_control),
+            )
+            logger.info(
+                "Expert consensus residual enabled: weight=%s banks=%d topk=%s min_experts=%s "
+                "temperature=%s min_residual=%s residual_strength=%s min_batch=%s "
+                "relation_scope=%s edge_scope=%s shuffled=%s",
+                self.expert_consensus_loss_weight,
+                len(bank_paths),
+                expert_cfg.neighborhood_topk,
+                expert_cfg.min_experts,
+                expert_cfg.temperature,
+                expert_cfg.min_residual,
+                expert_cfg.residual_strength,
+                self.expert_consensus_min_batch_samples,
+                self.expert_consensus_relation_scope,
+                self.expert_consensus_edge_scope,
+                expert_cfg.shuffled_control,
+            )
+
+        bridge_cfg = cfg.global_bridge_transport
+        self.global_bridge_enabled = bool(bridge_cfg.enabled)
+        self.global_bridge_loss_weight = float(bridge_cfg.loss_weight)
+        self.global_bridge_min_batch_samples = int(bridge_cfg.min_batch_samples)
+        self.global_bridge_control = bool(bridge_cfg.control)
+        self.global_bridge_feature_protocol = str(bridge_cfg.feature_protocol).lower()
+        self.global_bridge_observation_protocol = str(bridge_cfg.observation_protocol).lower()
+        self.global_bridge_input_normalization = str(bridge_cfg.input_normalization).lower()
+        self.global_bridge_observation_crop_size = int(bridge_cfg.observation_crop_size)
+        self._global_bridge_anchor_backbone: nn.Module | None = None
+        self._global_bridge_bank: GlobalBridgeTargetBank | None = None
+        self.global_bridge_loss: GlobalBridgeTransportLoss | None = None
+        if self.global_bridge_enabled:
+            if self.expert_consensus_enabled:
+                raise ValueError(
+                    "global_bridge_transport and expert_consensus_residual must be screened separately"
+                )
+            if self.distributed_mode != "ddp":
+                raise ValueError("global_bridge_transport currently requires distributed_mode=ddp")
+            if cfg.distillation.enabled or cfg.multidistillation.enabled:
+                raise ValueError("global_bridge_transport does not support distillation meta-architectures")
+            if self.global_bridge_loss_weight < 0:
+                raise ValueError("global_bridge_transport.loss_weight must be non-negative")
+            if self.global_bridge_min_batch_samples < 1:
+                raise ValueError("global_bridge_transport.min_batch_samples must be positive")
+            if self.global_bridge_feature_protocol not in GLOBAL_BRIDGE_FEATURE_PROTOCOLS:
+                raise ValueError(
+                    "global_bridge_transport.feature_protocol must be one of "
+                    f"{GLOBAL_BRIDGE_FEATURE_PROTOCOLS}, got {self.global_bridge_feature_protocol!r}"
+                )
+            if self.global_bridge_observation_protocol not in {
+                "masked_main",
+                "unmasked_selected",
+            }:
+                raise ValueError(
+                    "global_bridge_transport.observation_protocol must be masked_main or "
+                    f"unmasked_selected, got {self.global_bridge_observation_protocol!r}"
+                )
+            if self.global_bridge_input_normalization not in {"train", "eval_imagenet"}:
+                raise ValueError(
+                    "global_bridge_transport.input_normalization must be train or eval_imagenet, "
+                    f"got {self.global_bridge_input_normalization!r}"
+                )
+            if self.global_bridge_observation_crop_size < 0:
+                raise ValueError("global_bridge_transport.observation_crop_size must be non-negative")
+            if (
+                self.global_bridge_input_normalization == "eval_imagenet"
+                and self.global_bridge_observation_protocol != "unmasked_selected"
+            ):
+                raise ValueError(
+                    "eval_imagenet bridge normalization requires unmasked_selected observations"
+                )
+            if (
+                self.global_bridge_feature_protocol != "final_cls"
+                and self.global_bridge_observation_protocol != "unmasked_selected"
+            ):
+                raise ValueError(
+                    "nlb2 bridge features require observation_protocol=unmasked_selected so the "
+                    "auxiliary patch mean matches the frozen retrieval readout"
+                )
+            target_bank_path = bridge_cfg.target_bank_path
+            if not target_bank_path:
+                raise ValueError("global_bridge_transport.target_bank_path is required")
+            self._global_bridge_bank = GlobalBridgeTargetBank(
+                str(target_bank_path),
+                control=self.global_bridge_control,
+            )
+            feature_multiplier = {
+                "final_cls": 1,
+                "nlb2_cls": 2,
+                "nlb2_avg": 3,
+            }[self.global_bridge_feature_protocol]
+            expected_feature_dim = feature_multiplier * self.embed_dim
+            if self._global_bridge_bank.feature_dim != expected_feature_dim:
+                raise ValueError(
+                    "Global bridge target-bank dimension does not match feature_protocol: "
+                    f"bank={self._global_bridge_bank.feature_dim}, "
+                    f"expected={expected_feature_dim} ({self.global_bridge_feature_protocol})"
+                )
+            if (
+                self._global_bridge_bank.feature_protocol is not None
+                and self._global_bridge_bank.feature_protocol
+                != self.global_bridge_feature_protocol
+            ):
+                raise ValueError(
+                    "Global bridge target-bank protocol does not match config: "
+                    f"bank={self._global_bridge_bank.feature_protocol!r}, "
+                    f"config={self.global_bridge_feature_protocol!r}"
+                )
+            if (
+                self._global_bridge_bank.input_normalization is not None
+                and self._global_bridge_bank.input_normalization
+                != self.global_bridge_input_normalization
+            ):
+                raise ValueError(
+                    "Global bridge target-bank input normalization does not match config: "
+                    f"bank={self._global_bridge_bank.input_normalization!r}, "
+                    f"config={self.global_bridge_input_normalization!r}"
+                )
+            if (
+                self._global_bridge_bank.observation_crop_size is not None
+                and self._global_bridge_bank.observation_crop_size
+                != self.global_bridge_observation_crop_size
+            ):
+                raise ValueError(
+                    "Global bridge target-bank crop size does not match config: "
+                    f"bank={self._global_bridge_bank.observation_crop_size}, "
+                    f"config={self.global_bridge_observation_crop_size}"
+                )
+            self.global_bridge_loss = GlobalBridgeTransportLoss()
+            logger.info(
+                "Global bridge transport enabled: weight=%s bank=%s control=%s min_batch=%s "
+                "feature_protocol=%s observation_protocol=%s input_normalization=%s crop=%s",
+                self.global_bridge_loss_weight,
+                target_bank_path,
+                self.global_bridge_control,
+                self.global_bridge_min_batch_samples,
+                self.global_bridge_feature_protocol,
+                self.global_bridge_observation_protocol,
+                self.global_bridge_input_normalization,
+                self.global_bridge_observation_crop_size,
             )
 
         # Build student and teacher models
@@ -1074,6 +1438,8 @@ class SSLMetaArch(nn.Module):
             self.student.cmgi_predictor.reset_parameters()
         if self.nri_enabled:
             self.student.nri_predictor.reset_parameters()
+        if self.ift_enabled:
+            self.student.ift_context_head.reset_parameters()
         self.dino_loss.init_weights()
         self.ibot_patch_loss.init_weights()
         if self.sigreg_enabled:
@@ -1150,6 +1516,11 @@ class SSLMetaArch(nn.Module):
             anchor_backbone.requires_grad_(False)
             anchor_backbone.eval()
             object.__setattr__(self, "_acquisition_anchor_backbone", anchor_backbone)
+        if self.ift_enabled:
+            ift_anchor = copy.deepcopy(self.teacher.backbone)
+            ift_anchor.requires_grad_(False)
+            ift_anchor.eval()
+            object.__setattr__(self, "_ift_anchor_backbone", ift_anchor)
         if self.scout_transport_enabled:
             large_anchor = copy.deepcopy(self.teacher.backbone)
             large_anchor.requires_grad_(False)
@@ -1168,6 +1539,16 @@ class SSLMetaArch(nn.Module):
                     from_training_checkpoint=True,
                 ),
             )
+        if self.expert_consensus_enabled:
+            expert_anchor = copy.deepcopy(self.teacher.backbone)
+            expert_anchor.requires_grad_(False)
+            expert_anchor.eval()
+            object.__setattr__(self, "_expert_consensus_anchor_backbone", expert_anchor)
+        if self.global_bridge_enabled:
+            bridge_anchor = copy.deepcopy(self.teacher.backbone)
+            bridge_anchor.requires_grad_(False)
+            bridge_anchor.eval()
+            object.__setattr__(self, "_global_bridge_anchor_backbone", bridge_anchor)
 
     def _build_frozen_scout_backbone(
         self,
@@ -1198,6 +1579,112 @@ class SSLMetaArch(nn.Module):
         backbone.requires_grad_(False)
         backbone.eval()
         return backbone
+
+    @torch.no_grad()
+    def _get_expert_consensus_anchor_features(
+        self,
+        *,
+        images: Tensor,
+        masks: Tensor,
+        channel_ids: Tensor | None,
+        channel_valid_mask: Tensor | None,
+    ) -> Tensor:
+        anchor = self._expert_consensus_anchor_backbone
+        if anchor is None:
+            raise RuntimeError("Expert-consensus anchor was not initialized")
+        n_views, batch_size = images.shape[:2]
+        output = anchor(
+            images.flatten(0, 1),
+            masks=masks.flatten(0, 1),
+            channel_ids=channel_ids.flatten(0, 1) if channel_ids is not None else None,
+            channel_valid_mask=channel_valid_mask.flatten(0, 1)
+            if channel_valid_mask is not None
+            else None,
+            is_training=True,
+        )
+        return output["x_norm_clstoken"].unflatten(0, (n_views, batch_size)).mean(dim=0)
+
+    @torch.no_grad()
+    def _get_global_bridge_anchor_features(
+        self,
+        *,
+        images: Tensor,
+        masks: Tensor,
+        channel_ids: Tensor | None,
+        channel_valid_mask: Tensor | None,
+    ) -> Tensor:
+        anchor = self._global_bridge_anchor_backbone
+        if anchor is None:
+            raise RuntimeError("Global-bridge anchor was not initialized")
+        n_views, batch_size = images.shape[:2]
+        return_penultimate = self.global_bridge_feature_protocol != "final_cls"
+        output = anchor(
+            images.flatten(0, 1),
+            masks=masks.flatten(0, 1)
+            if self.global_bridge_observation_protocol == "masked_main"
+            else None,
+            channel_ids=channel_ids.flatten(0, 1) if channel_ids is not None else None,
+            channel_valid_mask=channel_valid_mask.flatten(0, 1)
+            if channel_valid_mask is not None
+            else None,
+            return_penultimate=return_penultimate,
+            is_training=True,
+        )
+        features = compose_global_bridge_readout(
+            final_cls=output["x_norm_clstoken"],
+            penultimate_cls=output.get("x_norm_penultimate_clstoken"),
+            final_patches=output["x_norm_patchtokens"],
+            feature_protocol=self.global_bridge_feature_protocol,
+        )
+        return features.unflatten(0, (n_views, batch_size)).mean(dim=0)
+
+    def _prepare_global_bridge_images(self, images: Tensor) -> Tensor:
+        if self.global_bridge_input_normalization == "eval_imagenet":
+            images = _renormalize_rgb_images(
+                images,
+                source_mean=tuple(float(x) for x in self.cfg.crops.rgb_mean),
+                source_std=tuple(float(x) for x in self.cfg.crops.rgb_std),
+                target_mean=IMAGENET_DEFAULT_MEAN,
+                target_std=IMAGENET_DEFAULT_STD,
+            )
+        crop_size = self.global_bridge_observation_crop_size
+        if crop_size:
+            height, width = images.shape[-2:]
+            if crop_size > min(height, width):
+                raise ValueError(
+                    f"Bridge observation crop {crop_size} exceeds image size {(height, width)}"
+                )
+            top = (height - crop_size) // 2
+            left = (width - crop_size) // 2
+            images = images[..., top : top + crop_size, left : left + crop_size]
+        return images.contiguous()
+
+    def _get_global_bridge_student_features(
+        self,
+        *,
+        images: Tensor,
+        channel_ids: Tensor | None,
+        channel_valid_mask: Tensor | None,
+    ) -> Tensor:
+        """Encode sparse bridge samples in the unmasked frozen-eval token geometry."""
+        n_views, batch_size = images.shape[:2]
+        output = self.student.backbone(
+            images.flatten(0, 1),
+            masks=None,
+            channel_ids=channel_ids.flatten(0, 1) if channel_ids is not None else None,
+            channel_valid_mask=channel_valid_mask.flatten(0, 1)
+            if channel_valid_mask is not None
+            else None,
+            return_penultimate=self.global_bridge_feature_protocol != "final_cls",
+            is_training=True,
+        )
+        features = compose_global_bridge_readout(
+            final_cls=output["x_norm_clstoken"],
+            penultimate_cls=output.get("x_norm_penultimate_clstoken"),
+            final_patches=output["x_norm_patchtokens"],
+            feature_protocol=self.global_bridge_feature_protocol,
+        )
+        return features.unflatten(0, (n_views, batch_size)).mean(dim=0)
 
     @torch.no_grad()
     def _get_acquisition_anchor_features(
@@ -1268,6 +1755,140 @@ class SSLMetaArch(nn.Module):
         return features.unflatten(0, (batch_size, num_views))
 
     @torch.no_grad()
+    def _get_ift_anchor_output(
+        self,
+        *,
+        images: Tensor,
+        masks: Tensor,
+        channel_ids: Tensor | None,
+        channel_valid_mask: Tensor | None,
+    ) -> tuple[Tensor, Tensor]:
+        """Encode the mask-matched crop with the frozen mature HS6 anchor."""
+        anchor = self._ift_anchor_backbone
+        if anchor is None:
+            raise RuntimeError("Intervention-factorization anchor was not initialized")
+        output = anchor(
+            images,
+            masks=masks,
+            channel_ids=channel_ids,
+            channel_valid_mask=channel_valid_mask,
+            is_training=True,
+        )
+        return output["x_norm_clstoken"], output["x_norm_patchtokens"]
+
+    def _get_ift_student_output(
+        self,
+        *,
+        images: Tensor,
+        masks: Tensor,
+        channel_ids: Tensor | None,
+        channel_valid_mask: Tensor | None,
+    ) -> Tensor:
+        """Encode one synthetic intervention with the same iBOT mask."""
+        output = self.student.backbone(
+            images,
+            masks=masks,
+            channel_ids=channel_ids,
+            channel_valid_mask=channel_valid_mask,
+            is_training=True,
+        )
+        return output["x_norm_clstoken"]
+
+    def _gather_scout_features(self, features: Tensor, *, with_grad: bool) -> Tensor:
+        """Gather equal local batches for a global relation kernel."""
+        if self.scout_transport_relation_scope != "global" or distributed.get_world_size() == 1:
+            return features
+        features = features.contiguous()
+        if with_grad:
+            return torch.cat(torch_dist.nn.all_gather(features), dim=0)
+        with torch.no_grad():
+            gathered = [torch.empty_like(features) for _ in range(distributed.get_world_size())]
+            torch_dist.all_gather(gathered, features)
+            return torch.cat(gathered, dim=0)
+
+    def _expert_consensus_relation_size(
+        self,
+        local_size: int,
+        *,
+        device: torch.device,
+    ) -> int:
+        """Validate equal bank coverage before entering a global relation gather."""
+        if self.expert_consensus_relation_scope != "global" or distributed.get_world_size() == 1:
+            return int(local_size)
+        local = torch.tensor([local_size], device=device, dtype=torch.long)
+        gathered = [torch.empty_like(local) for _ in range(distributed.get_world_size())]
+        torch_dist.all_gather(gathered, local)
+        sizes = [int(value.item()) for value in gathered]
+        if len(set(sizes)) != 1:
+            raise RuntimeError(
+                "Global expert-consensus relation graphs require equal bank coverage per rank; "
+                f"got local sizes {sizes}"
+            )
+        return sum(sizes)
+
+    def _gather_expert_consensus_tensor(self, tensor: Tensor, *, with_grad: bool) -> Tensor:
+        if self.expert_consensus_relation_scope != "global" or distributed.get_world_size() == 1:
+            return tensor
+        tensor = tensor.contiguous()
+        if with_grad:
+            return torch.cat(torch_dist.nn.all_gather(tensor), dim=0)
+        with torch.no_grad():
+            gathered = [torch.empty_like(tensor) for _ in range(distributed.get_world_size())]
+            torch_dist.all_gather(gathered, tensor)
+            return torch.cat(gathered, dim=0)
+
+    def _gather_expert_consensus_metadata(
+        self,
+        values: tuple[str, ...],
+        *,
+        device: torch.device,
+    ) -> tuple[str, ...]:
+        if self.expert_consensus_relation_scope != "global" or distributed.get_world_size() == 1:
+            return values
+        local_codes = stable_metadata_codes(values, device=device)
+        global_codes = self._gather_expert_consensus_tensor(local_codes, with_grad=False)
+        codes = global_codes.detach().cpu().tolist()
+        return tuple("" if code == 0 else f"code:{code}" for code in codes)
+
+    def _gather_expert_consensus_artifacts(
+        self,
+        *,
+        batch: ExpertFeatureBatch,
+        student_features: Tensor,
+        anchor_features: Tensor,
+    ) -> tuple[ExpertFeatureBatch, Tensor, Tensor]:
+        """Build one differentiable four-rank relation graph per microstep."""
+        if self.expert_consensus_relation_scope != "global" or distributed.get_world_size() == 1:
+            return batch, student_features, anchor_features
+        global_student = self._gather_expert_consensus_tensor(student_features, with_grad=True)
+        global_anchor = self._gather_expert_consensus_tensor(anchor_features, with_grad=False)
+        global_experts = tuple(
+            self._gather_expert_consensus_tensor(features, with_grad=False)
+            for features in batch.features
+        )
+        global_weights = self._gather_expert_consensus_tensor(
+            batch.weights.T,
+            with_grad=False,
+        ).T
+        empty_metadata = tuple("" for _ in range(global_student.shape[0]))
+        global_batch = ExpertFeatureBatch(
+            sample_indices=torch.arange(
+                global_student.shape[0], device=global_student.device, dtype=torch.long
+            ),
+            features=global_experts,
+            weights=global_weights,
+            domains=empty_metadata,
+            organisms=self._gather_expert_consensus_metadata(
+                batch.organisms, device=global_student.device
+            ),
+            acquisition_families=self._gather_expert_consensus_metadata(
+                batch.acquisition_families, device=global_student.device
+            ),
+            sample_types=empty_metadata,
+        )
+        return global_batch, global_student, global_anchor
+
+    @torch.no_grad()
     def _get_scout_transport_artifacts(
         self,
         *,
@@ -1276,7 +1897,8 @@ class SSLMetaArch(nn.Module):
         channel_ids: Tensor | None,
         channel_valid_mask: Tensor | None,
         include_large_anchor: bool = True,
-    ) -> tuple[Tensor | None, Tensor, Tensor]:
+        include_spatial: bool = False,
+    ) -> tuple[Tensor | None, Tensor, Tensor, Tensor | None, Tensor | None, Tensor | None]:
         """Return an optional L anchor and a width-agnostic scout kernel delta."""
         large_anchor = self._scout_large_anchor_backbone
         scout_anchor = self._scout_anchor_backbone
@@ -1284,32 +1906,63 @@ class SSLMetaArch(nn.Module):
         if scout_anchor is None or scout_adapted is None or (include_large_anchor and large_anchor is None):
             raise RuntimeError("Scout transport artifacts were not initialized")
         large_features = None
+        large_patch_features = None
         if include_large_anchor:
             assert large_anchor is not None
-            large_features = large_anchor(
+            large_output = large_anchor(
                 images,
                 masks=masks,
                 channel_ids=channel_ids,
                 channel_valid_mask=channel_valid_mask,
                 is_training=True,
-            )["x_norm_clstoken"]
-        scout_anchor_features = scout_anchor(
+            )
+            large_features = large_output["x_norm_clstoken"]
+            if include_spatial:
+                large_patch_features = large_output["x_norm_patchtokens"]
+        scout_anchor_output = scout_anchor(
             images,
             masks=masks,
             channel_ids=channel_ids,
             channel_valid_mask=channel_valid_mask,
             is_training=True,
-        )["x_norm_clstoken"]
-        scout_adapted_features = scout_adapted(
+        )
+        scout_adapted_output = scout_adapted(
             images,
             masks=masks,
             channel_ids=channel_ids,
             channel_valid_mask=channel_valid_mask,
             is_training=True,
-        )["x_norm_clstoken"]
+        )
+        scout_anchor_features = scout_anchor_output["x_norm_clstoken"]
+        scout_adapted_features = scout_adapted_output["x_norm_clstoken"]
+        if self.scout_transport_relation_scope == "global":
+            if large_features is not None:
+                large_features = self._gather_scout_features(large_features, with_grad=False)
+            scout_anchor_features = self._gather_scout_features(
+                scout_anchor_features, with_grad=False
+            )
+            scout_adapted_features = self._gather_scout_features(
+                scout_adapted_features, with_grad=False
+            )
         scout_adapted_kernel = centered_cosine_kernel(scout_adapted_features)
         scout_delta = scout_adapted_kernel - centered_cosine_kernel(scout_anchor_features)
-        return large_features, scout_delta, scout_adapted_kernel
+        scout_patch_delta = None
+        scout_patch_final_kernel = None
+        if include_spatial:
+            scout_anchor_patches = scout_anchor_output["x_norm_patchtokens"]
+            scout_adapted_patches = scout_adapted_output["x_norm_patchtokens"]
+            scout_patch_final_kernel = centered_cosine_kernel(scout_adapted_patches)
+            scout_patch_delta = scout_patch_final_kernel - centered_cosine_kernel(
+                scout_anchor_patches
+            )
+        return (
+            large_features,
+            scout_delta,
+            scout_adapted_kernel,
+            large_patch_features,
+            scout_patch_delta,
+            scout_patch_final_kernel,
+        )
 
     @staticmethod
     def _is_channelvit_backbone(backbone: nn.Module) -> bool:
@@ -1508,6 +2161,54 @@ class SSLMetaArch(nn.Module):
             upperbound=data["upperbound"],
         )
 
+        ift_intervention_images = None
+        ift_masks = None
+        ift_channel_ids = None
+        ift_channel_mask = None
+        ift_intervention_ids = None
+        ift_shuffled_intervention_ids = None
+        ift_anchor_features = None
+        ift_anchor_patches = None
+        if self.ift_enabled:
+            ift_base_images = global_crops.unflatten(0, (n_global_crops, B))[0]
+            ift_masks = masks.unflatten(0, (n_global_crops, B))[0]
+            ift_channel_ids = (
+                global_channel_ids.unflatten(0, (n_global_crops, B))[0]
+                if global_channel_ids is not None
+                else None
+            )
+            ift_channel_mask = (
+                student_global_channel_valid_mask.unflatten(0, (n_global_crops, B))[0]
+                if student_global_channel_valid_mask is not None
+                else None
+            )
+            ift_intervention_ids, ift_shuffled_intervention_ids = (
+                make_balanced_intervention_assignments(
+                    B,
+                    num_interventions=self.ift_num_interventions,
+                    iteration=int(iteration),
+                    rank=distributed.get_rank(),
+                    device=global_crops.device,
+                )
+            )
+            ift_orbit_images = _make_acquisition_orbit_views(
+                ift_base_images,
+                contrast_scale=self.ift_contrast_scale,
+                background_scale=self.ift_background_scale,
+                blur_mix=self.ift_blur_mix,
+                num_perturbations=self.ift_num_interventions,
+            )
+            ift_intervention_images = ift_orbit_images[
+                torch.arange(B, device=global_crops.device),
+                ift_intervention_ids,
+            ]
+            ift_anchor_features, ift_anchor_patches = self._get_ift_anchor_output(
+                images=ift_base_images,
+                masks=ift_masks,
+                channel_ids=ift_channel_ids,
+                channel_valid_mask=ift_channel_mask,
+            )
+
         # Build the frozen local nuisance geometry before the student forward.
         # Gradient projection is an identity in the forward pass, so this does
         # not alter teacher targets or the current student activations.
@@ -1536,7 +2237,12 @@ class SSLMetaArch(nn.Module):
             )
             if self.acq_deflation_mode != "direct_consistency":
                 use_patch_projection = (
-                    self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"}
+                    self.acq_deflation_mode
+                    in {
+                        "gradient_projection",
+                        "random_gradient_projection",
+                        "shuffled_gradient_projection",
+                    }
                     and self.acq_projection_scope == "cls_patch"
                 )
                 anchor_artifacts = self._get_acquisition_anchor_features(
@@ -1554,7 +2260,11 @@ class SSLMetaArch(nn.Module):
                     ) = anchor_artifacts
                 else:
                     acq_anchor_features, acq_orbit_features = anchor_artifacts
-                if self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"}:
+                if self.acq_deflation_mode in {
+                    "gradient_projection",
+                    "random_gradient_projection",
+                    "shuffled_gradient_projection",
+                }:
                     acq_tangent_basis, acq_tangent_active, acq_tangent_metrics = (
                         build_acquisition_tangent_basis(
                             anchor_features=acq_anchor_features,
@@ -1567,6 +2277,11 @@ class SSLMetaArch(nn.Module):
                     )
                     if self.acq_deflation_mode == "random_gradient_projection":
                         acq_tangent_basis = rank_matched_random_tangent_basis(acq_tangent_basis)
+                    elif self.acq_deflation_mode == "shuffled_gradient_projection":
+                        acq_tangent_basis, acq_tangent_active = shift_tangent_correspondence(
+                            acq_tangent_basis,
+                            acq_tangent_active,
+                        )
                     if use_patch_projection:
                         acq_patch_tangent_basis, acq_patch_tangent_active, patch_metrics = (
                             build_acquisition_tangent_basis(
@@ -1587,6 +2302,24 @@ class SSLMetaArch(nn.Module):
                             acq_patch_tangent_basis = rank_matched_random_tangent_basis(
                                 acq_patch_tangent_basis
                             )
+                        elif self.acq_deflation_mode == "shuffled_gradient_projection":
+                            patch_count = acq_anchor_patches.shape[1]
+                            patch_basis = acq_patch_tangent_basis.unflatten(
+                                0, (B, patch_count)
+                            )
+                            patch_active = acq_patch_tangent_active.unflatten(
+                                0, (B, patch_count)
+                            )
+                            patch_basis, patch_active = shift_tangent_correspondence(
+                                patch_basis.flatten(1, 2),
+                                patch_active.flatten(1, 2),
+                            )
+                            acq_patch_tangent_basis = patch_basis.unflatten(
+                                1, (patch_count, self.acq_num_perturbations)
+                            ).flatten(0, 1)
+                            acq_patch_tangent_active = patch_active.unflatten(
+                                1, (patch_count, self.acq_num_perturbations)
+                            ).flatten(0, 1)
 
         # Student output (will trigger an all-gather to unshard)
         student_global, student_local = self.get_student_output(
@@ -1614,6 +2347,170 @@ class SSLMetaArch(nn.Module):
             tangent_projection_strength=self.acq_projection_strength,
             tangent_gradient_metrics=acq_gradient_metrics,
         )
+
+        ift_intervention_features = None
+        if self.ift_enabled:
+            if ift_intervention_images is None or ift_masks is None:
+                raise RuntimeError("Intervention-factorization views were not initialized")
+            ift_intervention_features = self._get_ift_student_output(
+                images=ift_intervention_images,
+                masks=ift_masks,
+                channel_ids=ift_channel_ids,
+                channel_valid_mask=ift_channel_mask,
+            )
+
+        expert_consensus_aux_loss = None
+        expert_consensus_metrics: dict[str, Tensor] = {}
+        if self.expert_consensus_enabled:
+            if self._expert_consensus_bank is None or self.expert_consensus_loss is None:
+                raise RuntimeError("Expert-consensus feature bank or loss was not initialized")
+            expert_batch = self._expert_consensus_bank.lookup(
+                data.get("sample_keys", ()),
+                device=global_crops.device,
+            )
+            expert_consensus_metrics["ecr_bank_samples"] = global_crops.new_tensor(
+                float(expert_batch.size)
+            )
+            expert_consensus_metrics["ecr_bank_coverage"] = global_crops.new_tensor(
+                float(expert_batch.size) / float(B)
+            )
+            expert_relation_size = self._expert_consensus_relation_size(
+                expert_batch.size,
+                device=global_crops.device,
+            )
+            expert_consensus_metrics["ecr_relation_samples"] = global_crops.new_tensor(
+                float(expert_relation_size)
+            )
+            if expert_relation_size >= self.expert_consensus_min_batch_samples:
+                sample_indices = expert_batch.sample_indices
+                expert_images = global_crops.unflatten(0, (n_global_crops, B)).index_select(
+                    1, sample_indices
+                )
+                expert_masks = masks.unflatten(0, (n_global_crops, B)).index_select(
+                    1, sample_indices
+                )
+                expert_channel_ids = (
+                    global_channel_ids.unflatten(0, (n_global_crops, B)).index_select(
+                        1, sample_indices
+                    )
+                    if global_channel_ids is not None
+                    else None
+                )
+                expert_channel_mask = (
+                    student_global_channel_valid_mask.unflatten(
+                        0, (n_global_crops, B)
+                    ).index_select(1, sample_indices)
+                    if student_global_channel_valid_mask is not None
+                    else None
+                )
+                expert_anchor_features = self._get_expert_consensus_anchor_features(
+                    images=expert_images,
+                    masks=expert_masks,
+                    channel_ids=expert_channel_ids,
+                    channel_valid_mask=expert_channel_mask,
+                )
+                expert_student_features = student_global["cls_pre_head"].index_select(
+                    1, sample_indices
+                ).mean(dim=0)
+                (
+                    expert_batch,
+                    expert_student_features,
+                    expert_anchor_features,
+                ) = self._gather_expert_consensus_artifacts(
+                    batch=expert_batch,
+                    student_features=expert_student_features,
+                    anchor_features=expert_anchor_features,
+                )
+                expert_edge_mask = build_cross_domain_edge_mask(
+                    expert_batch,
+                    scope=self.expert_consensus_edge_scope,
+                    device=global_crops.device,
+                )
+                expert_consensus_aux_loss, loss_metrics = self.expert_consensus_loss(
+                    student_features=expert_student_features,
+                    anchor_features=expert_anchor_features,
+                    expert_features=expert_batch.features,
+                    expert_weights=expert_batch.weights,
+                    edge_mask=expert_edge_mask,
+                )
+                expert_consensus_metrics.update(loss_metrics)
+            else:
+                expert_consensus_metrics["ecr_active_rows"] = global_crops.new_zeros(())
+                expert_consensus_metrics["ecr_selected_edges"] = global_crops.new_zeros(())
+
+        global_bridge_aux_loss = None
+        global_bridge_metrics: dict[str, Tensor] = {}
+        if self.global_bridge_enabled:
+            if self._global_bridge_bank is None or self.global_bridge_loss is None:
+                raise RuntimeError("Global-bridge target bank or loss was not initialized")
+            zero = global_crops.new_zeros(())
+            global_bridge_metrics = {
+                "gbt_bank_samples": zero,
+                "gbt_bank_coverage": zero,
+                "gbt_control": global_crops.new_tensor(float(self.global_bridge_control)),
+                "gbt_loss": zero,
+                "gbt_active_rows": zero,
+                "gbt_valid_direction_fraction": zero,
+                "gbt_target_angle": zero,
+                "gbt_student_target_cosine": zero,
+                "gbt_anchor_target_cosine": zero,
+            }
+            bridge_batch = self._global_bridge_bank.lookup(
+                data.get("sample_keys", ()),
+                device=global_crops.device,
+            )
+            global_bridge_metrics["gbt_bank_samples"] = global_crops.new_tensor(
+                float(bridge_batch.size)
+            )
+            global_bridge_metrics["gbt_bank_coverage"] = global_crops.new_tensor(
+                float(bridge_batch.size) / float(B)
+            )
+            if bridge_batch.size >= self.global_bridge_min_batch_samples:
+                sample_indices = bridge_batch.sample_indices
+                bridge_images = global_crops.unflatten(0, (n_global_crops, B)).index_select(
+                    1, sample_indices
+                )
+                bridge_masks = masks.unflatten(0, (n_global_crops, B)).index_select(
+                    1, sample_indices
+                )
+                bridge_channel_ids = (
+                    global_channel_ids.unflatten(0, (n_global_crops, B)).index_select(
+                        1, sample_indices
+                    )
+                    if global_channel_ids is not None
+                    else None
+                )
+                bridge_channel_mask = (
+                    student_global_channel_valid_mask.unflatten(
+                        0, (n_global_crops, B)
+                    ).index_select(1, sample_indices)
+                    if student_global_channel_valid_mask is not None
+                    else None
+                )
+                bridge_images = self._prepare_global_bridge_images(bridge_images)
+                current_anchor_features = self._get_global_bridge_anchor_features(
+                    images=bridge_images,
+                    masks=bridge_masks,
+                    channel_ids=bridge_channel_ids,
+                    channel_valid_mask=bridge_channel_mask,
+                )
+                if self.global_bridge_observation_protocol == "unmasked_selected":
+                    bridge_student_features = self._get_global_bridge_student_features(
+                        images=bridge_images,
+                        channel_ids=bridge_channel_ids,
+                        channel_valid_mask=bridge_channel_mask,
+                    )
+                else:
+                    bridge_student_features = student_global["cls_pre_head"].index_select(
+                        1, sample_indices
+                    ).mean(dim=0)
+                global_bridge_aux_loss, bridge_loss_metrics = self.global_bridge_loss(
+                    student_features=bridge_student_features,
+                    current_anchor_features=current_anchor_features,
+                    bank_anchor_features=bridge_batch.anchor_features,
+                    bank_target_features=bridge_batch.target_features,
+                )
+                global_bridge_metrics.update(bridge_loss_metrics)
 
         if self.nci_enabled:
             nci_global_crops = global_crops.unflatten(0, (n_global_crops, B))
@@ -1744,6 +2641,9 @@ class SSLMetaArch(nn.Module):
                 scout_large_anchor_features,
                 scout_delta,
                 scout_final_kernel,
+                scout_large_anchor_patches,
+                scout_patch_delta,
+                scout_patch_final_kernel,
             ) = self._get_scout_transport_artifacts(
                 images=scout_global_crops[0],
                 masks=scout_first_mask,
@@ -1751,12 +2651,13 @@ class SSLMetaArch(nn.Module):
                 channel_valid_mask=scout_global_channel_mask[0]
                 if scout_global_channel_mask is not None
                 else None,
+                include_spatial=self.scout_spatial_enabled,
             )
-            if self.scout_transport_target_mode == "final_kernel":
+            if self.scout_transport_target_mode in {"final_kernel", "absolute_final_kernel"}:
                 scout_target = scout_final_kernel
                 scout_stability_metrics = {}
             elif self.scout_transport_target_mode in {"stable_delta", "shuffled_stable_delta"}:
-                _, scout_second_delta, _ = self._get_scout_transport_artifacts(
+                _, scout_second_delta, _, _, _, _ = self._get_scout_transport_artifacts(
                     images=scout_global_crops[1],
                     masks=scout_global_masks[1]
                     if self.scout_transport_current_feature_protocol == "mask_matched"
@@ -1784,15 +2685,40 @@ class SSLMetaArch(nn.Module):
                 shuffle_generator.manual_seed(17_291 + self._scout_shuffled_target_step)
                 self._scout_shuffled_target_step += 1
                 permutation = torch.randperm(
-                    B,
+                    scout_target.shape[0],
                     device=scout_target.device,
                     generator=shuffle_generator,
                 )
                 scout_target = scout_target[permutation][:, permutation]
+            if self.scout_spatial_enabled:
+                if scout_patch_delta is None or scout_patch_final_kernel is None:
+                    raise RuntimeError("Scout spatial transport artifacts were not initialized")
+                scout_spatial_target = (
+                    scout_patch_final_kernel
+                    if self.scout_spatial_target_mode in {"final_kernel", "absolute_final_kernel"}
+                    else scout_patch_delta
+                )
+                if self.scout_spatial_target_mode == "shuffled_delta":
+                    spatial_generator = torch.Generator(device=scout_spatial_target.device)
+                    spatial_generator.manual_seed(
+                        29_731 + self._scout_spatial_shuffled_target_step
+                    )
+                    self._scout_spatial_shuffled_target_step += 1
+                    patch_permutation = torch.randperm(
+                        scout_spatial_target.shape[-1],
+                        device=scout_spatial_target.device,
+                        generator=spatial_generator,
+                    )
+                    scout_spatial_target = scout_spatial_target[..., patch_permutation, :]
+                    scout_spatial_target = scout_spatial_target[..., patch_permutation]
+            else:
+                scout_spatial_target = None
         else:
             scout_large_anchor_features = None
             scout_target = None
             scout_stability_metrics = {}
+            scout_large_anchor_patches = None
+            scout_spatial_target = None
 
         # Gram output
         if self.gram_use_loss:
@@ -1823,6 +2749,33 @@ class SSLMetaArch(nn.Module):
             masks_weight=masks_weight,
             iteration=iteration,
         )
+        if self.ift_enabled:
+            if (
+                self.ift_loss is None
+                or ift_intervention_features is None
+                or ift_anchor_features is None
+                or ift_anchor_patches is None
+                or ift_intervention_ids is None
+                or ift_shuffled_intervention_ids is None
+                or ift_masks is None
+            ):
+                raise RuntimeError("Intervention-factorization artifacts were not initialized")
+            ift_loss, ift_metrics = self.ift_loss(
+                base_features=student_global["cls_pre_head"][0],
+                intervention_features=ift_intervention_features,
+                anchor_features=ift_anchor_features,
+                base_patches=student_global["patch_pre_head"][0],
+                anchor_patches=ift_anchor_patches,
+                intervention_ids=ift_intervention_ids,
+                shuffled_intervention_ids=ift_shuffled_intervention_ids,
+                context_head=self.student.ift_context_head,
+                mode=self.ift_mode,
+                patch_masks=ift_masks,
+            )
+            loss_accumulator += self.ift_loss_weight * ift_loss
+            loss_dict["intervention_factorized_topology_loss"] = ift_loss.detach()
+            loss_dict["intervention_factorized_topology_loss_weight"] = self.ift_loss_weight
+            loss_dict.update(ift_metrics)
         if self.nci_enabled:
             if nci_full_cls is None or nci_subset_cls is None:
                 raise RuntimeError("Nested channel innovation features were not initialized")
@@ -1912,7 +2865,11 @@ class SSLMetaArch(nn.Module):
             loss_dict.update(nri_metrics)
         if self.acq_deflation_enabled:
             current_features = student_global["cls_pre_head"][0]
-            if self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"}:
+            if self.acq_deflation_mode in {
+                "gradient_projection",
+                "random_gradient_projection",
+                "shuffled_gradient_projection",
+            }:
                 if acq_tangent_basis is None or acq_tangent_active is None or acq_anchor_features is None:
                     raise RuntimeError("Acquisition tangent projection was not initialized")
                 acq_loss = current_features.new_zeros(())
@@ -1946,16 +2903,28 @@ class SSLMetaArch(nn.Module):
                     anchor_features=acq_anchor_features,
                     perturbed_anchor_features=acq_orbit_features,
                 )
-            if self.acq_deflation_mode not in {"gradient_projection", "random_gradient_projection"}:
+            if self.acq_deflation_mode not in {
+                "gradient_projection",
+                "random_gradient_projection",
+                "shuffled_gradient_projection",
+            }:
                 loss_accumulator += self.acq_deflation_loss_weight * acq_loss
             loss_dict["acq_deflation_loss"] = acq_loss.detach()
             loss_dict["acq_deflation_loss_weight"] = (
                 0.0
-                if self.acq_deflation_mode in {"gradient_projection", "random_gradient_projection"}
+                if self.acq_deflation_mode
+                in {
+                    "gradient_projection",
+                    "random_gradient_projection",
+                    "shuffled_gradient_projection",
+                }
                 else self.acq_deflation_loss_weight
             )
             loss_dict["acq_random_tangent"] = float(
                 self.acq_deflation_mode in {"random_tangent", "random_gradient_projection"}
+            )
+            loss_dict["acq_shuffled_tangent"] = float(
+                self.acq_deflation_mode == "shuffled_gradient_projection"
             )
             loss_dict.update(acq_metrics)
         if self.scout_transport_enabled:
@@ -1976,10 +2945,15 @@ class SSLMetaArch(nn.Module):
                     else None,
                     is_training=True,
                 )["x_norm_clstoken"]
+            if self.scout_transport_relation_scope == "global":
+                scout_current_features = self._gather_scout_features(
+                    scout_current_features, with_grad=True
+                )
             scout_loss, scout_metrics = self.scout_transport_loss(
                 current_features=scout_current_features,
                 anchor_features=scout_large_anchor_features,
                 scout_delta=scout_target,
+                absolute_target=self.scout_transport_target_mode == "absolute_final_kernel",
             )
             loss_accumulator += self.scout_transport_loss_weight * scout_loss
             loss_dict["scout_kernel_transport_loss"] = scout_loss.detach()
@@ -1997,8 +2971,51 @@ class SSLMetaArch(nn.Module):
             loss_dict["scout_kernel_transport_mask_matched"] = float(
                 self.scout_transport_current_feature_protocol == "mask_matched"
             )
+            loss_dict["scout_kernel_transport_global"] = float(
+                self.scout_transport_relation_scope == "global"
+            )
+            loss_dict["scout_kernel_transport_neighborhood_topk"] = float(
+                self.scout_neighborhood_topk
+            )
+            loss_dict["scout_kernel_transport_absolute_target"] = float(
+                self.scout_transport_target_mode == "absolute_final_kernel"
+            )
             loss_dict.update(scout_metrics)
             loss_dict.update(scout_stability_metrics)
+            if self.scout_spatial_enabled:
+                if scout_large_anchor_patches is None or scout_spatial_target is None:
+                    raise RuntimeError("Scout spatial transport artifacts were not initialized")
+                scout_spatial_loss, scout_spatial_metrics = self.scout_spatial_transport_loss(
+                    current_features=student_global["patch_pre_head"][0],
+                    anchor_features=scout_large_anchor_patches,
+                    scout_delta=scout_spatial_target,
+                    absolute_target=self.scout_spatial_target_mode == "absolute_final_kernel",
+                )
+                loss_accumulator += self.scout_spatial_loss_weight * scout_spatial_loss
+                loss_dict["scout_spatial_transport_loss"] = scout_spatial_loss.detach()
+                loss_dict["scout_spatial_transport_loss_weight"] = self.scout_spatial_loss_weight
+                loss_dict["scout_spatial_transport_is_delta"] = float(
+                    self.scout_spatial_target_mode in {"delta", "shuffled_delta"}
+                )
+                loss_dict.update(scout_spatial_metrics)
+        if self.expert_consensus_enabled:
+            if expert_consensus_aux_loss is not None:
+                loss_accumulator += self.expert_consensus_loss_weight * expert_consensus_aux_loss
+                loss_dict["expert_consensus_residual_loss"] = expert_consensus_aux_loss.detach()
+            else:
+                loss_dict["expert_consensus_residual_loss"] = loss_accumulator.new_zeros(())
+            loss_dict["expert_consensus_residual_loss_weight"] = (
+                self.expert_consensus_loss_weight
+            )
+            loss_dict.update(expert_consensus_metrics)
+        if self.global_bridge_enabled:
+            if global_bridge_aux_loss is not None:
+                loss_accumulator += self.global_bridge_loss_weight * global_bridge_aux_loss
+                loss_dict["global_bridge_transport_loss"] = global_bridge_aux_loss.detach()
+            else:
+                loss_dict["global_bridge_transport_loss"] = loss_accumulator.new_zeros(())
+            loss_dict["global_bridge_transport_loss_weight"] = self.global_bridge_loss_weight
+            loss_dict.update(global_bridge_metrics)
 
         scaled_loss = loss_accumulator / float(loss_divisor)
         self.backprop_loss(scaled_loss)
@@ -2729,6 +3746,8 @@ class SSLMetaArch(nn.Module):
                     group["lr_multiplier"] *= self.cmgi_predictor_lr_multiplier
                 elif name == "nri_predictor":
                     group["lr_multiplier"] *= self.nri_predictor_lr_multiplier
+                elif name == "ift_context_head":
+                    group["lr_multiplier"] *= self.ift_context_head_lr_multiplier
             all_params_groups += params_groups
         return all_params_groups
 

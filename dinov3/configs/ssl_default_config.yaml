@@ -148,8 +148,9 @@ acquisition_orbit_deflation:
   # acquisition nuisance orbit, not the whole pretrained representation.
   enabled: false
   # gradient_projection is forward-identical and projects only the backward
-  # CLS gradient. random_gradient_projection is its rank-matched control.
-  mode: deflate  # deflate | random_tangent | direct_consistency | gradient_projection | random_gradient_projection
+  # CLS gradient. shuffled_gradient_projection breaks image/tangent
+  # correspondence while preserving the empirical tangent bank.
+  mode: deflate  # deflate | random_tangent | direct_consistency | gradient_projection | random_gradient_projection | shuffled_gradient_projection
   loss_weight: 0.1
   projection_strength: 1.0
   projection_scope: cls  # cls | cls_patch
@@ -159,6 +160,28 @@ acquisition_orbit_deflation:
   blur_mix: 0.50
   min_singular_value: 1.0e-4
   relative_singular_value: 0.05
+intervention_factorized_topology:
+  # Factor the response to synthetic acquisition interventions into a stable
+  # biological concept and a predicted context while preserving the mature
+  # sample-neighborhood and local patch geometry. No metadata are consumed.
+  enabled: false
+  mode: "true"  # baseline | true | shuffled_context
+  loss_weight: 0.1
+  num_interventions: 3
+  contrast_scale: 1.15
+  background_scale: 0.10
+  blur_mix: 0.50
+  context_dim: 64
+  context_hidden_dim: 256
+  context_head_lr_multiplier: 10.0
+  invariance_loss_weight: 1.0
+  context_loss_weight: 1.0
+  decorrelation_loss_weight: 0.1
+  sample_topology_loss_weight: 1.0
+  patch_topology_loss_weight: 1.0
+  sample_topk: 8
+  patch_radius: 1
+  huber_beta: 0.05
 scout_kernel_transport:
   # Transfer only a smaller model's pretraining-relative relation change.
   enabled: false
@@ -179,12 +202,56 @@ scout_kernel_transport:
   # ``stable_delta`` keeps only cross-view reproducible components of the
   # anchor-relative scout displacement. ``shuffled_stable_delta`` preserves
   # that target's norm/spectrum but breaks sample correspondence as a control.
-  target_mode: delta # delta | stable_delta | shuffled_delta | shuffled_stable_delta | final_kernel
+  # ``final_kernel`` retains the historical target-on-displacement control.
+  # ``absolute_final_kernel`` is strict relational KD: K(L) matches K(S_bio).
+  target_mode: delta # delta | stable_delta | shuffled_delta | shuffled_stable_delta | final_kernel | absolute_final_kernel
   stable_relative_eigenvalue: 0.05
   stable_min_eigenvalue: 1.0e-6
+  # Global scope gathers the current micro-batch across DDP ranks before
+  # constructing the sample kernel. A positive top-k keeps the strongest
+  # emerging and dissolving off-diagonal relations per sample.
+  relation_scope: local # local | global
+  neighborhood_topk: 0
+  # Optional within-image patch topology displacement. This reuses the masked
+  # student patch field and gives every frozen anchor the identical mask.
+  spatial_loss_weight: 0.0
+  spatial_target_mode: delta # delta | shuffled_delta | final_kernel | absolute_final_kernel
+  spatial_neighborhood_topk: 0
   scout_config_path: null
   scout_anchor_checkpoint: null
   scout_adapted_checkpoint: null
+expert_consensus_residual:
+  # Offline experts propose only mutual-neighbor edges that the frozen mature
+  # HS6 anchor misses; all other row-wise relations retain the anchor target.
+  enabled: false
+  loss_weight: 0.1
+  bank_paths: []
+  neighborhood_topk: 5
+  min_experts: 2
+  temperature: 0.07
+  min_residual: 0.0
+  residual_strength: 1.0
+  min_batch_samples: 8
+  # A global relation graph gathers the per-rank microbatch with gradients for
+  # the student and detached features/metadata for all frozen artifacts.
+  relation_scope: local # local | global
+  # Cross-domain scopes exclude unknown metadata rather than treating
+  # "unresolved" as a biological species or acquisition family.
+  edge_scope: all # all | cross_organism | cross_acquisition | cross_organism_or_acquisition | cross_organism_and_acquisition
+  shuffled_control: false
+global_bridge_transport:
+  # Full-bank expert consensus supplies a sparse, anchor-relative geodesic
+  # target for each routed sample. The control bank preserves target angles
+  # and active keys while shuffling displacement directions.
+  enabled: false
+  loss_weight: 0.1
+  target_bank_path: null
+  control: false
+  min_batch_samples: 1
+  feature_protocol: final_cls # final_cls | nlb2_cls | nlb2_avg
+  observation_protocol: masked_main # masked_main | unmasked_selected
+  input_normalization: train # train | eval_imagenet
+  observation_crop_size: 0 # 0 keeps the training crop; 224 matches frozen evaluation
 gram:
   use_loss: false # (bool) if true gram is used, else not
   compute_stats: false # (bool): if true compute auxilliary stats
@@ -216,6 +283,9 @@ train:
   # order and isolates augmentation/masking RNG from model-side randomness.
   wds_deterministic_resampling: false
   OFFICIAL_EPOCH_LENGTH: 1250
+  # Optional early stop in optimizer updates while retaining schedules built
+  # for the full ``optim.epochs`` horizon. Useful for matched causal screens.
+  max_updates: null
   monitor_gradient_norm: false
   chunk_schedule: []
   use_teacher_head: true
@@ -262,6 +332,10 @@ student:
 teacher:
   momentum_teacher: 0.992
   final_momentum_teacher: 1
+  # Optional reference batch for sample-time EMA scaling.  For example, a
+  # batch-4096 run derived from a batch-1024 recipe applies rho -> rho**4 to
+  # every value in the teacher-momentum schedule.  Null preserves legacy runs.
+  ema_reference_batch_size: null
   warmup_teacher_temp: 0.04
   teacher_temp: 0.07
   warmup_teacher_temp_epochs: 30

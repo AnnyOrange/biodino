@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -454,6 +455,177 @@ class CryoParticleDataset(Dataset):
             "class_posteriors": np.asarray([r.class_posterior for r in self.records], dtype=np.float32),
             "ncc_scores": np.asarray([r.ncc_score for r in self.records], dtype=np.float32),
         }
+
+
+@dataclass(frozen=True)
+class DiffractiveSIMRecord:
+    path: Path
+    record_id: int
+    sample_type: str
+    system: str
+    modality: str
+    group_id: str
+    pair_id: str
+    wavelength_nm: float
+
+
+class DiffractiveSIMDataset(Dataset):
+    """Single-image view of the paired diffractive-SIM Zenodo records.
+
+    Hyperspectral bands remain separate samples so ordinary RGB foundation
+    models can be compared without inventing a model-specific cube adapter.
+    Pair/group metadata preserves the spectral and WF/SR relationships for
+    downstream retrieval metrics.
+    """
+
+    _SAMPLES = {
+        1: "fluorescent_beads",
+        2: "a549_actin",
+        3: "hela_actin",
+        4: "bpae_multispectral",
+        5: "bpae_hyperspectral",
+    }
+
+    def __init__(
+        self,
+        ood_root: str | Path,
+        *,
+        transform: Transform | None = None,
+        percentiles: tuple[float, float] = (0.5, 99.5),
+        normalization: str = "per_image",
+        include_records: Sequence[int] = (1, 2, 3, 4, 5),
+        max_images_per_record: int | None = None,
+    ):
+        self.root = Path(ood_root) / "diffractive_sim_hyperspectral" / "extracted"
+        self.transform = transform
+        self.percentiles = percentiles
+        self.normalization = normalization
+        if normalization not in {"per_image", "uint16"}:
+            raise ValueError("normalization must be 'per_image' or 'uint16'")
+        selected = {int(v) for v in include_records}
+
+        records: list[DiffractiveSIMRecord] = []
+        for path in sorted((*self.root.rglob("*.tif"), *self.root.rglob("*.tiff"))):
+            rel = path.relative_to(self.root)
+            record_id = self._record_id(rel)
+            if record_id is None or record_id not in selected:
+                continue
+            modality = self._modality(rel)
+            if modality is None:
+                continue
+            group_id = self._group_id(rel)
+            wavelength_nm = self._wavelength_nm(rel)
+            wave_key = str(int(wavelength_nm)) if np.isfinite(wavelength_nm) else "broadband"
+            pair_id = f"record{record_id}:{group_id}:{wave_key}"
+            records.append(
+                DiffractiveSIMRecord(
+                    path=path,
+                    record_id=record_id,
+                    sample_type=self._SAMPLES[record_id],
+                    system="mcosm" if record_id in {1, 4} else "compact_lattice_sim",
+                    modality=modality,
+                    group_id=f"record{record_id}:{group_id}",
+                    pair_id=pair_id,
+                    wavelength_nm=wavelength_nm,
+                )
+            )
+
+        if max_images_per_record is not None and max_images_per_record > 0:
+            capped: list[DiffractiveSIMRecord] = []
+            for record_id in sorted(selected):
+                subset = [r for r in records if r.record_id == record_id]
+                if len(subset) > max_images_per_record:
+                    indices = np.linspace(0, len(subset) - 1, int(max_images_per_record)).round().astype(int)
+                    subset = [subset[i] for i in sorted(set(indices.tolist()))]
+                capped.extend(subset)
+            records = capped
+        if not records:
+            raise FileNotFoundError(f"No extracted diffractive-SIM TIFF images found under {self.root}")
+        self.records = records
+
+    @staticmethod
+    def _record_id(path: Path) -> int | None:
+        match = re.search(r"record[ _-]*([1-5])", path.as_posix(), flags=re.IGNORECASE)
+        return int(match.group(1)) if match else None
+
+    @staticmethod
+    def _modality(path: Path) -> str | None:
+        parts = [part.lower().replace("-", "_") for part in path.parts]
+        if any(part in {"wf", "widefield", "wide_field"} or part.startswith("wf_") for part in parts):
+            return "WF"
+        if any(
+            part in {"sr", "sim", "superresolution", "super_resolution"}
+            or part.startswith("sr_")
+            or part.startswith("sim_")
+            for part in parts
+        ):
+            return "SR"
+        return None
+
+    @staticmethod
+    def _group_id(path: Path) -> str:
+        for part in path.parts:
+            match = re.search(r"group[ _-]*(\d+)", part, flags=re.IGNORECASE)
+            if match:
+                return f"group{int(match.group(1))}"
+        return path.parent.as_posix().lower().replace(" ", "_")
+
+    @staticmethod
+    def _wavelength_nm(path: Path) -> float:
+        matches = re.findall(r"(?<!\d)([4-7]\d{2})(?:\s*nm)?(?!\d)", path.as_posix(), flags=re.IGNORECASE)
+        values = [int(v) for v in matches if 400 <= int(v) <= 750]
+        return float(values[-1]) if values else float("nan")
+
+    @staticmethod
+    def _image_plane(arr: np.ndarray) -> np.ndarray:
+        x = np.squeeze(np.asarray(arr))
+        while x.ndim > 3:
+            x = x[x.shape[0] // 2]
+        if x.ndim != 3:
+            return x
+        channel_axes = [axis for axis, size in enumerate(x.shape) if 1 <= int(size) <= 4]
+        if channel_axes:
+            axis = channel_axes[0]
+            return np.moveaxis(x, axis, -1) if axis != 2 else x
+        stack_axis = int(np.argmin(x.shape))
+        return np.take(x, x.shape[stack_axis] // 2, axis=stack_axis)
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, idx: int):
+        import tifffile
+
+        rec = self.records[idx]
+        arr = self._image_plane(tifffile.imread(rec.path))
+        if self.normalization == "uint16":
+            x = np.asarray(arr, dtype=np.float32)
+            x = np.clip(x / 65535.0, 0.0, 1.0)
+            image_arr = (x * 255.0 + 0.5).astype(np.uint8)
+            if image_arr.ndim == 2:
+                image_arr = np.repeat(image_arr[..., None], 3, axis=-1)
+            elif image_arr.ndim == 3 and image_arr.shape[-1] == 1:
+                image_arr = np.repeat(image_arr, 3, axis=-1)
+            elif image_arr.ndim == 3 and image_arr.shape[-1] == 2:
+                image_arr = np.concatenate([image_arr, image_arr[..., -1:]], axis=-1)
+            elif image_arr.ndim == 3 and image_arr.shape[-1] > 3:
+                image_arr = image_arr[..., :3]
+        else:
+            image_arr = _safe_uint8_from_array(arr, self.percentiles)
+        image = _pil_from_uint8(image_arr)
+        if self.transform is not None:
+            image = self.transform(image)
+        meta = {
+            "path": str(rec.path),
+            "record_id": rec.record_id,
+            "sample_type": rec.sample_type,
+            "system": rec.system,
+            "modality": rec.modality,
+            "group_id": rec.group_id,
+            "pair_id": rec.pair_id,
+            "wavelength_nm": rec.wavelength_nm,
+        }
+        return image, rec.record_id - 1, meta
 
 
 class _WrappedDataset(Dataset):

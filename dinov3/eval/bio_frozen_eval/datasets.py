@@ -535,7 +535,13 @@ class CoNICCellCountRegressionDataset(Dataset):
 
     def __init__(self, root: str | Path, split: str, max_samples: int | None = None):
         self.root = Path(root)
-        self.images_path = self.root / "data/images.npy"
+        data_root = self.root / "data"
+        if not (data_root / "images.npy").is_file():
+            # Some benchmark mirrors cannot preserve the canonical relative symlink.
+            fallback = self.root.parents[1] / "segmentation/conic/extracted"
+            if (fallback / "images.npy").is_file():
+                data_root = fallback
+        self.images_path = data_root / "images.npy"
         self.images = np.load(self.images_path, mmap_mode="r")
         samples: list[tuple[int, float]] = []
         with (self.root / "conic_cell_count.csv").open(newline="") as handle:
@@ -564,6 +570,12 @@ class LIVECellCountRegressionDataset(Dataset):
 
     def __init__(self, root: str | Path, split: str, max_samples: int | None = None):
         self.root = Path(root)
+        data_root = self.root / "data"
+        if not data_root.is_dir():
+            # exFAT benchmark mirrors cannot represent the canonical data symlink.
+            fallback = self.root.parents[1] / "segmentation/LIVECell/LIVECell_dataset_2021"
+            if fallback.is_dir():
+                data_root = fallback
         samples: list[RegressionSample] = []
         with (self.root / "livecell_cell_count.csv").open(newline="") as handle:
             for row in csv.DictReader(handle):
@@ -571,7 +583,7 @@ class LIVECellCountRegressionDataset(Dataset):
                     continue
                 samples.append(
                     RegressionSample(
-                        self.root / "data" / row["image_path"],
+                        data_root / row["image_path"],
                         float(row["cell_count"]),
                     )
                 )

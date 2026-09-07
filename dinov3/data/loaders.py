@@ -192,7 +192,10 @@ def make_dataset(
                                ``packwds_robust`` sources. Entries are
                                ``weight=shard_spec`` separated by ``||``;
                                optional suffix ``::pct=low,high`` applies to
-                               all sources.
+                               all sources. Semicolon-separated options
+                               ``domain_block_size=N`` and
+                               ``sync_domain_choices=true`` expose auditable,
+                               domain-homogeneous blocks for data reweighting.
 
     Args:
         dataset_str: Dataset descriptor string.
@@ -284,16 +287,35 @@ def make_dataset(
 
 def _parse_weighted_wds_spec(shard_spec: str, *, allow_pct: bool = False):
     p_low, p_high = 1.0, 99.0
+    domain_block_size = 1
+    synchronize_domain_choices = False
     if "::" in shard_spec:
         shard_spec, opts_str = shard_spec.rsplit("::", 1)
         opts_str = opts_str.strip()
-        if allow_pct and opts_str.startswith("pct="):
-            vals = [v.strip() for v in opts_str[len("pct=") :].split(",")]
-            if len(vals) != 2:
-                raise ValueError(f"mixwds_robust: ::pct expects 'pct=low,high', got: {opts_str}")
-            p_low, p_high = float(vals[0]), float(vals[1])
-        elif opts_str:
-            raise ValueError(f"Unknown weighted WebDataset option: {opts_str}")
+        for option in (part.strip() for part in opts_str.split(";") if part.strip()):
+            if allow_pct and option.startswith("pct="):
+                vals = [v.strip() for v in option[len("pct=") :].split(",")]
+                if len(vals) != 2:
+                    raise ValueError(
+                        f"mixwds_robust: ::pct expects 'pct=low,high', got: {option}"
+                    )
+                p_low, p_high = float(vals[0]), float(vals[1])
+            elif option.startswith("domain_block_size="):
+                domain_block_size = int(option.split("=", 1)[1])
+                if domain_block_size <= 0:
+                    raise ValueError(
+                        f"domain_block_size must be positive, got {domain_block_size}"
+                    )
+            elif option.startswith("sync_domain_choices="):
+                value = option.split("=", 1)[1].strip().lower()
+                if value not in {"true", "false"}:
+                    raise ValueError(
+                        "sync_domain_choices must be true or false, "
+                        f"got {value!r}"
+                    )
+                synchronize_domain_choices = value == "true"
+            else:
+                raise ValueError(f"Unknown weighted WebDataset option: {option}")
 
     entries = [entry.strip() for entry in shard_spec.split("||") if entry.strip()]
     if not entries:
@@ -319,7 +341,14 @@ def _parse_weighted_wds_spec(shard_spec: str, *, allow_pct: bool = False):
 
     if sum(weights) <= 0:
         raise ValueError(f"weighted WebDataset weights must sum to > 0, got {weights}")
-    return specs, weights, p_low, p_high
+    return (
+        specs,
+        weights,
+        p_low,
+        p_high,
+        domain_block_size,
+        synchronize_domain_choices,
+    )
 
 
 def _make_weighted_packed_webdataset(
@@ -333,7 +362,9 @@ def _make_weighted_packed_webdataset(
     """Create a weighted random mix of multiple ``packwds:`` sources."""
     from .wds_pipeline import WeightedIterableDataset
 
-    specs, weights, _, _ = _parse_weighted_wds_spec(shard_spec)
+    specs, weights, _, _, domain_block_size, synchronize_domain_choices = (
+        _parse_weighted_wds_spec(shard_spec)
+    )
     datasets = [
         _make_packed_webdataset(
             spec,
@@ -348,7 +379,14 @@ def _make_weighted_packed_webdataset(
         for source_idx, spec in enumerate(specs)
     ]
     logger.info("creating weighted packwds mix: weights=%s specs=%s", weights, specs)
-    return WeightedIterableDataset(datasets, weights, seed=resample_seed, names=specs)
+    return WeightedIterableDataset(
+        datasets,
+        weights,
+        seed=resample_seed,
+        names=specs,
+        domain_block_size=domain_block_size,
+        synchronize_domain_choices=synchronize_domain_choices,
+    )
 
 
 def _make_weighted_packed_robust_webdataset(
@@ -362,7 +400,14 @@ def _make_weighted_packed_robust_webdataset(
     """Create a weighted random mix of multiple ``packwds_robust:`` sources."""
     from .wds_pipeline import WeightedIterableDataset
 
-    specs, weights, p_low, p_high = _parse_weighted_wds_spec(shard_spec, allow_pct=True)
+    (
+        specs,
+        weights,
+        p_low,
+        p_high,
+        domain_block_size,
+        synchronize_domain_choices,
+    ) = _parse_weighted_wds_spec(shard_spec, allow_pct=True)
     if not (0.0 <= p_low < p_high <= 100.0):
         raise ValueError(
             f"mixwds_robust: pct must satisfy 0 <= low < high <= 100, got {p_low},{p_high}"
@@ -385,7 +430,14 @@ def _make_weighted_packed_robust_webdataset(
         p_high,
         specs,
     )
-    return WeightedIterableDataset(datasets, weights, seed=resample_seed, names=specs)
+    return WeightedIterableDataset(
+        datasets,
+        weights,
+        seed=resample_seed,
+        names=specs,
+        domain_block_size=domain_block_size,
+        synchronize_domain_choices=synchronize_domain_choices,
+    )
 
 
 def _make_packed_webdataset(
@@ -841,6 +893,7 @@ def make_data_loader(
     prefetch_factor: Optional[int] = None,
     collate_fn: Optional[Callable[[List[T]], Any]] = None,
     worker_init_fn: Optional[Callable[[List[T]], Any]] = None,
+    generator: Optional[torch.Generator] = None,
 ):
     """
     Creates a data loader with the specified parameters.
@@ -871,6 +924,7 @@ def make_data_loader(
             prefetch_factor=prefetch_factor,
             collate_fn=collate_fn,
             worker_init_fn=worker_init_fn,
+            generator=generator,
         )
 
     sampler = _make_sampler(
@@ -892,6 +946,7 @@ def make_data_loader(
         persistent_workers=persistent_workers,
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn,
+        generator=generator,
     )
     if prefetch_factor is not None and num_workers > 0:
         loader_kwargs["prefetch_factor"] = int(prefetch_factor)
@@ -915,6 +970,7 @@ def _make_webdataset_loader(
     prefetch_factor: Optional[int] = None,
     collate_fn: Optional[Callable] = None,
     worker_init_fn: Optional[Callable] = None,
+    generator: Optional[torch.Generator] = None,
 ) -> torch.utils.data.DataLoader:
     """
     为 WebDataset (IterableDataset) 创建 DataLoader。
@@ -946,6 +1002,7 @@ def _make_webdataset_loader(
         persistent_workers=persistent_workers and num_workers > 0,
         collate_fn=collate_fn,
         worker_init_fn=worker_init_fn,
+        generator=generator,
     )
     if prefetch_factor is not None and num_workers > 0:
         loader_kwargs["prefetch_factor"] = int(prefetch_factor)

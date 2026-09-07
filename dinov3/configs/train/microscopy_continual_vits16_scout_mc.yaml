@@ -1,0 +1,92 @@
+# Internal calibration model for Scout-Guided Plasticity Transport. This is
+# not a small-model validation run: its only artifact is a frozen 8-channel
+# pretraining-to-adaptation relation delta consumed by ViT-L.
+
+compute_precision:
+  distributed_mode: ddp
+
+train:
+  dataset_path: "packwds_chvit_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-{000000..000999}.tar::pct=1,99"
+  batch_size_per_gpu: 64
+  num_workers: 4
+  OFFICIAL_EPOCH_LENGTH: 128
+  output_dir: ./outputs/01_training_runs/scout_vits16_mc
+  compile: false
+  checkpointing: true
+  checkpointing_full: false
+  wds_shuffle_buffer: 100
+  prefetch_factor: 2
+  pin_memory: true
+
+student:
+  arch: vit_small
+  patch_size: 16
+  ffn_layer: swiglu
+  ffn_ratio: 6.0
+  drop_path_rate: 0.15
+  norm_layer: layernormbf16
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: residual_mc_v2
+  residual_mc_extra_scale_init: 0.01
+  n_storage_tokens: 4
+  mask_k_bias: true
+  pos_embed_rope_rescale_coords: 2
+  pos_embed_rope_dtype: fp32
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth"
+
+teacher:
+  in_chans: 8
+  enable_channelvit: false
+  stem_type: residual_mc_v2
+  residual_mc_extra_scale_init: 0.01
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 1
+
+sigreg:
+  enabled: false
+
+channel_subset:
+  enabled: false
+
+nested_channel_innovation:
+  enabled: false
+
+nested_resolution_innovation:
+  enabled: false
+
+acquisition_orbit_deflation:
+  enabled: false
+
+scout_kernel_transport:
+  enabled: false
+
+optim:
+  epochs: 4
+  optimizer: adamw
+  lr: 5.0e-5
+  min_lr: 1.0e-6
+  warmup_epochs: 1
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 1
+
+crops:
+  augmentation_policy: bio_safe
+  float_input: true
+  global_crops_size: 224
+  local_crops_size: 96
+  rgb_mean: [0.514666, 0.488834, 0.498267, 0.226684, 0.232035, 0.166374, 0.483261, 0.523779]
+  rgb_std: [0.338707, 0.339202, 0.336091, 0.280818, 0.278247, 0.235296, 0.196605, 0.137569]
+
+evaluation:
+  eval_period_iterations: 0
+
+checkpointing:
+  period: 512
+  max_to_keep: 1
+  sharded: false

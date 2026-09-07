@@ -19,21 +19,46 @@ from torch import Tensor, nn
 
 
 def centered_cosine_kernel(features: Tensor, *, eps: float = 1e-8) -> Tensor:
-    """Return a centered cosine sample kernel for ``[batch, feature]`` inputs."""
-    if features.ndim != 2:
-        raise ValueError(f"Expected [batch, feature] inputs, got {tuple(features.shape)}")
-    if features.shape[0] < 2:
+    """Return centered cosine kernels for ``[..., sample, feature]`` inputs."""
+    if features.ndim < 2:
+        raise ValueError(f"Expected [..., sample, feature] inputs, got {tuple(features.shape)}")
+    if features.shape[-2] < 2:
         raise ValueError("A relational kernel requires at least two samples")
     normalized = F.normalize(features.float(), dim=-1, eps=eps)
-    kernel = normalized @ normalized.transpose(0, 1)
-    row_mean = kernel.mean(dim=1, keepdim=True)
-    return kernel - row_mean - row_mean.transpose(0, 1) + kernel.mean()
+    kernel = normalized @ normalized.transpose(-2, -1)
+    row_mean = kernel.mean(dim=-1, keepdim=True)
+    column_mean = kernel.mean(dim=-2, keepdim=True)
+    grand_mean = kernel.mean(dim=(-2, -1), keepdim=True)
+    return kernel - row_mean - column_mean + grand_mean
 
 
 def _double_center(kernel: Tensor) -> Tensor:
     """Center an externally supplied sample kernel or kernel displacement."""
-    row_mean = kernel.mean(dim=1, keepdim=True)
-    return kernel - row_mean - row_mean.transpose(0, 1) + kernel.mean()
+    row_mean = kernel.mean(dim=-1, keepdim=True)
+    column_mean = kernel.mean(dim=-2, keepdim=True)
+    grand_mean = kernel.mean(dim=(-2, -1), keepdim=True)
+    return kernel - row_mean - column_mean + grand_mean
+
+
+def _extreme_neighborhood_mask(target: Tensor, topk: int) -> Tensor | None:
+    """Select strongest emerging and dissolving off-diagonal relations."""
+    if topk <= 0:
+        return None
+    n_samples = target.shape[-1]
+    k = min(int(topk), n_samples - 1)
+    diagonal = torch.eye(n_samples, device=target.device, dtype=torch.bool)
+    diagonal = diagonal.expand(target.shape[:-2] + (n_samples, n_samples))
+
+    positive_values, positive_indices = torch.topk(
+        target.masked_fill(diagonal, -torch.inf), k=k, dim=-1, largest=True
+    )
+    negative_values, negative_indices = torch.topk(
+        target.masked_fill(diagonal, torch.inf), k=k, dim=-1, largest=False
+    )
+    selected = torch.zeros_like(target, dtype=torch.bool)
+    selected.scatter_(-1, positive_indices, positive_values > 0)
+    selected.scatter_(-1, negative_indices, negative_values < 0)
+    return selected
 
 
 def cross_view_stable_kernel_delta(
@@ -116,6 +141,7 @@ class ScoutKernelDeltaTransportLoss(nn.Module):
         eps: float = 1e-4,
         directional_damping: float | None = None,
         displacement_budget_ratio: float = 0.0,
+        neighborhood_topk: int = 0,
         metric_prefix: str = "skdt",
     ) -> None:
         super().__init__()
@@ -130,12 +156,15 @@ class ScoutKernelDeltaTransportLoss(nn.Module):
                 "displacement_budget_ratio must be non-negative, got "
                 f"{displacement_budget_ratio}"
             )
+        if neighborhood_topk < 0:
+            raise ValueError(f"neighborhood_topk must be non-negative, got {neighborhood_topk}")
         self.eps = float(eps)
         self.directional_damping = float(directional_damping or eps)
         # A positive budget makes transport local to the pretraining anchor.
         # The gate is detached so the large model cannot evade it by changing
         # its displacement norm instead of improving the transported direction.
         self.displacement_budget_ratio = float(displacement_budget_ratio)
+        self.neighborhood_topk = int(neighborhood_topk)
         self.metric_prefix = str(metric_prefix).strip("_")
         if not self.metric_prefix:
             raise ValueError("metric_prefix must be non-empty")
@@ -149,6 +178,7 @@ class ScoutKernelDeltaTransportLoss(nn.Module):
         current_features: Tensor,
         anchor_features: Tensor,
         scout_delta: Tensor,
+        absolute_target: bool = False,
     ) -> tuple[Tensor, dict[str, Tensor]]:
         if current_features.shape != anchor_features.shape:
             raise ValueError(
@@ -157,10 +187,10 @@ class ScoutKernelDeltaTransportLoss(nn.Module):
             )
         current_kernel = centered_cosine_kernel(current_features, eps=self.eps)
         anchor_kernel = centered_cosine_kernel(anchor_features, eps=self.eps)
-        current_delta = current_kernel - anchor_kernel
+        current_delta = current_kernel if absolute_target else current_kernel - anchor_kernel
 
-        if scout_delta.ndim != 2 or scout_delta.shape[0] != scout_delta.shape[1]:
-            raise ValueError(f"Expected a square scout_delta, got {tuple(scout_delta.shape)}")
+        if scout_delta.ndim < 2 or scout_delta.shape[-2] != scout_delta.shape[-1]:
+            raise ValueError(f"Expected square scout_delta matrices, got {tuple(scout_delta.shape)}")
         if scout_delta.shape != current_delta.shape:
             raise ValueError(
                 "scout_delta must match the current sample kernel, got "
@@ -170,8 +200,19 @@ class ScoutKernelDeltaTransportLoss(nn.Module):
         # The scout target is a frozen calibration artifact.  Centering again
         # makes the contract robust when it was accumulated in lower precision.
         target_delta = _double_center(scout_delta.detach().float())
-        current_flat = current_delta.reshape(-1)
-        target_flat = target_delta.reshape(-1)
+        selected = _extreme_neighborhood_mask(target_delta, self.neighborhood_topk)
+        if selected is None:
+            current_flat = current_delta.reshape(-1)
+            target_flat = target_delta.reshape(-1)
+            selected_fraction = current_flat.new_ones(())
+            selected_edges = current_flat.new_tensor(float(current_flat.numel()))
+            target_energy_ratio = current_flat.new_ones(())
+        else:
+            current_flat = current_delta[selected]
+            target_flat = target_delta[selected]
+            selected_fraction = selected.float().mean()
+            selected_edges = selected.sum().to(dtype=current_flat.dtype)
+            target_energy_ratio = target_flat.norm() / target_delta.norm().clamp_min(self.eps)
         target_norm = target_flat.norm()
         current_norm = current_flat.norm()
 
@@ -185,6 +226,9 @@ class ScoutKernelDeltaTransportLoss(nn.Module):
                 self._metric_name("scout_delta_norm"): target_norm.detach(),
                 self._metric_name("relative_displacement"): zero.detach(),
                 self._metric_name("budget_gate"): zero.detach(),
+                self._metric_name("selected_fraction"): selected_fraction.detach(),
+                self._metric_name("selected_edges"): selected_edges.detach(),
+                self._metric_name("target_energy_ratio"): target_energy_ratio.detach(),
                 self._metric_name("active"): zero.detach(),
             }
             return zero, metrics
@@ -208,6 +252,9 @@ class ScoutKernelDeltaTransportLoss(nn.Module):
             self._metric_name("scout_delta_norm"): target_norm.detach(),
             self._metric_name("relative_displacement"): relative_displacement.detach(),
             self._metric_name("budget_gate"): budget_gate.detach(),
+            self._metric_name("selected_fraction"): selected_fraction.detach(),
+            self._metric_name("selected_edges"): selected_edges.detach(),
+            self._metric_name("target_energy_ratio"): target_energy_ratio.detach(),
             self._metric_name("active"): loss.new_ones(()).detach(),
         }
         return loss, metrics

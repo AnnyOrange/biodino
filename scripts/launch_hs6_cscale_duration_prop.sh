@@ -42,6 +42,7 @@ GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE:-1024}
 OFFICIAL_EPOCH_LENGTH=${OFFICIAL_EPOCH_LENGTH:-1025}
 EVAL_PERIOD=${EVAL_PERIOD:-0}
 CHECKPOINT_MAX_TO_KEEP=${CHECKPOINT_MAX_TO_KEEP:-2}
+ACTIVATION_CHECKPOINTING=${ACTIVATION_CHECKPOINTING:-false}
 
 # e15-anchored proportional schedule.
 REF_EPOCHS=${REF_EPOCHS:-15}
@@ -128,7 +129,7 @@ cmd=(
   train.wds_shuffle_buffer=50
   train.prefetch_factor="$PREFETCH_FACTOR"
   train.pin_memory=false
-  train.checkpointing=false
+  train.checkpointing="$ACTIVATION_CHECKPOINTING"
   student.in_chans=3
   teacher.in_chans=3
   student.enable_channelvit=false
@@ -207,6 +208,31 @@ export OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
 export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
 ulimit -n 65536 2>/dev/null || true
 
+eval_finished_last_ckpts() {
+  local reason=$1
+  [[ "${AUTO_EVAL:-1}" == 1 ]] || return 0
+  local worker="$REPO/scripts/run_hs6_cscale_last_eval_worker.py"
+  [[ -f "$worker" ]] || { log "skip eval ($reason): missing $worker"; return 0; }
+  log "eval after $reason (blood/tissue/cyclops, pin to this host, bs=${HS6_BATCH:-64})"
+  HS6_CODE_ROOT="$REPO" \
+  HS6_RUN_ROOT="${HS6_RUN_ROOT:-$(dirname "$OUTPUT_DIR")}" \
+  PYTHON_BIN="$PYTHON_BIN" \
+  HS6_NAME_SUBSTR="${HS6_NAME_SUBSTR:-prop15}" \
+  HS6_BATCH="${HS6_BATCH:-64}" \
+  HS6_SLOTS_PER_GPU="${HS6_SLOTS_PER_GPU:-3}" \
+  HS6_FREE_MIN_MIB="${HS6_FREE_MIN_MIB:-8000}" \
+  HS6_GPUS="${HS6_GPUS:-$GPU_GROUP}" \
+  HS6_CSCALE_EVAL_TAG="${HS6_CSCALE_EVAL_TAG:-cscale_prop15_20260904}" \
+  "$PYTHON_BIN" "$worker"
+}
+
+# Longer durations: evaluate every already-finished last ckpt before
+# starting the next train, so e2/e4 never skip the just-finished run.
+if [[ "${EVAL_BEFORE_TRAIN:-1}" == 1 && "$EPOCHS" != "1" ]]; then
+  eval_finished_last_ckpts "before e${EPOCHS} train"
+fi
+
 log "selected GPUs are idle; launching C-scale $MODEL e$EPOCHS"
 "${cmd[@]}"
 log "finished $MODEL e$EPOCHS → $OUTPUT_DIR"
+eval_finished_last_ckpts "e${EPOCHS} train"

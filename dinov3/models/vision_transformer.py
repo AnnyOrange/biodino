@@ -403,7 +403,10 @@ class DinoVisionTransformer(nn.Module):
         masks_list: List[Tensor],
         channel_ids_list: List[Tensor | None] | None = None,
         channel_valid_masks_list: List[Tensor | None] | None = None,
+        return_penultimate: bool = False,
     ) -> List[Dict[str, Tensor]]:
+        if return_penultimate and len(self.blocks) < 2:
+            raise ValueError("return_penultimate requires a backbone with at least two blocks")
         if channel_ids_list is None:
             channel_ids_list = [None for _ in x_list]
         if channel_valid_masks_list is None:
@@ -426,7 +429,8 @@ class DinoVisionTransformer(nn.Module):
             x.append(t2_x)
             rope.append(hw_tuple)
             token_valid_masks.append(token_valid_mask)
-        for _, blk in enumerate(self.blocks):
+        penultimate_x = None
+        for block_index, blk in enumerate(self.blocks):
             if self.rope_embed is not None:
                 # Generate base RoPE for single channel spatial dimensions
                 rope_sincos_list = [self.rope_embed(H=H, W=W) for H, W in rope]
@@ -461,6 +465,8 @@ class DinoVisionTransformer(nn.Module):
                 else t_x
                 for t_x, token_valid_mask in zip(x, token_valid_masks)
             ]
+            if return_penultimate and block_index == len(self.blocks) - 2:
+                penultimate_x = x
         all_x = x
         output = []
         for idx, (x, masks) in enumerate(zip(all_x, masks_list)):
@@ -478,15 +484,24 @@ class DinoVisionTransformer(nn.Module):
                 x_norm = self.norm(x)
                 x_norm_cls_reg = x_norm[:, : self.n_storage_tokens + 1]
                 x_norm_patch = x_norm[:, self.n_storage_tokens + 1 :]
-            output.append(
-                {
-                    "x_norm_clstoken": x_norm_cls_reg[:, 0],
-                    "x_storage_tokens": x_norm_cls_reg[:, 1:],
-                    "x_norm_patchtokens": x_norm_patch,
-                    "x_prenorm": x,
-                    "masks": masks,
-                }
-            )
+            result = {
+                "x_norm_clstoken": x_norm_cls_reg[:, 0],
+                "x_storage_tokens": x_norm_cls_reg[:, 1:],
+                "x_norm_patchtokens": x_norm_patch,
+                "x_prenorm": x,
+                "masks": masks,
+            }
+            if return_penultimate:
+                assert penultimate_x is not None
+                penultimate_cls_reg = penultimate_x[idx][:, : self.n_storage_tokens + 1]
+                if self.untie_global_and_local_cls_norm and self.training and idx == 1:
+                    penultimate_cls_reg = self.local_cls_norm(penultimate_cls_reg)
+                elif self.untie_cls_and_patch_norms:
+                    penultimate_cls_reg = self.cls_norm(penultimate_cls_reg)
+                else:
+                    penultimate_cls_reg = self.norm(penultimate_cls_reg)
+                result["x_norm_penultimate_clstoken"] = penultimate_cls_reg[:, 0]
+            output.append(result)
         return output
 
     def forward_features(
@@ -495,9 +510,16 @@ class DinoVisionTransformer(nn.Module):
         masks: Optional[Tensor] = None,
         channel_ids: Optional[Tensor | List[Tensor | None]] = None,
         channel_valid_mask: Optional[Tensor | List[Tensor | None]] = None,
+        return_penultimate: bool = False,
     ) -> List[Dict[str, Tensor]]:
         if isinstance(x, torch.Tensor):
-            return self.forward_features_list([x], [masks], [channel_ids], [channel_valid_mask])[0]
+            return self.forward_features_list(
+                [x],
+                [masks],
+                [channel_ids],
+                [channel_valid_mask],
+                return_penultimate=return_penultimate,
+            )[0]
         else:
             if masks is None:
                 masks = [None for _ in x]
@@ -505,7 +527,13 @@ class DinoVisionTransformer(nn.Module):
                 channel_ids = [None for _ in x]
             if channel_valid_mask is None:
                 channel_valid_mask = [None for _ in x]
-            return self.forward_features_list(x, masks, channel_ids, channel_valid_mask)
+            return self.forward_features_list(
+                x,
+                masks,
+                channel_ids,
+                channel_valid_mask,
+                return_penultimate=return_penultimate,
+            )
 
     def _get_intermediate_layers_not_chunked(
         self,
