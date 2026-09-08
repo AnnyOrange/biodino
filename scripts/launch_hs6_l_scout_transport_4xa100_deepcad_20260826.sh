@@ -19,6 +19,10 @@ MASTER_PORT=${MASTER_PORT:-31843}
 POLL_SECONDS=${POLL_SECONDS:-60}
 WAIT_FOR_GPUS=${WAIT_FOR_GPUS:-1}
 DRY_RUN=${DRY_RUN:-0}
+# Optional training checkpoint directory (for example ``.../ckpt/11274``).
+# It is hard-linked into the new run so model, EMA teacher, optimizer, and
+# schedules resume exactly while the source baseline remains untouched.
+RESUME_CHECKPOINT_DIR=${RESUME_CHECKPOINT_DIR:-}
 
 BATCH_SIZE_PER_GPU=${BATCH_SIZE_PER_GPU:-64}
 GRAD_ACCUM_STEPS=${GRAD_ACCUM_STEPS:-4}
@@ -49,8 +53,8 @@ if [[ ${#gpu_ids[@]} -ne $NPROC_PER_NODE ]]; then
   exit 2
 fi
 case "$TARGET_MODE" in
-  delta|stable_delta) ;;
-  *) echo "ERROR: full training only accepts causal target modes delta or stable_delta" >&2; exit 2 ;;
+  delta|stable_delta|shuffled_delta|shuffled_stable_delta) ;;
+  *) echo "ERROR: unsupported Scout target mode: $TARGET_MODE" >&2; exit 2 ;;
 esac
 
 [[ -x "$PYTHON_BIN" ]] || { echo "ERROR: missing Python: $PYTHON_BIN" >&2; exit 2; }
@@ -66,9 +70,27 @@ done
   exit 2
 }
 
+resume_args=(--no-resume)
+if [[ -n "$RESUME_CHECKPOINT_DIR" ]]; then
+  [[ -d "$RESUME_CHECKPOINT_DIR" ]] || {
+    echo "ERROR: missing resume checkpoint directory: $RESUME_CHECKPOINT_DIR" >&2
+    exit 2
+  }
+  [[ -s "$RESUME_CHECKPOINT_DIR/checkpoint.pth" ]] || {
+    echo "ERROR: missing resume checkpoint payload: $RESUME_CHECKPOINT_DIR/checkpoint.pth" >&2
+    exit 2
+  }
+  resume_args=()
+fi
+
 if [[ -d "$OUTPUT_DIR" && -n "$(find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
-  echo "ERROR: refusing to overwrite non-empty output: $OUTPUT_DIR" >&2
-  exit 2
+  resume_iteration=$(basename "$RESUME_CHECKPOINT_DIR")
+  initialized_checkpoint="$OUTPUT_DIR/ckpt/$resume_iteration/checkpoint.pth"
+  if [[ -z "$RESUME_CHECKPOINT_DIR" || ! -s "$initialized_checkpoint" ]]; then
+    echo "ERROR: refusing to overwrite non-empty output: $OUTPUT_DIR" >&2
+    exit 2
+  fi
+  log "reusing initialized output after a pre-step launch failure: $OUTPUT_DIR"
 fi
 
 effective_batch=$((NPROC_PER_NODE * BATCH_SIZE_PER_GPU * GRAD_ACCUM_STEPS))
@@ -87,7 +109,7 @@ cmd=(
   dinov3/train/train.py
   --config-file dinov3/configs/train/microscopy_continual_vitl16.yaml
   --output-dir "$OUTPUT_DIR"
-  --no-resume
+  "${resume_args[@]}"
   compute_precision.distributed_mode=ddp
   "train.dataset_path=$DATASET_PATH"
   train.batch_size_per_gpu="$BATCH_SIZE_PER_GPU"
@@ -153,6 +175,9 @@ log "target=$TARGET_MODE weight=$LOSS_WEIGHT scout=$SCOUT_CHECKPOINT"
 log "HS6 baseline held fixed: robust pct=1,99, bio_safe 256/112, LR=1e-4, wu=$WARMUP_EPOCHS, tw=$TEACHER_WARMUP_EPOCHS, no SIGReg"
 log "schedule=$EPOCHS x $OFFICIAL_EPOCH_LENGTH; final_ckpt=$((EPOCHS * OFFICIAL_EPOCH_LENGTH - 1))"
 log "batch=$NPROC_PER_NODE x $BATCH_SIZE_PER_GPU x accum $GRAD_ACCUM_STEPS = $effective_batch"
+if [[ -n "$RESUME_CHECKPOINT_DIR" ]]; then
+  log "resume=$RESUME_CHECKPOINT_DIR; schedules continue at iteration $(basename "$RESUME_CHECKPOINT_DIR")"
+fi
 printf 'CUDA_VISIBLE_DEVICES=%q' "$GPU_GROUP"
 printf ' %q' "${cmd[@]}"
 printf '\n'
@@ -173,6 +198,13 @@ if [[ "$WAIT_FOR_GPUS" == 1 ]]; then
 fi
 
 mkdir -p "$(dirname "$OUTPUT_DIR")"
+if [[ -n "$RESUME_CHECKPOINT_DIR" ]]; then
+  resume_iteration=$(basename "$RESUME_CHECKPOINT_DIR")
+  mkdir -p "$OUTPUT_DIR/ckpt"
+  if [[ ! -e "$OUTPUT_DIR/ckpt/$resume_iteration" ]]; then
+    cp --recursive --link "$RESUME_CHECKPOINT_DIR" "$OUTPUT_DIR/ckpt/$resume_iteration"
+  fi
+fi
 cd "$REPO"
 export PYTHONUNBUFFERED=1
 export PYTORCH_ALLOC_CONF=expandable_segments:True
