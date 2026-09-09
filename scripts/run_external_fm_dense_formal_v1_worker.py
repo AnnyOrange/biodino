@@ -35,11 +35,12 @@ def main() -> int:
     status_rows = []
     environment = os.environ.copy()
     vendor_paths = [
-        "/mnt/huawei_deepcad/benchmark_model/_vendor/external_gapfill_py311",
         "/mnt/huawei_deepcad/benchmark_model/_vendor",
         "/mnt/huawei_deepcad/benchmark_model",
         str(REPO),
     ]
+    if sys.version_info[:2] == (3, 11):
+        vendor_paths.insert(0, "/mnt/huawei_deepcad/benchmark_model/_vendor/external_gapfill_py311")
     environment["PYTHONPATH"] = os.pathsep.join(vendor_paths + [environment.get("PYTHONPATH", "")])
     environment["KERAS_BACKEND"] = "torch"
     environment["PYTHONUNBUFFERED"] = "1"
