@@ -32,6 +32,12 @@ SUPPORTED_DATASETS = (
     "tissuenet",
 )
 CHANNEL_POLICIES = ("auto", "native", "first3", "compact3", "zerofill3", "mean3", "sample3_tta")
+CONIC_FORMAL_SPLIT = "official-baseline-fold0-nested-v1"
+PANNUKE_FORMAL_SPLITS = (
+    "pannuke-fold1-train-fold2-val-fold3-test",
+    "pannuke-fold2-train-fold1-val-fold3-test",
+    "pannuke-fold3-train-fold2-val-fold1-test",
+)
 
 DEFAULT_IMG_SIZE_BY_DATASET = {
     "bbbc038": 512,
@@ -111,6 +117,7 @@ class DatasetRunJob:
     output_run_name: str
     probe_class_weight_mode: str
     probe_class_weight_beta: float
+    dataset_split_protocol: str
 
 
 def _run_cmd(cmd: List[str], env: Dict[str, str], dry_run: bool) -> None:
@@ -237,6 +244,27 @@ def _channel_policy_cache_tag(channel_policy: str, channel_tta_samples: int) -> 
     if channel_policy == "sample3_tta":
         return f"_cpsample3tta{channel_tta_samples}"
     return f"_cp{channel_policy}"
+
+
+def _split_protocol_cache_tag(split_protocol: str) -> str:
+    if split_protocol == "legacy":
+        return ""
+    safe = "".join(ch if ch.isalnum() else "_" for ch in split_protocol).strip("_")
+    return f"_sp{safe}"
+
+
+def _dataset_split_protocols(dataset: str, requested: str) -> Tuple[str, ...]:
+    if requested == "formal-v1":
+        if dataset == "pannuke":
+            return PANNUKE_FORMAL_SPLITS
+        if dataset == "conic":
+            return (CONIC_FORMAL_SPLIT,)
+        return ("legacy",)
+    if requested in PANNUKE_FORMAL_SPLITS and dataset != "pannuke":
+        raise ValueError(f"{requested} is only valid for PanNuke")
+    if requested == CONIC_FORMAL_SPLIT and dataset != "conic":
+        raise ValueError(f"{requested} is only valid for CoNIC")
+    return (requested,)
 
 
 def _infer_arch_depth(train_config: Path) -> Tuple[str, int]:
@@ -383,6 +411,7 @@ def _resolve_dataset_jobs(
     resize_mode: str,
     probe_class_weight_mode: str,
     probe_class_weight_beta: float,
+    dataset_split_protocol: str,
 ) -> List[DatasetRunJob]:
     if protocol == "manual":
         layer_jobs = _resolve_layer_jobs(
@@ -399,20 +428,23 @@ def _resolve_dataset_jobs(
                 resize_mode=resize_mode,
             )
             for dataset in datasets:
-                jobs.append(
-                    DatasetRunJob(
+                for split_protocol in _dataset_split_protocols(dataset, dataset_split_protocol):
+                    split_tag = _split_protocol_cache_tag(split_protocol)
+                    jobs.append(
+                        DatasetRunJob(
                         dataset=dataset,
                         feature_img_size_arg=feature_img_size,
                         img_size=_resolve_img_size(dataset, feature_img_size),
                         resize_mode=resize_mode,
                         layers=layers,
                         layers_tag=layers_tag,
-                        cache_run_name=effective_run_name,
-                        output_run_name=effective_run_name,
+                        cache_run_name=f"{effective_run_name}{split_tag}",
+                        output_run_name=f"{effective_run_name}{split_tag}",
                         probe_class_weight_mode=probe_class_weight_mode,
                         probe_class_weight_beta=probe_class_weight_beta,
+                        dataset_split_protocol=split_protocol,
+                        )
                     )
-                )
         return jobs
 
     if protocol != "best":
@@ -450,20 +482,23 @@ def _resolve_dataset_jobs(
             img_size=img_size,
             class_weight_mode=job_class_weight_mode,
         )
-        jobs.append(
-            DatasetRunJob(
+        for split_protocol in _dataset_split_protocols(dataset, dataset_split_protocol):
+            split_tag = _split_protocol_cache_tag(split_protocol)
+            jobs.append(
+                DatasetRunJob(
                 dataset=dataset,
                 feature_img_size_arg=img_size,
                 img_size=img_size,
                 resize_mode=job_resize_mode,
                 layers=layers,
                 layers_tag=layers_tag,
-                cache_run_name=cache_run_name,
-                output_run_name=output_run_name,
+                cache_run_name=f"{cache_run_name}{split_tag}",
+                output_run_name=f"{output_run_name}{split_tag}",
                 probe_class_weight_mode=job_class_weight_mode,
                 probe_class_weight_beta=probe_class_weight_beta,
+                dataset_split_protocol=split_protocol,
+                )
             )
-        )
 
     logger.info(
         "Best protocol arch=%s depth=%d resolved even4=%s",
@@ -548,6 +583,13 @@ def main() -> None:
         default="manual",
         help="manual uses the CLI feature/layer settings. best applies the "
              "dataset-specific validation-best bio-seg protocol.",
+    )
+    parser.add_argument(
+        "--dataset-split-protocol",
+        default="formal-v1",
+        choices=["formal-v1", "legacy", CONIC_FORMAL_SPLIT, *PANNUKE_FORMAL_SPLITS],
+        help="Dataset partition contract. formal-v1 expands PanNuke into all three "
+             "published fold rotations and uses the source-disjoint CoNIC baseline split.",
     )
 
     # Feature extraction settings
@@ -685,6 +727,7 @@ def main() -> None:
             resize_mode=args.resize_mode,
             probe_class_weight_mode=args.probe_class_weight_mode,
             probe_class_weight_beta=args.probe_class_weight_beta,
+            dataset_split_protocol=args.dataset_split_protocol,
         )
     except ValueError as err:
         parser.error(str(err))
@@ -732,6 +775,7 @@ def main() -> None:
             (
                 f"{job.dataset}:s{job.img_size},{job.resize_mode},"
                 f"{job.layers_tag},cw={job.probe_class_weight_mode}"
+                f",split={job.dataset_split_protocol}"
             )
             for job in dataset_jobs
         ],
@@ -822,6 +866,8 @@ def main() -> None:
                         str(cache_dir),
                         "--split",
                         split,
+                        "--dataset-split-protocol",
+                        job.dataset_split_protocol,
                         "--img-size",
                         str(job.feature_img_size_arg),
                         "--resize-mode",
@@ -850,9 +896,10 @@ def main() -> None:
             resize_tag = _resize_cache_tag(job.resize_mode)
             mc_tag = "_mc" if args.multichannel else ""   # matches feature_extractor out_path suffix
             channel_file_tag = _channel_policy_cache_tag(args.channel_policy, args.channel_tta_samples)
-            train_cache = cache_dir / f"{dataset}_train_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}.npz"
-            val_cache = cache_dir / f"{dataset}_val_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}.npz"
-            test_cache = cache_dir / f"{dataset}_test_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}.npz"
+            split_file_tag = _split_protocol_cache_tag(job.dataset_split_protocol)
+            train_cache = cache_dir / f"{dataset}_train_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}{split_file_tag}.npz"
+            val_cache = cache_dir / f"{dataset}_val_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}{split_file_tag}.npz"
+            test_cache = cache_dir / f"{dataset}_test_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}{split_file_tag}.npz"
 
             if not args.dry_run:
                 required_caches = (train_cache, val_cache) if args.skip_test_eval else (train_cache, val_cache, test_cache)
