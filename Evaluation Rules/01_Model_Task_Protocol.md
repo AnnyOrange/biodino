@@ -96,3 +96,9 @@
 - probe 类型和 probe 超参数相同；
 - result 无 `error`，样本数符合 split manifest；
 - 聚合时每个模型包含完全相同的数据集集合；缺项不能静默跳过。
+
+## 8. External FM dense addendum
+
+PanNuke/CoNIC 的 external-FM 比较使用同一 dataset split、256 stretch、feature batch 32、probe batch 32、50 epochs、eval every 50、seed 0；CoNIC 同样使用 `sqrt_inverse` class weighting。固定位置网格的 ViT 在 256 输入上显式插值 spatial positional embedding，禁止悄悄退回 model-native 224 crop。
+
+外部架构没有与 DINO block `[4,11,17,23]` 一一对应的中间层定义，因此统一使用各模型最后一个 spatial dense map，并在结果中记录 `feature_layers=external-final-dense-map`。该表属于 external-FM dense comparison，不能伪称为 DINO even4 layer ablation。正式模型集合固定为：`dinov2 mae siglip2 bioclip cytoself jump_cp cytoimagenet pe uni conch phikon2 virchow2 gigapath hoptimus0`。某模型在 24 GiB、batch 32 下 OOM 时记录 `FAILED_RESOURCE`，禁止私自降低 batch 后混入主表。
