@@ -102,3 +102,5 @@
 PanNuke/CoNIC 的 external-FM 比较使用同一 dataset split、256 stretch、feature batch 32、probe batch 32、50 epochs、eval every 50、seed 0；CoNIC 同样使用 `sqrt_inverse` class weighting。固定位置网格的 ViT 在 256 输入上显式插值 spatial positional embedding，禁止悄悄退回 model-native 224 crop。
 
 外部架构没有与 DINO block `[4,11,17,23]` 一一对应的中间层定义，因此统一使用各模型最后一个 spatial dense map，并在结果中记录 `feature_layers=external-final-dense-map`。该表属于 external-FM dense comparison，不能伪称为 DINO even4 layer ablation。正式模型集合固定为：`dinov2 mae siglip2 bioclip cytoself jump_cp cytoimagenet pe uni conch phikon2 virchow2 gigapath hoptimus0`。某模型在 24 GiB、batch 32 下 OOM 时记录 `FAILED_RESOURCE`，禁止私自降低 batch 后混入主表。
+
+CytoImageNet 的公开 EfficientNet-B0 wrapper 原本将输入张量固定为 `224x224`。正式评测须以完全相同的 no-top 架构和原始权重重建 `256x256` 输入接口，禁止将数据暗中缩回 224。对于 patch size 不能整除 256 的 ViT，仅允许按通用规则吸附到最近的合法 patch grid，并在 manifest 中记录实际 encoder input size。

@@ -38,12 +38,16 @@ MODELS = (
 
 
 def _load_dense_module():
-    sys.path[:0] = [
+    vendor_paths = [
         str(REPO),
         str(BENCHMARK_MODEL_ROOT),
         str(BENCHMARK_MODEL_ROOT / "_vendor"),
-        str(BENCHMARK_MODEL_ROOT / "_vendor" / "external_gapfill_py311"),
     ]
+    # external_gapfill_py311 contains compiled NumPy wheels.  Loading it from
+    # a Python 3.10 CPU node makes even `import numpy` fail with an ABI error.
+    if sys.version_info[:2] == (3, 11):
+        vendor_paths.append(str(BENCHMARK_MODEL_ROOT / "_vendor" / "external_gapfill_py311"))
+    sys.path[:0] = vendor_paths
     spec = importlib.util.spec_from_file_location("formal_v1_external_dense", EXTERNAL_SCRIPT)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load {EXTERNAL_SCRIPT}")
@@ -104,6 +108,25 @@ def _install_formal_adapters(dense, dataset: str, split_protocol: str) -> None:
     parent = dense.DenseFeatureExtractor
 
     class FormalDenseFeatureExtractor(parent):
+        def _init_cytoimagenet(self):
+            # The released checkpoint is convolutional, but the legacy wrapper
+            # instantiated it with a fixed 224x224 input tensor.  Rebuilding the
+            # identical no-top EfficientNet at the formal 256px resolution keeps
+            # every learned weight unchanged and avoids a hidden 256 -> 224 resize.
+            os.environ.setdefault("KERAS_BACKEND", "torch")
+            from keras.applications.efficientnet import EfficientNetB0
+
+            self.model = EfficientNetB0(
+                include_top=False,
+                weights=None,
+                pooling=None,
+                input_shape=(256, 256, 3),
+            )
+            self.model.load_weights(self.spec.path / "efficientnetb0_weights-notop.h5")
+            self.model.to(self.device).eval()
+            self.input_size = 256
+            self.patch_size = 32
+
         @torch.inference_mode()
         def __call__(self, imgs_01: torch.Tensor) -> torch.Tensor:
             # Fixed-grid OpenCLIP towers need explicit positional interpolation
