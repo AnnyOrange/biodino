@@ -36,7 +36,6 @@ DEFAULT_CLASSIFICATION_DATASETS = [
     "midog25-atypical",
     "pcam",
     "nct-crc-he",
-    "lc25000",
     "chammi-allen-task1",
     "chammi-allen-task2",
     "chammi-cp-task1",
@@ -47,8 +46,6 @@ DEFAULT_CLASSIFICATION_DATASETS = [
 ]
 DEFAULT_REGRESSION_DATASETS = ["bbbc013", "bbbc005", "conic-cell-count", "livecell-cell-count"]
 DEFAULT_RETRIEVAL_DATASETS = [
-    "lc25000",
-    "nct-crc-he-100",
     "nct-crc-he-1k",
     "crc-val-he-7k",
     "hpa-subcellular",
@@ -297,6 +294,7 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
                         "--cache-root", str(seg_cache),
                         "--run-name", args.run_name,
                         "--protocol", args.segmentation_protocol,
+                        "--dataset-split-protocol", args.segmentation_split_protocol,
                         "--layer-preset", args.layer_preset,
                         "--feature-batch-size", str(args.seg_feature_batch_size),
                         "--feature-num-workers", str(args.seg_feature_num_workers),
@@ -400,6 +398,7 @@ def build_jobs(args, discovered: Dict[int, Path], selected_iters: Sequence[int],
                     "--num-workers", str(args.num_workers),
                     "--max-samples-per-split", smoke_cap,
                     "--channel-policy", args.detection_channel_policy,
+                    "--conic-split-protocol", args.conic_split_protocol,
                 ]
                 jobs.append(Job("detection", ds, ckpt_id, next(gpu_iter), cmd, od))
 
@@ -519,6 +518,11 @@ def parse_args(argv=None):
     parser.add_argument("--seed", type=int, default=0)
     # segmentation / detection dense linear probe (repo code in bio_segmentation / bio_detection)
     parser.add_argument("--segmentation-protocol", default="best", choices=["manual", "best"])
+    parser.add_argument(
+        "--segmentation-split-protocol",
+        default="formal-v1",
+        help="Dense dataset split contract; formal-v1 uses CoNIC source-level holdout and all PanNuke fold rotations.",
+    )
     parser.add_argument("--segmentation-multichannel", action="store_true", help="Pass --multichannel to the segmentation linear-probe pipeline.")
     parser.add_argument(
         "--segmentation-channel-policy",
@@ -547,6 +551,12 @@ def parse_args(argv=None):
     parser.add_argument("--det-epochs", type=int, default=5)
     parser.add_argument("--det-batch-size", type=int, default=8)
     parser.add_argument("--detection-channel-policy", default="auto", choices=CHANNEL_POLICIES)
+    parser.add_argument(
+        "--conic-split-protocol",
+        default="official-baseline-fold0-nested-v1",
+        choices=["official-baseline-fold0-nested-v1", "legacy-random"],
+        help="CoNIC source partition for detection; formal runs must use the official-baseline outer split.",
+    )
     return parser.parse_args(argv)
 
 

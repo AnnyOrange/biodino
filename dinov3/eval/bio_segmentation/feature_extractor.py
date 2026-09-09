@@ -114,6 +114,14 @@ def _channel_policy_cache_tag(channel_policy: str, channel_tta_samples: int) -> 
     return f"_cp{channel_policy}"
 
 
+def _split_protocol_cache_tag(split_protocol: str) -> str:
+    """Keep legacy cache names only for the explicitly requested legacy path."""
+    if split_protocol == "legacy":
+        return ""
+    safe = "".join(ch if ch.isalnum() else "_" for ch in split_protocol).strip("_")
+    return f"_sp{safe}"
+
+
 # ============================================================================
 # Feature extraction
 # ============================================================================
@@ -678,6 +686,7 @@ def _build_dataset(
     rgb_std=MICRO_RGB_STD,
     do_normalize: bool = True,
     multichannel: bool = False,
+    dataset_split_protocol: str = "legacy",
 ) -> Dataset:
     """
     Build a dataset instance from the registry.
@@ -696,9 +705,9 @@ def _build_dataset(
         'array' : dataset-specific constructor arguments
 
     Split availability per dataset:
-        train / val / test : LIVECell, TissueNet, CoNIC (auto-split)
+        train / val / test : LIVECell, TissueNet, CoNIC
         train / val* / test: BBBC038, MoNuSeg  (*auto val subset from train)
-        train / val* / test: PanNuke  (folds 1+2=train, fold 3=val+test)
+        train / val / test : PanNuke formal three-fold protocols
     """
     from .datasets import DATASET_REGISTRY
 
@@ -740,7 +749,16 @@ def _build_dataset(
 
     elif loader_type == 'array':
         if dataset_name == 'conic':
-            images_npy, labels_npy, indices = get_paths_fn(data_root, split=split)
+            conic_protocol = (
+                'legacy-random'
+                if dataset_split_protocol == 'legacy'
+                else dataset_split_protocol
+            )
+            images_npy, labels_npy, indices = get_paths_fn(
+                data_root,
+                split=split,
+                split_protocol=conic_protocol,
+            )
             return DatasetClass(
                 images_npy,
                 labels_npy,
@@ -754,7 +772,26 @@ def _build_dataset(
             )
         elif dataset_name == 'pannuke':
             fold_dirs = get_paths_fn(data_root)
-            split_map = {'train': [1, 2], 'val': [3], 'test': [3]}
+            pannuke_protocols = {
+                # Historical path retained only for old cache reproduction.
+                'legacy': {'train': [1, 2], 'val': [3], 'test': [3]},
+                # PanNuke's published three mutually exclusive experiments.
+                'pannuke-fold1-train-fold2-val-fold3-test': {
+                    'train': [1], 'val': [2], 'test': [3],
+                },
+                'pannuke-fold2-train-fold1-val-fold3-test': {
+                    'train': [2], 'val': [1], 'test': [3],
+                },
+                'pannuke-fold3-train-fold2-val-fold1-test': {
+                    'train': [3], 'val': [2], 'test': [1],
+                },
+            }
+            if dataset_split_protocol not in pannuke_protocols:
+                raise ValueError(
+                    f"Unsupported PanNuke dataset_split_protocol={dataset_split_protocol!r}; "
+                    f"choices={list(pannuke_protocols)}"
+                )
+            split_map = pannuke_protocols[dataset_split_protocol]
             folds = split_map.get(split, [1, 2, 3])
             return DatasetClass(
                 fold_dirs,
@@ -806,6 +843,13 @@ def main():
     parser.add_argument('--split', default='train',
                         choices=['train', 'val', 'test'],
                         help='Dataset split to process (default: train)')
+    parser.add_argument(
+        '--dataset-split-protocol',
+        default='legacy',
+        help='Explicit dataset partition protocol. Formal evaluation passes a '
+             'source-disjoint CoNIC protocol or one PanNuke fold rotation; legacy '
+             'exists only to reproduce historical caches.',
+    )
     parser.add_argument('--img-size',   type=int, default=0,
                         help='Image size for resizing to a square (H=W). '
                              'Use 0 (default) to apply the per-dataset canonical '
@@ -936,6 +980,7 @@ def main():
         img_size,
         resize_mode=args.resize_mode,
         multichannel=args.multichannel,
+        dataset_split_protocol=args.dataset_split_protocol,
     )
     logger.info(f"Dataset size: {len(dataset)}")
     if args.multichannel:
@@ -974,10 +1019,12 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     mc_tag = "_mc" if args.multichannel else ""
     channel_tag = _channel_policy_cache_tag(args.channel_policy, args.channel_tta_samples)
+    split_protocol_tag = _split_protocol_cache_tag(args.dataset_split_protocol)
     out_path = os.path.join(
         args.output_dir,
         f"{args.dataset}_{args.split}_{cfg_tag}_{layers_tag}"
-        f"{_resize_cache_tag(args.resize_mode)}_s{img_size}{mc_tag}{channel_tag}.npz"
+        f"{_resize_cache_tag(args.resize_mode)}_s{img_size}{mc_tag}{channel_tag}"
+        f"{split_protocol_tag}.npz"
     )
     n_layers_scalar = (len(layers_to_extract) if isinstance(layers_to_extract, list)
                        else layers_to_extract)

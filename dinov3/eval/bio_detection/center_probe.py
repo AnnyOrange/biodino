@@ -143,6 +143,7 @@ def build_center_dataset(
     image_size: int,
     max_samples: int,
     seed: int,
+    conic_split_protocol: str = "official-baseline-fold0-nested-v1",
 ) -> Dataset:
     root = Path(benchmark_root) / "segmentation"
     if dataset == "livecell":
@@ -163,7 +164,11 @@ def build_center_dataset(
             do_normalize=False,
         )
     elif dataset == "conic":
-        images_npy, labels_npy, indices = get_conic_paths(str(root / "conic/extracted"), split=split)
+        images_npy, labels_npy, indices = get_conic_paths(
+            str(root / "conic/extracted"),
+            split=split,
+            split_protocol=conic_split_protocol,
+        )
         base = CoNICDataset(
             images_npy,
             labels_npy,
@@ -252,6 +257,7 @@ def run_bio_detection_eval(
     channel_policy: str,
     max_samples_per_split: int,
     seed: int,
+    conic_split_protocol: str = "official-baseline-fold0-nested-v1",
 ) -> Dict[str, float | str | int]:
     os.makedirs(output_dir, exist_ok=True)
     dataset = dataset.lower()
@@ -267,13 +273,16 @@ def run_bio_detection_eval(
         channel_policy=channel_policy,
     ).cuda().eval()
     train_ds = build_center_dataset(
-        dataset, benchmark_root, "train", image_size, max_samples_per_split, seed
+        dataset, benchmark_root, "train", image_size, max_samples_per_split, seed,
+        conic_split_protocol,
     )
     val_ds = build_center_dataset(
-        dataset, benchmark_root, "val", image_size, max_samples_per_split, seed
+        dataset, benchmark_root, "val", image_size, max_samples_per_split, seed,
+        conic_split_protocol,
     )
     test_ds = build_center_dataset(
-        dataset, benchmark_root, "test", image_size, max_samples_per_split, seed
+        dataset, benchmark_root, "test", image_size, max_samples_per_split, seed,
+        conic_split_protocol,
     )
     train_generator = torch.Generator().manual_seed(seed)
     train_loader = DataLoader(
@@ -321,6 +330,7 @@ def run_bio_detection_eval(
         "batch_size": batch_size,
         "seed": seed,
         "pos_weight": float(pos_weight.item()),
+        "conic_split_protocol": conic_split_protocol if dataset == "conic" else "not-applicable",
     }
     results.update({f"val_{k}": v for k, v in val_metrics.items()})
     results.update({f"test_{k}": v for k, v in test_metrics.items()})
@@ -357,6 +367,11 @@ def parse_args(argv=None):
     parser.add_argument("--channel-policy", default="auto", choices=["auto", "native", "first3"])
     parser.add_argument("--max-samples-per-split", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--conic-split-protocol",
+        default="official-baseline-fold0-nested-v1",
+        choices=["official-baseline-fold0-nested-v1", "legacy-random"],
+    )
     return parser.parse_args(argv)
 
 
@@ -381,6 +396,7 @@ def main(argv=None):
         channel_policy=args.channel_policy,
         max_samples_per_split=args.max_samples_per_split,
         seed=args.seed,
+        conic_split_protocol=args.conic_split_protocol,
     )
 
 

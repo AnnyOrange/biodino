@@ -26,7 +26,10 @@ Usage:
     )
 """
 
+import csv
+import glob
 import logging
+import os
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -40,6 +43,7 @@ from .base import resize_image_and_masks
 logger = logging.getLogger(__name__)
 
 NUM_CLASSES = 7          # 0=bg, 1-6 = cell types
+FORMAL_SPLIT_PROTOCOL = 'official-baseline-fold0-nested-v1'
 CLASS_NAMES = [
     'background', 'neutrophil', 'epithelial',
     'lymphocyte', 'plasma_cell', 'eosinophil', 'connective',
@@ -157,12 +161,20 @@ def get_conic_paths(
     train_ratio: float = 0.8,
     val_ratio:   float = 0.1,
     seed: int = 42,
+    split_protocol: str = 'legacy-random',
 ) -> Tuple[str, str, List[int]]:
     """
     Return (images_npy_path, labels_npy_path, indices) for the requested split.
 
-    Since CoNIC has no official train/val split file, we do a random 80/10/10 split.
-    If an ``indices_<split>.npy`` file exists in data_root, we use it instead.
+    ``official-baseline-fold0-nested-v1`` reproduces the public CoNIC baseline's
+    source-level, cohort-stratified 80/20 split (seed 5, fold 0), then makes a
+    fixed 87.5/12.5 split inside the 80% development-train sources.  The result
+    is approximately 70/10/20 and, critically, patches from one source image
+    never cross train/val/test.  The challenge test labels remain hidden, so the
+    20% partition is a public development holdout rather than the challenge test.
+
+    ``legacy-random`` retains the historical random patch-level 80/10/10 path
+    only for reading old experiments.  It must not be used for formal results.
 
     Args:
         data_root   : directory containing images.npy and labels.npy
@@ -174,12 +186,9 @@ def get_conic_paths(
     Returns:
         (images_npy, labels_npy, indices)
     """
-    import os, glob as _glob
-    EXTS = ('*.npy',)
-
     # Locate images.npy / labels.npy (may be in a sub-directory after extraction)
     def _find(root, name):
-        cands = sorted(_glob.glob(os.path.join(root, '**', name), recursive=True))
+        cands = sorted(glob.glob(os.path.join(root, '**', name), recursive=True))
         return cands[0] if cands else None
 
     images_npy = _find(data_root, 'images.npy')
@@ -189,7 +198,33 @@ def get_conic_paths(
             f"Cannot find images.npy or labels.npy under {data_root}"
         )
 
-    # Check for pre-saved index files
+    if split not in {'train', 'val', 'test'}:
+        raise ValueError(f"Unknown split '{split}'. Choose from 'train', 'val', 'test'.")
+
+    if split_protocol == FORMAL_SPLIT_PROTOCOL:
+        patch_info_path = _find(data_root, 'patch_info.csv')
+        if patch_info_path is None:
+            raise FileNotFoundError(
+                f"{FORMAL_SPLIT_PROTOCOL} requires patch_info.csv under {data_root}"
+            )
+        indices_by_split = _official_baseline_nested_indices(patch_info_path)
+        indices = indices_by_split[split]
+        logger.info(
+            "[CoNIC %s] protocol=%s samples=%d patch_info=%s",
+            split,
+            split_protocol,
+            len(indices),
+            patch_info_path,
+        )
+        return images_npy, labels_npy, indices
+
+    if split_protocol != 'legacy-random':
+        raise ValueError(
+            f"Unknown CoNIC split_protocol={split_protocol!r}; choices are "
+            f"'legacy-random' and {FORMAL_SPLIT_PROTOCOL!r}."
+        )
+
+    # Check for pre-saved legacy random index files
     idx_file = os.path.join(data_root, f'indices_{split}.npy')
     if os.path.exists(idx_file):
         indices = np.load(idx_file).tolist()
@@ -209,11 +244,72 @@ def get_conic_paths(
         'val':   perm[n_train:n_train + n_val].tolist(),
         'test':  perm[n_train + n_val:].tolist(),
     }
-    if split not in split_indices:
-        raise ValueError(f"Unknown split '{split}'. Choose from 'train', 'val', 'test'.")
-
     indices = split_indices[split]
     # Save for reproducibility
     np.save(os.path.join(data_root, f'indices_{split}.npy'), np.array(indices))
     logger.info(f"[CoNIC {split}] {len(indices)}/{total} samples")
     return images_npy, labels_npy, indices
+
+
+def _official_baseline_nested_indices(patch_info_path: str) -> dict[str, List[int]]:
+    """Return deterministic source-disjoint CoNIC development partitions.
+
+    The outer split is an exact implementation of the official CoNIC baseline
+    ``generate_split.py``: source id is the prefix before ``-``, cohort is the
+    prefix before ``_``, StratifiedShuffleSplit has 10 folds, train_size=.8,
+    test_size=.2 and random_state=5, and fold 0 is selected.  A nested split of
+    the outer training sources creates validation data without touching the
+    outer holdout.
+    """
+    from sklearn.model_selection import StratifiedShuffleSplit
+
+    patch_names: List[str] = []
+    with open(patch_info_path, newline='') as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames:
+            raise ValueError(f"Empty CoNIC patch_info.csv: {patch_info_path}")
+        column = 'patch_info' if 'patch_info' in reader.fieldnames else reader.fieldnames[0]
+        patch_names = [str(row[column]).strip() for row in reader if str(row[column]).strip()]
+    if not patch_names:
+        raise ValueError(f"No patch identifiers in {patch_info_path}")
+
+    image_sources = np.asarray([name.split('-')[0] for name in patch_names])
+    unique_sources = np.asarray(sorted(set(image_sources.tolist())))
+    cohorts = np.asarray([source.split('_')[0] for source in unique_sources])
+
+    outer = StratifiedShuffleSplit(
+        n_splits=10,
+        train_size=0.8,
+        test_size=0.2,
+        random_state=5,
+    )
+    outer_train_pos, outer_test_pos = next(outer.split(unique_sources, cohorts))
+    outer_train_sources = unique_sources[outer_train_pos]
+    test_sources = unique_sources[outer_test_pos]
+
+    nested_cohorts = np.asarray([source.split('_')[0] for source in outer_train_sources])
+    nested = StratifiedShuffleSplit(
+        n_splits=1,
+        train_size=0.875,
+        test_size=0.125,
+        random_state=5,
+    )
+    train_pos, val_pos = next(nested.split(outer_train_sources, nested_cohorts))
+    train_sources = set(outer_train_sources[train_pos].tolist())
+    val_sources = set(outer_train_sources[val_pos].tolist())
+    test_sources_set = set(test_sources.tolist())
+
+    if train_sources & val_sources or train_sources & test_sources_set or val_sources & test_sources_set:
+        raise AssertionError("CoNIC source leakage detected while constructing formal split")
+
+    result = {'train': [], 'val': [], 'test': []}
+    for idx, source in enumerate(image_sources.tolist()):
+        if source in train_sources:
+            result['train'].append(idx)
+        elif source in val_sources:
+            result['val'].append(idx)
+        elif source in test_sources_set:
+            result['test'].append(idx)
+        else:
+            raise AssertionError(f"Unassigned CoNIC source: {source}")
+    return result
