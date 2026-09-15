@@ -186,6 +186,13 @@ def _build_raw_loss_static_fields(cfg, accum_steps, real_global_batch_size, effe
         "official_epoch_length": int(cfg.train.OFFICIAL_EPOCH_LENGTH),
         "patch_tokens_per_image_estimate": patch_tokens_per_image,
         "controlled_data_stream": bool(getattr(cfg.train, "wds_deterministic_resampling", False)),
+        "logical_start_iteration": int(getattr(cfg.train, "start_iteration_override", 0) or 0),
+        "optimizer_state_initialization": (
+            "fresh_from_teacher"
+            if getattr(cfg.train, "start_iteration_override", None) is not None
+            else "checkpoint_or_scratch"
+        ),
+        "model_initialization_checkpoint": str(cfg.student.resume_from_teacher_chkpt or ""),
     }
     return fields
 
@@ -708,6 +715,23 @@ def do_train(cfg, model, resume=False):
                 process_group=checkpoint_pg,
             )
             + 1
+        )
+    configured_start_iter = getattr(cfg.train, "start_iteration_override", None)
+    if configured_start_iter is not None:
+        if resume:
+            raise ValueError("train.start_iteration_override requires --no-resume")
+        configured_start_iter = int(configured_start_iter)
+        if configured_start_iter < 0:
+            raise ValueError(
+                "train.start_iteration_override must be non-negative, "
+                f"got {configured_start_iter}"
+            )
+        start_iter = configured_start_iter
+        logger.warning(
+            "Starting at logical iteration %d with freshly initialized optimizer state; "
+            "model initialization provenance is %s",
+            start_iter,
+            cfg.student.resume_from_teacher_chkpt or "random",
         )
     OFFICIAL_EPOCH_LENGTH = cfg.train.OFFICIAL_EPOCH_LENGTH
     max_iter = cfg.optim.epochs * OFFICIAL_EPOCH_LENGTH
