@@ -5,7 +5,7 @@ from dinov3.loss.conditional_morphology_graph_loss import (
     ConditionalMorphologyGraphLoss,
     ConditionalMorphologyGraphWeights,
 )
-from dinov3.loss.nested_channel_innovation_loss import ConditionalFeaturePredictor
+from dinov3.loss.conditional_morphology_graph_loss import ConditionalFeaturePredictor
 
 
 def _predictor(dim: int) -> ConditionalFeaturePredictor:

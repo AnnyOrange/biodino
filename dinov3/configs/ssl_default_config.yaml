@@ -66,37 +66,6 @@ channel_subset:
   enabled: false
   min_channels: 1
   max_channels: 3
-nested_channel_innovation:
-  # Keep the main SSL objective full-channel symmetric. An auxiliary subset
-  # pass estimates the subset-predictable component with detached regression;
-  # only the residual innovation losses update the full-channel backbone.
-  enabled: false
-  # The conditional residual is defined only when F and S are encoded from
-  # the same observation. ``masked_shared`` uses the main iBOT observation
-  # on both channel views. ``unmasked_shared`` remains a valid ablation, and
-  # ``legacy_mask_mismatch`` is retained solely to reproduce older screens.
-  observation_protocol: masked_shared # unmasked_shared | masked_shared | legacy_mask_mismatch
-  min_channels: 1
-  max_channels: 3
-  loss_weight: 0.1
-  predictor_hidden_dim: 0  # 0 selects 2 * backbone embed_dim
-  predictor_lr_multiplier: 10.0
-  stop_gradient: true
-  # Recompute only the differentiable subset branch in the no-firewall
-  # ablation. This preserves its objective while avoiding an FSDP-only test.
-  checkpoint_subset_forward: false
-  checkpoint_full_forward: false
-  predictor_loss_weight: 1.0
-  invariance_loss_weight: 1.0
-  variance_loss_weight: 1.0
-  orthogonality_loss_weight: 1.0
-  min_std: 0.1
-  # A second conditional step S subset M subset F turns the residual into
-  # adjacent martingale differences rather than one undifferentiated F|S gap.
-  martingale_enabled: false
-  martingale_lower_loss_weight: 1.0
-  martingale_cross_orthogonality_weight: 1.0
-  martingale_checkpoint_middle_forward: true
 conditional_morphology_graph:
   # Use an EMA teacher's local patch graph only on edges that cannot be
   # predicted from a strict channel subset. This preserves extra-channel
@@ -128,21 +97,6 @@ conditional_morphology_graph:
   max_edge_weight: 4.0
   huber_beta: 0.05
   gate_mode: conditional  # conditional or uniform (density-matched control)
-nested_resolution_innovation:
-  # Decompose a full-resolution representation into the component predictable
-  # from a nested low-pass view and a non-collapsed scale-specific innovation.
-  enabled: false
-  downsample_factor: 2
-  feature_mode: cls_patch_mean  # cls or cls_patch_mean
-  loss_weight: 0.1
-  predictor_hidden_dim: 0
-  predictor_lr_multiplier: 10.0
-  stop_gradient: true
-  predictor_loss_weight: 1.0
-  invariance_loss_weight: 1.0
-  variance_loss_weight: 1.0
-  orthogonality_loss_weight: 1.0
-  min_std: 0.25
 acquisition_orbit_deflation:
   # Restrict only the newly learned displacement that lies along a frozen
   # acquisition nuisance orbit, not the whole pretrained representation.
@@ -322,8 +276,7 @@ student:
   untie_global_and_local_cls_norm: false  # If true, use separate norms for local and global crop CLS token during training
   in_chans: 3
   enable_channelvit: false
-  stem_type: null  # null/"auto" = standard PatchEmbed or enable_channelvit; "dualroute" = hard RGB/pool switch; "residual_mc" = RGB base + ch4+ residual; "residual_mc_v2" = repeat low-channel RGB fill + residual
-  residual_mc_extra_scale_init: 0.001
+  stem_type: null  # null/"auto" = standard PatchEmbed or enable_channelvit; "dualroute" = hard RGB/pool switch
   pos_embed_type: rope
   pos_embed_rope_base: 100.0
   pos_embed_rope_min_period: null
@@ -348,7 +301,6 @@ teacher:
   in_chans: 3
   enable_channelvit: false
   stem_type: null
-  residual_mc_extra_scale_init: 0.001
 distillation:  # teacher
   enabled: false
   full_cfg_path: ""

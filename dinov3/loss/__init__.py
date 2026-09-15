@@ -17,13 +17,6 @@ from .acquisition_tangent_projection import (
     rank_matched_random_tangent_basis,
     shift_tangent_correspondence,
 )
-from .nested_channel_innovation_loss import (
-    ConditionalFeaturePredictor,
-    NestedChannelInnovationLoss,
-    NestedChannelInnovationWeights,
-    conditional_innovation_residual,
-    martingale_increment_orthogonality,
-)
 from .scout_kernel_delta_loss import (
     ScoutKernelDeltaTransportLoss,
     centered_cosine_kernel,
@@ -31,6 +24,7 @@ from .scout_kernel_delta_loss import (
 )
 from .conditional_morphology_graph_loss import (
     ConditionalEdgeGraphPredictor,
+    ConditionalFeaturePredictor,
     ConditionalMorphologyGraphLoss,
     ConditionalMorphologyGraphWeights,
 )

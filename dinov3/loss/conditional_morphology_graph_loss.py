@@ -42,6 +42,31 @@ class ConditionalMorphologyGraphWeights:
     graph: float = 1.0
 
 
+class ConditionalFeaturePredictor(nn.Module):
+    """Residual feature predictor used by the CMGI feature-mode ablation."""
+
+    def __init__(self, dim: int, hidden_dim: int = 0):
+        super().__init__()
+        hidden_dim = int(hidden_dim) if hidden_dim else 2 * int(dim)
+        self.norm = nn.LayerNorm(dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, dim),
+        )
+
+    def reset_parameters(self) -> None:
+        self.norm.reset_parameters()
+        first, last = self.mlp[0], self.mlp[2]
+        nn.init.trunc_normal_(first.weight, std=0.02)
+        nn.init.zeros_(first.bias)
+        nn.init.zeros_(last.weight)
+        nn.init.zeros_(last.bias)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return x + self.mlp(self.norm(x))
+
+
 class ConditionalEdgeGraphPredictor(nn.Module):
     """Directly predict a full-channel local edge from a subset observation.
 

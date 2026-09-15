@@ -103,13 +103,7 @@ sigreg:
 channel_subset:
   enabled: false
 
-nested_channel_innovation:
-  enabled: false
-
 conditional_morphology_graph:
-  enabled: false
-
-nested_resolution_innovation:
   enabled: false
 
 acquisition_orbit_deflation:

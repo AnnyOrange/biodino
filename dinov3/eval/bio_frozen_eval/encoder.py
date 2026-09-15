@@ -276,10 +276,6 @@ class Dinov3CkptEncoder:
         backbone = self.model.backbone
         true_multichannel = getattr(backbone, "stem_type", None) in {
             "dualroute",
-            "residual_mc",
-            "rgb_extra_residual",
-            "residual_mc_v2",
-            "rgb_extra_residual_v2",
         } or getattr(backbone, "enable_channelvit", False)
         if true_multichannel and self.channel_policy in {"auto", "native"}:
             x = self._normalize_tensor_batch(batch).to(self.device, non_blocking=True)

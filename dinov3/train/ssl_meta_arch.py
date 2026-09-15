@@ -16,7 +16,7 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.checkpoint import checkpoint as activation_checkpoint, create_selective_checkpoint_contexts
+from torch.utils.checkpoint import create_selective_checkpoint_contexts
 
 import dinov3.distributed as distributed
 from dinov3.checkpointer import init_fsdp_model_from_checkpoint
@@ -52,16 +52,12 @@ from dinov3.loss import (
     InterventionFactorizedTopologyWeights,
     KoLeoLoss,
     KoLeoLossDistributed,
-    NestedChannelInnovationLoss,
-    NestedChannelInnovationWeights,
     ScoutKernelDeltaTransportLoss,
-    conditional_innovation_residual,
     centered_cosine_kernel,
     compose_global_bridge_readout,
     cross_view_stable_kernel_delta,
     iBOTPatchLoss,
     make_balanced_intervention_assignments,
-    martingale_increment_orthogonality,
     project_onto_acquisition_tangent,
     rank_matched_random_tangent_basis,
     shift_tangent_correspondence,
@@ -183,80 +179,6 @@ def _sample_channel_subset_mask(
         chosen = available[torch.randperm(available.numel(), device=valid_mask.device)[:count]]
         subset[row, chosen] = True
     return subset
-
-
-def _sample_nested_channel_masks(valid_mask: Tensor) -> tuple[Tensor, Tensor]:
-    """Sample S subset M subset F for channel-count-aware martingale losses.
-
-    The midpoint is approximately half the available channels.  This keeps the
-    two increments meaningful for the common 3-channel case (1 -> 2 -> 3)
-    while still providing a balanced split for rarer high-channel fields.
-    """
-    if valid_mask.ndim != 2:
-        raise ValueError(f"Expected a [B, C] channel mask, got {tuple(valid_mask.shape)}")
-
-    valid_mask = valid_mask.to(dtype=torch.bool)
-    middle = torch.zeros_like(valid_mask)
-    lower = torch.zeros_like(valid_mask)
-    for row in range(valid_mask.shape[0]):
-        available = valid_mask[row].nonzero(as_tuple=False).flatten()
-        available_count = int(available.numel())
-        if available_count == 0:
-            raise ValueError(f"Sample {row} has no valid channels")
-        middle_count = max(1, (available_count + 1) // 2)
-        middle_channels = available[
-            torch.randperm(available_count, device=valid_mask.device)[:middle_count]
-        ]
-        middle[row, middle_channels] = True
-        if middle_count == 1:
-            lower[row, middle_channels] = True
-            continue
-        lower_count = int(torch.randint(1, middle_count, (1,), device=valid_mask.device).item())
-        lower_channels = middle_channels[
-            torch.randperm(middle_count, device=valid_mask.device)[:lower_count]
-        ]
-        lower[row, lower_channels] = True
-    return middle, lower
-
-
-def _require_rgb_backbone_for_nri(backbone) -> None:
-    """NRI downsamples the same RGB image; it must not ride a channel stem."""
-    stem_type = getattr(backbone, "stem_type", None)
-    if stem_type in ("", "auto"):
-        stem_type = None
-    if stem_type is not None:
-        raise ValueError(
-            "nested_resolution_innovation requires the standard RGB PatchEmbed "
-            f"(stem_type=null, in_chans=3), got stem_type={stem_type!r}. "
-            "Residual-MC / dualroute change the input carrier, so a gain cannot "
-            "be attributed to NRI."
-        )
-    if bool(getattr(backbone, "enable_channelvit", False)):
-        raise ValueError("nested_resolution_innovation requires enable_channelvit=false")
-    in_chans = getattr(backbone, "in_chans", None)
-    if in_chans is not None and int(in_chans) != 3:
-        raise ValueError(
-            "nested_resolution_innovation requires in_chans=3, "
-            f"got in_chans={in_chans}"
-        )
-
-
-def _make_low_resolution_observation(images: Tensor, downsample_factor: int) -> Tensor:
-    """Remove fine spatial detail while retaining the exact field of view."""
-    if images.ndim != 4:
-        raise ValueError(f"Expected [N, C, H, W] images, got {tuple(images.shape)}")
-    if downsample_factor <= 1:
-        raise ValueError(f"downsample_factor must be greater than one, got {downsample_factor}")
-    height, width = images.shape[-2:]
-    low_size = (height // downsample_factor, width // downsample_factor)
-    if min(low_size) < 1:
-        raise ValueError(
-            f"downsample_factor={downsample_factor} is too large for spatial size {(height, width)}"
-        )
-    work = images.float()
-    low = F.interpolate(work, size=low_size, mode="bilinear", align_corners=False, antialias=True)
-    restored = F.interpolate(low, size=(height, width), mode="bilinear", align_corners=False, antialias=True)
-    return restored.to(dtype=images.dtype)
 
 
 def _make_acquisition_orbit_views(
@@ -503,100 +425,6 @@ class SSLMetaArch(nn.Module):
         teacher_model_dict["ibot_head"] = ibot_head_class()
         self.ibot_patch_loss = iBOTPatchLoss(cfg.ibot.head_n_prototypes, compile_sinkhorn=cfg.train.compile)
 
-        nci_cfg = cfg.nested_channel_innovation
-        self.nci_enabled = bool(nci_cfg.enabled)
-        self.nci_loss_weight = float(nci_cfg.loss_weight)
-        self.nci_observation_protocol = str(nci_cfg.observation_protocol).lower()
-        self.nci_min_channels = int(nci_cfg.min_channels)
-        self.nci_max_channels = int(nci_cfg.max_channels)
-        self.nci_predictor_lr_multiplier = float(nci_cfg.predictor_lr_multiplier)
-        self.nci_checkpoint_subset_forward = bool(nci_cfg.checkpoint_subset_forward)
-        self.nci_checkpoint_full_forward = bool(nci_cfg.checkpoint_full_forward)
-        self.nci_martingale_enabled = bool(nci_cfg.martingale_enabled)
-        self.nci_martingale_lower_loss_weight = float(nci_cfg.martingale_lower_loss_weight)
-        self.nci_martingale_cross_orthogonality_weight = float(
-            nci_cfg.martingale_cross_orthogonality_weight
-        )
-        self.nci_martingale_checkpoint_middle_forward = bool(
-            nci_cfg.martingale_checkpoint_middle_forward
-        )
-        if self.nci_enabled:
-            if self.nci_loss_weight < 0:
-                raise ValueError(
-                    f"nested_channel_innovation.loss_weight must be non-negative, got {self.nci_loss_weight}"
-                )
-            if self.nci_observation_protocol not in {
-                "unmasked_shared",
-                "masked_shared",
-                "legacy_mask_mismatch",
-            }:
-                raise ValueError(
-                    "nested_channel_innovation.observation_protocol must be one of "
-                    "{'unmasked_shared', 'masked_shared', 'legacy_mask_mismatch'}, got "
-                    f"{self.nci_observation_protocol!r}"
-                )
-            if self.nci_predictor_lr_multiplier <= 0:
-                raise ValueError(
-                    "nested_channel_innovation.predictor_lr_multiplier must be positive, got "
-                    f"{self.nci_predictor_lr_multiplier}"
-                )
-            if self.nci_martingale_enabled and self.nci_observation_protocol != "masked_shared":
-                raise ValueError(
-                    "nested_channel_innovation.martingale_enabled requires observation_protocol='masked_shared'"
-                )
-            if self.nci_martingale_lower_loss_weight < 0:
-                raise ValueError(
-                    "nested_channel_innovation.martingale_lower_loss_weight must be non-negative, got "
-                    f"{self.nci_martingale_lower_loss_weight}"
-                )
-            if self.nci_martingale_cross_orthogonality_weight < 0:
-                raise ValueError(
-                    "nested_channel_innovation.martingale_cross_orthogonality_weight must be non-negative, got "
-                    f"{self.nci_martingale_cross_orthogonality_weight}"
-                )
-            predictor_hidden_dim = int(nci_cfg.predictor_hidden_dim)
-            student_model_dict["nci_predictor"] = ConditionalFeaturePredictor(
-                embed_dim,
-                hidden_dim=predictor_hidden_dim,
-            )
-            teacher_model_dict["nci_predictor"] = ConditionalFeaturePredictor(
-                embed_dim,
-                hidden_dim=predictor_hidden_dim,
-            )
-            self.nci_loss = NestedChannelInnovationLoss(
-                min_std=float(nci_cfg.min_std),
-                stop_gradient=bool(nci_cfg.stop_gradient),
-                weights=NestedChannelInnovationWeights(
-                    predictor=float(nci_cfg.predictor_loss_weight),
-                    invariance=float(nci_cfg.invariance_loss_weight),
-                    variance=float(nci_cfg.variance_loss_weight),
-                    orthogonality=float(nci_cfg.orthogonality_loss_weight),
-                ),
-            )
-            if self.nci_martingale_enabled:
-                # The two conditional maps represent distinct filtration
-                # steps: S -> M and M -> F. Sharing them would collapse the
-                # martingale construction into an ordinary one-step adapter.
-                student_model_dict["nci_mid_predictor"] = ConditionalFeaturePredictor(
-                    embed_dim,
-                    hidden_dim=predictor_hidden_dim,
-                )
-                teacher_model_dict["nci_mid_predictor"] = ConditionalFeaturePredictor(
-                    embed_dim,
-                    hidden_dim=predictor_hidden_dim,
-                )
-                self.nci_mid_loss = NestedChannelInnovationLoss(
-                    min_std=float(nci_cfg.min_std),
-                    stop_gradient=bool(nci_cfg.stop_gradient),
-                    metric_prefix="nci_mid",
-                    weights=NestedChannelInnovationWeights(
-                        predictor=float(nci_cfg.predictor_loss_weight),
-                        invariance=float(nci_cfg.invariance_loss_weight),
-                        variance=float(nci_cfg.variance_loss_weight),
-                        orthogonality=float(nci_cfg.orthogonality_loss_weight),
-                    ),
-                )
-
         cmgi_cfg = cfg.conditional_morphology_graph
         self.cmgi_enabled = bool(cmgi_cfg.enabled)
         self.cmgi_loss_weight = float(cmgi_cfg.loss_weight)
@@ -665,54 +493,6 @@ class SSLMetaArch(nn.Module):
                 weights=ConditionalMorphologyGraphWeights(
                     predictor=float(cmgi_cfg.predictor_loss_weight),
                     graph=float(cmgi_cfg.graph_loss_weight),
-                ),
-            )
-
-        nri_cfg = cfg.nested_resolution_innovation
-        self.nri_enabled = bool(nri_cfg.enabled)
-        self.nri_loss_weight = float(nri_cfg.loss_weight)
-        self.nri_downsample_factor = int(nri_cfg.downsample_factor)
-        self.nri_feature_mode = str(nri_cfg.feature_mode)
-        self.nri_predictor_lr_multiplier = float(nri_cfg.predictor_lr_multiplier)
-        if self.nri_enabled:
-            if self.nri_loss_weight < 0:
-                raise ValueError(
-                    "nested_resolution_innovation.loss_weight must be non-negative, got "
-                    f"{self.nri_loss_weight}"
-                )
-            if self.nri_downsample_factor <= 1:
-                raise ValueError(
-                    "nested_resolution_innovation.downsample_factor must be greater than one, got "
-                    f"{self.nri_downsample_factor}"
-                )
-            if self.nri_feature_mode not in {"cls", "cls_patch_mean"}:
-                raise ValueError(
-                    "nested_resolution_innovation.feature_mode must be 'cls' or 'cls_patch_mean', got "
-                    f"{self.nri_feature_mode!r}"
-                )
-            if self.nri_predictor_lr_multiplier <= 0:
-                raise ValueError(
-                    "nested_resolution_innovation.predictor_lr_multiplier must be positive, got "
-                    f"{self.nri_predictor_lr_multiplier}"
-                )
-            predictor_hidden_dim = int(nri_cfg.predictor_hidden_dim)
-            student_model_dict["nri_predictor"] = ConditionalFeaturePredictor(
-                embed_dim,
-                hidden_dim=predictor_hidden_dim,
-            )
-            teacher_model_dict["nri_predictor"] = ConditionalFeaturePredictor(
-                embed_dim,
-                hidden_dim=predictor_hidden_dim,
-            )
-            self.nri_loss = NestedChannelInnovationLoss(
-                min_std=float(nri_cfg.min_std),
-                stop_gradient=bool(nri_cfg.stop_gradient),
-                metric_prefix="nri",
-                weights=NestedChannelInnovationWeights(
-                    predictor=float(nri_cfg.predictor_loss_weight),
-                    invariance=float(nri_cfg.invariance_loss_weight),
-                    variance=float(nri_cfg.variance_loss_weight),
-                    orthogonality=float(nri_cfg.orthogonality_loss_weight),
                 ),
             )
 
@@ -1229,13 +1009,11 @@ class SSLMetaArch(nn.Module):
         self.channel_subset_enabled = bool(subset_cfg.enabled)
         self.channel_subset_min = int(subset_cfg.min_channels)
         self.channel_subset_max = int(subset_cfg.max_channels)
-        if (self.nci_enabled or self.cmgi_enabled) and self.channel_subset_enabled:
+        if self.cmgi_enabled and self.channel_subset_enabled:
             raise ValueError(
                 "conditional channel objectives and legacy channel_subset cannot be enabled together: "
                 "they keep the main SSL path full-channel symmetric"
             )
-        if self.nci_enabled and self.cmgi_enabled:
-            raise ValueError("nested_channel_innovation and conditional_morphology_graph cannot be enabled together")
         if self.channel_subset_enabled:
             if self.channel_subset_min <= 0 or self.channel_subset_max < self.channel_subset_min:
                 raise ValueError(
@@ -1253,32 +1031,6 @@ class SSLMetaArch(nn.Module):
                 "Full-channel teacher -> subset-channel student enabled: student channels=%d..%d",
                 self.channel_subset_min,
                 self.channel_subset_max,
-            )
-        if self.nci_enabled:
-            if self.nci_min_channels <= 0 or self.nci_max_channels < self.nci_min_channels:
-                raise ValueError(
-                    "nested_channel_innovation requires 0 < min_channels <= max_channels, got "
-                    f"{self.nci_min_channels}, {self.nci_max_channels}"
-                )
-            supports_channel_masks = bool(getattr(self.student.backbone, "enable_channelvit", False)) or (
-                getattr(self.student.backbone, "stem_type", None) is not None
-            )
-            if not supports_channel_masks:
-                raise ValueError(
-                    "nested_channel_innovation.enabled=true requires ChannelViT or a channel-aware stem_type"
-                )
-            if cfg.distillation.enabled or cfg.multidistillation.enabled:
-                raise ValueError("nested_channel_innovation does not yet support distillation meta-architectures")
-            logger.info(
-                "Nested channel innovation enabled: subset channels=%d..%d overall_weight=%s protocol=%s "
-                "subset_checkpoint=%s full_checkpoint=%s martingale=%s",
-                self.nci_min_channels,
-                self.nci_max_channels,
-                self.nci_loss_weight,
-                self.nci_observation_protocol,
-                self.nci_checkpoint_subset_forward,
-                self.nci_checkpoint_full_forward,
-                self.nci_martingale_enabled,
             )
         if self.cmgi_enabled:
             if self.cmgi_min_channels <= 0 or self.cmgi_max_channels < self.cmgi_min_channels:
@@ -1303,20 +1055,6 @@ class SSLMetaArch(nn.Module):
                 self.cmgi_loss.local_radius,
                 self.cmgi_loss_weight,
             )
-        if self.nri_enabled:
-            if cfg.distillation.enabled or cfg.multidistillation.enabled:
-                raise ValueError("nested_resolution_innovation does not yet support distillation meta-architectures")
-            _require_rgb_backbone_for_nri(self.student.backbone)
-            logger.info(
-                "Nested resolution innovation enabled on RGB PatchEmbed: downsample=%dx "
-                "feature=%s overall_weight=%s in_chans=%s stem_type=%s",
-                self.nri_downsample_factor,
-                self.nri_feature_mode,
-                self.nri_loss_weight,
-                getattr(self.student.backbone, "in_chans", None),
-                getattr(self.student.backbone, "stem_type", None),
-            )
-
         # getting config params fixed:
         self.n_local_crops = self.cfg.crops.local_crops_number
         self.is_distillation_enabled = self.cfg.distillation.enabled
@@ -1530,14 +1268,8 @@ class SSLMetaArch(nn.Module):
         self.student.backbone.init_weights()
         self.student.dino_head.init_weights()
         self.student.ibot_head.init_weights()
-        if self.nci_enabled:
-            self.student.nci_predictor.reset_parameters()
-            if self.nci_martingale_enabled:
-                self.student.nci_mid_predictor.reset_parameters()
         if self.cmgi_enabled:
             self.student.cmgi_predictor.reset_parameters()
-        if self.nri_enabled:
-            self.student.nri_predictor.reset_parameters()
         if self.ift_enabled:
             self.student.ift_context_head.reset_parameters()
         self.dino_loss.init_weights()
@@ -2163,10 +1895,6 @@ class SSLMetaArch(nn.Module):
 
         student_global_channel_valid_mask = global_channel_valid_mask
         student_local_channel_valid_mask = local_channel_valid_mask
-        nci_global_channel_valid_mask = None
-        nci_active_samples = None
-        nci_lower_channel_valid_mask = None
-        nci_lower_active_samples = None
         cmgi_global_channel_valid_mask = None
         cmgi_active_samples = None
         if self.channel_subset_enabled:
@@ -2186,38 +1914,6 @@ class SSLMetaArch(nn.Module):
             student_local_channel_valid_mask = base_subset_mask.repeat(n_local_crops, 1)
             metrics_dict["teacher_channels_per_sample"] = base_full_mask.sum(dim=1).float().mean()
             metrics_dict["student_channels_per_sample"] = base_subset_mask.sum(dim=1).float().mean()
-        elif self.nci_enabled:
-            if global_channel_valid_mask is None or local_channel_valid_mask is None:
-                raise ValueError(
-                    "nested_channel_innovation.enabled=true requires channel ids/masks from a "
-                    "packwds_chvit dataset"
-            )
-            base_full_mask = global_channel_valid_mask[:B]
-            if self.nci_martingale_enabled:
-                base_middle_mask, base_lower_mask = _sample_nested_channel_masks(base_full_mask)
-                nci_global_channel_valid_mask = base_middle_mask.repeat(n_global_crops, 1)
-                nci_lower_channel_valid_mask = base_lower_mask.repeat(n_global_crops, 1)
-                nci_active_samples = base_full_mask.sum(dim=1) > base_middle_mask.sum(dim=1)
-                nci_lower_active_samples = base_middle_mask.sum(dim=1) > base_lower_mask.sum(dim=1)
-                metrics_dict["nci_middle_channels_per_sample"] = (
-                    base_middle_mask.sum(dim=1).float().mean()
-                )
-                metrics_dict["nci_lower_channels_per_sample"] = (
-                    base_lower_mask.sum(dim=1).float().mean()
-                )
-            else:
-                base_subset_mask = _sample_channel_subset_mask(
-                    base_full_mask,
-                    min_channels=self.nci_min_channels,
-                    max_channels=self.nci_max_channels,
-                    require_omission=True,
-                )
-                nci_global_channel_valid_mask = base_subset_mask.repeat(n_global_crops, 1)
-                nci_active_samples = base_full_mask.sum(dim=1) > base_subset_mask.sum(dim=1)
-            metrics_dict["nci_full_channels_per_sample"] = base_full_mask.sum(dim=1).float().mean()
-            metrics_dict["nci_subset_channels_per_sample"] = (
-                nci_global_channel_valid_mask[:B].sum(dim=1).float().mean()
-            )
         elif self.cmgi_enabled:
             if global_channel_valid_mask is None or local_channel_valid_mask is None:
                 raise ValueError(
@@ -2632,74 +2328,6 @@ class SSLMetaArch(nn.Module):
                 )
                 global_bridge_metrics.update(bridge_loss_metrics)
 
-        if self.nci_enabled:
-            nci_global_crops = global_crops.unflatten(0, (n_global_crops, B))
-            nci_lower_cls = None
-            nci_global_channel_ids = (
-                global_channel_ids.unflatten(0, (n_global_crops, B))
-                if global_channel_ids is not None
-                else None
-            )
-            if self.nci_observation_protocol == "unmasked_shared":
-                # The residual r_F = z_F - E[z_F | z_S] is a conditional
-                # channel quantity, not an iBOT-mask quantity.  Keep the
-                # normal masked main path intact, but make both auxiliary
-                # observations unmasked and otherwise identical.
-                nci_full_cls = self.get_nci_full_output(
-                    global_crops=nci_global_crops,
-                    global_channel_ids=nci_global_channel_ids,
-                    global_channel_valid_mask=global_channel_valid_mask.unflatten(0, (n_global_crops, B)),
-                )
-                nci_subset_cls = self.get_nci_subset_output(
-                    global_crops=nci_global_crops,
-                    global_channel_ids=nci_global_channel_ids,
-                    global_channel_valid_mask=nci_global_channel_valid_mask.unflatten(0, (n_global_crops, B)),
-                    requires_grad=not self.nci_loss.stop_gradient,
-                )
-            elif self.nci_observation_protocol == "masked_shared":
-                # Hold the exact iBOT observation fixed on both sides.  This
-                # isolates channel-conditional innovation from the legacy
-                # full-masked/subset-unmasked mismatch.
-                nci_full_cls = student_global["cls_pre_head"]
-                nci_subset_cls = self.get_nci_subset_output(
-                    global_crops=nci_global_crops,
-                    masks=masks,
-                    global_channel_ids=nci_global_channel_ids,
-                    global_channel_valid_mask=nci_global_channel_valid_mask.unflatten(0, (n_global_crops, B)),
-                    # M must be differentiable so the lower martingale
-                    # increment can shape the shared backbone. The F|M loss
-                    # still detaches M, preserving the NCI firewall.
-                    requires_grad=self.nci_martingale_enabled or not self.nci_loss.stop_gradient,
-                    checkpoint_backbone=self.nci_martingale_enabled
-                    and self.nci_martingale_checkpoint_middle_forward,
-                )
-                if self.nci_martingale_enabled:
-                    if nci_lower_channel_valid_mask is None:
-                        raise RuntimeError("Martingale NCI lower channel masks were not initialized")
-                    nci_lower_cls = self.get_nci_subset_output(
-                        global_crops=nci_global_crops,
-                        masks=masks,
-                        global_channel_ids=nci_global_channel_ids,
-                        global_channel_valid_mask=nci_lower_channel_valid_mask.unflatten(
-                            0, (n_global_crops, B)
-                        ),
-                        requires_grad=not self.nci_loss.stop_gradient,
-                    )
-            else:
-                # Reproduce pre-correction screens only.  This mixes the
-                # masked main-path feature with an unmasked subset feature.
-                nci_full_cls = student_global["cls_pre_head"]
-                nci_subset_cls = self.get_nci_subset_output(
-                    global_crops=nci_global_crops,
-                    global_channel_ids=nci_global_channel_ids,
-                    global_channel_valid_mask=nci_global_channel_valid_mask.unflatten(0, (n_global_crops, B)),
-                    requires_grad=True,
-                )
-        else:
-            nci_full_cls = None
-            nci_subset_cls = None
-            nci_lower_cls = None
-
         if self.cmgi_enabled:
             cmgi_subset_patches = self.get_cmgi_subset_output(
                 global_crops=global_crops.unflatten(0, (n_global_crops, B)),
@@ -2710,20 +2338,6 @@ class SSLMetaArch(nn.Module):
             )
         else:
             cmgi_subset_patches = None
-
-        if self.nri_enabled:
-            nri_low_features = self.get_nri_low_resolution_output(
-                global_crops=global_crops.unflatten(0, (n_global_crops, B)),
-                masks=masks,
-                global_channel_ids=global_channel_ids.unflatten(0, (n_global_crops, B))
-                if global_channel_ids is not None
-                else None,
-                global_channel_valid_mask=global_channel_valid_mask.unflatten(0, (n_global_crops, B))
-                if global_channel_valid_mask is not None
-                else None,
-            )
-        else:
-            nri_low_features = None
 
         if self.acq_deflation_enabled and self.acq_deflation_mode == "direct_consistency":
             acq_orbit_images = _make_acquisition_orbit_views(
@@ -2906,65 +2520,6 @@ class SSLMetaArch(nn.Module):
             loss_dict["intervention_factorized_topology_loss"] = ift_loss.detach()
             loss_dict["intervention_factorized_topology_loss_weight"] = self.ift_loss_weight
             loss_dict.update(ift_metrics)
-        if self.nci_enabled:
-            if nci_full_cls is None or nci_subset_cls is None:
-                raise RuntimeError("Nested channel innovation features were not initialized")
-            nci_loss, nci_metrics = self.nci_loss(
-                full_features=nci_full_cls,
-                subset_features=nci_subset_cls,
-                active_samples=nci_active_samples,
-                predictor=self.student.nci_predictor,
-            )
-            if self.nci_martingale_enabled:
-                if nci_lower_cls is None or nci_lower_active_samples is None:
-                    raise RuntimeError("Martingale NCI features were not initialized")
-                nci_lower_loss, nci_lower_metrics = self.nci_mid_loss(
-                    full_features=nci_subset_cls,
-                    subset_features=nci_lower_cls,
-                    active_samples=nci_lower_active_samples,
-                    predictor=self.student.nci_mid_predictor,
-                )
-                upper_increment = conditional_innovation_residual(
-                    full_features=nci_full_cls,
-                    subset_features=nci_subset_cls,
-                    predictor=self.student.nci_predictor,
-                    stop_gradient=self.nci_loss.stop_gradient,
-                )
-                lower_increment = conditional_innovation_residual(
-                    full_features=nci_subset_cls,
-                    subset_features=nci_lower_cls,
-                    predictor=self.student.nci_mid_predictor,
-                    stop_gradient=self.nci_mid_loss.stop_gradient,
-                )
-                nci_cross_loss, nci_cross_metrics = martingale_increment_orthogonality(
-                    upper_increment=upper_increment,
-                    lower_increment=lower_increment,
-                    active_samples=nci_lower_active_samples,
-                )
-                # Average the two same-scale conditional objectives so MCI is
-                # not merely a stronger auxiliary-loss baseline than NCI.
-                nci_loss = (
-                    nci_loss + self.nci_martingale_lower_loss_weight * nci_lower_loss
-                ) / (1.0 + self.nci_martingale_lower_loss_weight)
-                nci_loss = nci_loss + self.nci_martingale_cross_orthogonality_weight * nci_cross_loss
-                loss_dict["nci_martingale_lower_loss"] = nci_lower_loss.detach()
-                loss_dict["nci_martingale_lower_loss_weight"] = self.nci_martingale_lower_loss_weight
-                loss_dict["nci_martingale_cross_loss_weight"] = (
-                    self.nci_martingale_cross_orthogonality_weight
-                )
-                loss_dict.update(nci_lower_metrics)
-                loss_dict.update(nci_cross_metrics)
-            loss_accumulator += self.nci_loss_weight * nci_loss
-            loss_dict["nci_loss"] = nci_loss.detach()
-            loss_dict["nci_loss_weight"] = self.nci_loss_weight
-            loss_dict["nci_martingale_enabled"] = float(self.nci_martingale_enabled)
-            loss_dict["nci_unmasked_shared_observation"] = float(
-                self.nci_observation_protocol == "unmasked_shared"
-            )
-            loss_dict["nci_masked_shared_observation"] = float(
-                self.nci_observation_protocol == "masked_shared"
-            )
-            loss_dict.update(nci_metrics)
         if self.cmgi_enabled:
             cmgi_loss, cmgi_metrics = self.cmgi_loss(
                 full_features=student_global["patch_pre_head"],
@@ -2978,21 +2533,6 @@ class SSLMetaArch(nn.Module):
             loss_dict["cmgi_loss"] = cmgi_loss.detach()
             loss_dict["cmgi_loss_weight"] = self.cmgi_loss_weight
             loss_dict.update(cmgi_metrics)
-        if self.nri_enabled:
-            nri_full_features = self._select_nri_features(
-                student_global["cls_pre_head"],
-                student_global["patch_pre_head"],
-            )
-            nri_loss, nri_metrics = self.nri_loss(
-                full_features=nri_full_features,
-                subset_features=nri_low_features,
-                active_samples=torch.ones(B, dtype=torch.bool, device=nri_full_features.device),
-                predictor=self.student.nri_predictor,
-            )
-            loss_accumulator += self.nri_loss_weight * nri_loss
-            loss_dict["nri_loss"] = nri_loss.detach()
-            loss_dict["nri_loss_weight"] = self.nri_loss_weight
-            loss_dict.update(nri_metrics)
         if self.acq_deflation_enabled:
             current_features = student_global["cls_pre_head"][0]
             if self.acq_deflation_mode in {
@@ -3528,92 +3068,6 @@ class SSLMetaArch(nn.Module):
 
         return global_out, local_out
 
-    def _get_nci_channel_output(
-        self,
-        *,
-        global_crops,
-        masks: Tensor | None = None,
-        global_channel_ids=None,
-        global_channel_valid_mask,
-        requires_grad: bool,
-        checkpoint_backbone: bool = False,
-    ) -> Tensor:
-        """Encode an unmasked full/subset channel view for conditional NCI."""
-        n_global_crops, batch_size, _, _, _ = global_crops.shape
-        images = global_crops.flatten(0, 1)
-        channel_ids = global_channel_ids.flatten(0, 1) if global_channel_ids is not None else None
-        channel_valid_mask = global_channel_valid_mask.flatten(0, 1)
-        if checkpoint_backbone:
-            if not requires_grad:
-                raise ValueError("NCI activation checkpointing requires a differentiable subset forward")
-
-            def encode(images: Tensor) -> Tensor:
-                backbone_out = self.student.backbone(
-                    images,
-                    masks=masks,
-                    channel_ids=channel_ids,
-                    channel_valid_mask=channel_valid_mask,
-                    is_training=True,
-                )
-                return backbone_out["x_norm_clstoken"]
-
-            # Non-reentrant checkpointing retains parameter gradients even when
-            # the image tensor itself is not a differentiation target.
-            cls_tokens = activation_checkpoint(encode, images, use_reentrant=False)
-        else:
-            grad_context = nullcontext() if requires_grad else torch.no_grad()
-            with grad_context:
-                backbone_out = self.student.backbone(
-                    images,
-                    masks=masks,
-                    channel_ids=channel_ids,
-                    channel_valid_mask=channel_valid_mask,
-                    is_training=True,
-                )
-            cls_tokens = backbone_out["x_norm_clstoken"]
-        return cls_tokens.unflatten(0, (n_global_crops, batch_size))
-
-    def get_nci_full_output(
-        self,
-        *,
-        global_crops,
-        global_channel_ids=None,
-        global_channel_valid_mask,
-    ) -> Tensor:
-        """Return the differentiable full-channel side of the shared observation."""
-        return self._get_nci_channel_output(
-            global_crops=global_crops,
-            global_channel_ids=global_channel_ids,
-            global_channel_valid_mask=global_channel_valid_mask,
-            requires_grad=True,
-            checkpoint_backbone=self.nci_checkpoint_full_forward,
-        )
-
-    def get_nci_subset_output(
-        self,
-        *,
-        global_crops,
-        masks: Tensor | None = None,
-        global_channel_ids=None,
-        global_channel_valid_mask,
-        requires_grad: bool,
-        checkpoint_backbone: bool | None = None,
-    ) -> Tensor:
-        """Return the subset side, optionally behind the stop-gradient firewall."""
-        return self._get_nci_channel_output(
-            global_crops=global_crops,
-            masks=masks,
-            global_channel_ids=global_channel_ids,
-            global_channel_valid_mask=global_channel_valid_mask,
-            requires_grad=requires_grad,
-            checkpoint_backbone=requires_grad
-            and (
-                self.nci_checkpoint_subset_forward
-                if checkpoint_backbone is None
-                else checkpoint_backbone
-            ),
-        )
-
     def get_cmgi_subset_output(
         self,
         *,
@@ -3644,42 +3098,6 @@ class SSLMetaArch(nn.Module):
                 is_training=True,
             )
         return backbone_out["x_norm_patchtokens"].unflatten(0, (n_global_crops, batch_size))
-
-    def _select_nri_features(self, cls_features: Tensor, patch_features: Tensor) -> Tensor:
-        if self.nri_feature_mode == "cls":
-            return cls_features
-        return 0.5 * (cls_features + patch_features.mean(dim=-2))
-
-    def get_nri_low_resolution_output(
-        self,
-        *,
-        global_crops,
-        masks,
-        global_channel_ids=None,
-        global_channel_valid_mask=None,
-    ) -> Tensor:
-        """Encode a nested low-pass view without exposing predictor gradients."""
-        n_global_crops, batch_size, _, _, _ = global_crops.shape
-        images = _make_low_resolution_observation(
-            global_crops.flatten(0, 1),
-            self.nri_downsample_factor,
-        )
-        channel_ids = global_channel_ids.flatten(0, 1) if global_channel_ids is not None else None
-        channel_valid_mask = (
-            global_channel_valid_mask.flatten(0, 1) if global_channel_valid_mask is not None else None
-        )
-        grad_context = torch.no_grad() if self.nri_loss.stop_gradient else nullcontext()
-        with grad_context:
-            backbone_out = self.student.backbone(
-                images,
-                masks=masks,
-                channel_ids=channel_ids,
-                channel_valid_mask=channel_valid_mask,
-                is_training=True,
-            )
-        cls_features = backbone_out["x_norm_clstoken"].unflatten(0, (n_global_crops, batch_size))
-        patch_features = backbone_out["x_norm_patchtokens"].unflatten(0, (n_global_crops, batch_size))
-        return self._select_nri_features(cls_features, patch_features)
 
     def compute_losses(
         self,
@@ -3967,12 +3385,8 @@ class SSLMetaArch(nn.Module):
             params_groups = list(self.get_maybe_fused_params_for_submodel(m))
             for group in params_groups:
                 group["is_backbone"] = name == "backbone"
-                if name in {"nci_predictor", "nci_mid_predictor"}:
-                    group["lr_multiplier"] *= self.nci_predictor_lr_multiplier
-                elif name == "cmgi_predictor":
+                if name == "cmgi_predictor":
                     group["lr_multiplier"] *= self.cmgi_predictor_lr_multiplier
-                elif name == "nri_predictor":
-                    group["lr_multiplier"] *= self.nri_predictor_lr_multiplier
                 elif name == "ift_context_head":
                     group["lr_multiplier"] *= self.ift_context_head_lr_multiplier
             all_params_groups += params_groups
@@ -4081,10 +3495,7 @@ class SSLMetaArch(nn.Module):
                 device_ids=[device_id],
                 output_device=device_id,
                 broadcast_buffers=False,
-                # Only conditional innovation predictors can be inactive on a
-                # rank. Avoid DDP's graph traversal for ordinary full-model,
-                # DBI, and Scout runs.
-                find_unused_parameters=bool(self.nci_enabled or self.cmgi_enabled or self.nri_enabled),
+                find_unused_parameters=bool(self.cmgi_enabled),
                 gradient_as_bucket_view=True,
             )
         self._ddp_wrapped = True
