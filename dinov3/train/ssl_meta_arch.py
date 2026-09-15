@@ -1229,6 +1229,50 @@ class SSLMetaArch(nn.Module):
             logger.info(
                 f"OPTIONS -- global crops GRAM teacher resize antialias: {cfg.gram.global_teacher_resize_antialias}"
             )
+            if bool(getattr(cfg.gram, "require_official_fixed_anchor_contract", False)):
+                expected = {
+                    "gram.use_loss": (cfg.gram.use_loss, True),
+                    "gram.compute_stats": (cfg.gram.compute_stats, False),
+                    "gram.loss_weight": (float(cfg.gram.loss_weight), 2.0),
+                    "gram.inter_image_loss_weight": (float(cfg.gram.inter_image_loss_weight), 0.0),
+                    "gram.global_relation_loss_weight": (float(cfg.gram.global_relation_loss_weight), 0.0),
+                    "gram.global_relation_ckpt": (cfg.gram.global_relation_ckpt, None),
+                    "gram.ema_teacher": (cfg.gram.ema_teacher, False),
+                    "gram.it_load_ema_teacher": (int(cfg.gram.it_load_ema_teacher), -1),
+                    "gram.rep_update": (cfg.gram.rep_update, True),
+                    "gram.update_frequency": (int(cfg.gram.update_frequency), 10000),
+                    "gram.it_first_update": (int(cfg.gram.it_first_update), 1010000),
+                    "gram.max_updates": (int(cfg.gram.max_updates), 3),
+                    "gram.normalized": (cfg.gram.normalized, True),
+                    "gram.img_level": (cfg.gram.img_level, True),
+                    "gram.remove_neg": (cfg.gram.remove_neg, False),
+                    "gram.remove_only_teacher_neg": (cfg.gram.remove_only_teacher_neg, False),
+                    "gram.tokens_used": (cfg.gram.tokens_used, "all"),
+                    "gram.global_teacher_resize_method": (cfg.gram.global_teacher_resize_method, "bicubic"),
+                    "gram.global_teacher_resize_antialias": (cfg.gram.global_teacher_resize_antialias, False),
+                    "gram.loss_weight_schedule": (cfg.gram.loss_weight_schedule, None),
+                    "crops.global_crops_size": (int(cfg.crops.global_crops_size), 256),
+                    "crops.gram_teacher_crops_size": (int(cfg.crops.gram_teacher_crops_size), 512),
+                    "crops.gram_teacher_no_distortions": (cfg.crops.gram_teacher_no_distortions, True),
+                    "crops.localcrops_subset_of_globalcrops": (cfg.crops.localcrops_subset_of_globalcrops, False),
+                    "crops.share_color_jitter": (cfg.crops.share_color_jitter, False),
+                    "crops.horizontal_flips": (cfg.crops.horizontal_flips, False),
+                }
+                mismatches = [
+                    f"{name}: expected={wanted!r}, actual={actual!r}"
+                    for name, (actual, wanted) in expected.items()
+                    if actual != wanted
+                ]
+                if not cfg.gram.ckpt or cfg.gram.ckpt != cfg.student.resume_from_teacher_chkpt:
+                    mismatches.append(
+                        "gram.ckpt must equal student.resume_from_teacher_chkpt for the fixed-anchor branch"
+                    )
+                if mismatches:
+                    raise ValueError("Official Gram contract mismatch: " + "; ".join(mismatches))
+                logger.info(
+                    "OFFICIAL GRAM CONTRACT VALIDATED: Meta GramLoss, frozen clean 512 anchor, "
+                    "normalized within-image all-token relations, final weight 2, extensions disabled"
+                )
 
     def _setup_distillation(self):
         logger.info(f"Performing distillation from {self.cfg.distillation.full_cfg_path}")
