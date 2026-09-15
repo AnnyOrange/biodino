@@ -1,6 +1,6 @@
 # 05 — Current Implementation Gap Audit
 
-状态：IMPLEMENTING（规则于 2026-09-09 获批）。本文件记录审核时发现的问题和修复进度。
+状态：IMPLEMENTING（v3 数据集准入规则于 2026-09-11 获批）。本文件记录审核时发现的问题和修复进度。
 
 | ID | 当前实现/脚本 | 与拟定规则的差距 | 启动前动作 |
 |---|---|---|---|
@@ -10,16 +10,21 @@
 | G4 | `scripts/run_hs6_all_ckpts_expanded_fleet_worker.py` 及其 plan | 含 Ret6/LC25000，并按 S+/B/L/H+ 使用 64/32/16/4 | 当前 campaign 标 `NEEDS_AUDIT`；不纳入新结果 |
 | G5 | `scripts/watch_eval_hs6_l_skdt_arm_3090qi_20260909.sh` | 临时 Ret4、batch16、非 full matrix | 禁止恢复；审核时决定删除或移入 legacy |
 | G6 | segmentation PanNuke loader | fold3 同时用于 val 和 test | 按审核决定建立独立 split/version；重测所有比较臂 |
-| G7 | segmentation/detection CoNIC loader | 固定 random image-level 80/10/10，未验证 source/patient 隔离 | 建 source audit；若有 group id，改固定 grouped manifest |
+| G7 | segmentation/detection CoNIC loader | segmentation 的 grouped split 已完成审计，但旧 launcher 仍可能混入 detection proxy | formal segmentation 固定 source-grouped split 并重跑；formal launcher/aggregate 拒绝 `detection/conic` |
 | G8 | retrieval `completed()` 与 feature-cache key | cache/skip 判据没有完整覆盖 batch、resolution、n-last-blocks、dtype、code/split hash | formal output 使用 protocol fingerprint；不接受弱 skip |
 | G9 | `bio_benchmark._successful_result_exists()` | 只要 JSON 无 `error` 就可能跳过，未验证协议字段 | 接入严格 validator 后才能 skip |
 | G10 | segmentation result metadata | 主要依赖目录名表达 resolution/layers；JSON 没有完整 protocol fingerprint | 把展开后的 size/resize/layers/weight/batches/split hash 写入 JSON |
 | G11 | 多个历史 launcher | batch、workers、jobs-per-GPU 和 dataset list 各自覆盖，存在口径漂移 | 新建唯一 formal launcher/config，旧 launcher 只读归档 |
 | G12 | outputs | 同目录可能包含 partial、cache、旧协议和正式 JSON | 新 campaign 使用全新 output root；完成后统一只读审计 |
+| G13 | formal dataset defaults / aggregate | 多个旧 launcher 将 CoNIC/LIVECell 的原生任务与派生 proxy 混在一起，仍包含 BBBC038，且可能漏掉 HPA/RxRx1 | v3 launcher 从 `protocol_v3.json` 生成 task-dataset 矩阵；保留 CoNIC/LIVECell segmentation，拒绝其 count/detection proxy；BBBC038 独立 observation；HPA/RxRx1/RxRx3/CTC 必须齐全 |
+| G14 | external-FM dense launcher | 现有 formal-v1 专用 worker 主要覆盖 CoNIC/PanNuke，不能证明 Tier A segmentation-6 全覆盖 | 新 v3 external-FM launcher 覆盖全部 6 个 Tier A segmentation；LIVECell 锁定 official COCO split/hash，CoNIC 锁定 source-grouped split |
+| G15 | CTC | 当前只有 `ctc_2d_count_proxy_v1`，未输出 TRA/SEG，且只覆盖 10 个二维域 | 实现 20-domain 原生 2-D/3-D tracking evaluator、固定 sequence/domain-heldout manifest 与 hash；完成前 v3 fail closed |
+| G16 | RxRx3-core | 当前完整横比只是 128-gene、batch-4 quick screen | 生成全 eligible-gene plate-disjoint manifest/hash，接入 batch-64 formal retrieval/clustering evaluator并重跑所有模型 |
+| G17 | MIDOG++ | 当前只有 candidate-crop classification/detection proxy，且 H+ 排名不占优 | 按 R12 从 formal defaults/aggregate 移除；历史结果只读保留为诊断 |
 
 ## 必须新增的防护
 
-1. 一个 machine-readable protocol 文件，launcher 和 validator 同时读取，避免 Markdown 与命令分叉。
+1. 一个 machine-readable protocol 文件（当前正式版本 `protocol_v3.json`），launcher 和 validator 同时读取，避免 Markdown 与命令分叉。
 2. 一个 preflight validator：在 GPU 进程启动前检查数据集集合、split hash、batch、layers、resolution、checkpoint 与 commit。
 3. 一个 post-run validator：逐 cell 校验 result metadata 和样本数，生成 `validation_report.json`。
 4. output root 内写不可变 `campaign_manifest.json` 和 protocol fingerprint；fingerprint 不同不得复用 cache/result。

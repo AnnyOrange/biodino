@@ -1,0 +1,126 @@
+{
+  "protocol_id": "bio-eval-formal-v3",
+  "approved_utc": "2026-09-11",
+  "supersedes": "bio-eval-formal-v2",
+  "model": {
+    "branch": "teacher",
+    "vit_large_layers": [4, 11, 17, 23],
+    "global_feature": "l2(final_cls + final_patch_mean)"
+  },
+  "batch_sizes": {
+    "frozen": 64,
+    "segmentation_feature": 32,
+    "segmentation_probe": 32,
+    "detection": 8,
+    "cell_tracking": 8
+  },
+  "probe": {
+    "segmentation_epochs": 50,
+    "segmentation_eval_every": 50,
+    "detection_epochs": 5,
+    "seed": 0
+  },
+  "tier_a": {
+    "classification": [
+      "bloodmnist", "pathmnist", "tissuemnist", "breastmnist",
+      "organamnist", "organcmnist", "organsmnist", "dermamnist",
+      "octmnist", "pneumoniamnist", "retinamnist", "chestmnist",
+      "bbbc048-cellcycle", "cyclops-protein-loc", "midog25-atypical"
+    ],
+    "regression": ["bbbc005"],
+    "retrieval": ["nct-crc-he-1k", "crc-val-he-7k"],
+    "segmentation": ["cellpose", "conic", "livecell", "monuseg", "pannuke", "tissuenet"],
+    "detection": [],
+    "cell_tracking": []
+  },
+  "tier_b": {
+    "classification": [
+      "pcam", "nct-crc-he", "chammi-allen-task1", "chammi-allen-task2",
+      "chammi-cp-task1", "chammi-cp-task2", "chammi-cp-task3",
+      "chammi-hpa-task1", "chammi-hpa-task2"
+    ],
+    "regression": ["bbbc013"],
+    "retrieval": ["hpa-subcellular", "rxrx1-cross", "rxrx3-core"],
+    "segmentation": ["multimodal_cellseg"],
+    "detection": [],
+    "cell_tracking": ["ctc"],
+    "ood": ["xray", "cryo"]
+  },
+  "observational": {
+    "segmentation": ["bbbc038"],
+    "detection": ["bbbc038"],
+    "aggregate": false,
+    "main_ranking": false
+  },
+  "excluded_from_formal": {
+    "task_datasets": {
+      "regression": ["conic-cell-count", "livecell-cell-count"],
+      "detection": ["conic", "livecell", "midogpp"]
+    },
+    "reason": "Keep native CoNIC/LIVECell segmentation; exclude their derived proxies and MIDOG++ from the formal matrix."
+  },
+  "forbidden_formal_datasets": [
+    "lc25000", "nct-crc-he-100", "chammi-hpa-task3", "chammi-cp-task4", "bbbc038", "midogpp"
+  ],
+  "forbidden_formal_task_datasets": [
+    "regression/conic-cell-count", "regression/livecell-cell-count",
+    "detection/conic", "detection/livecell", "detection/midogpp"
+  ],
+  "retrieval_splits": {
+    "rxrx3-core": {
+      "protocol": "crispr-query-guide-plate-disjoint-all-eligible-genes-v1",
+      "input_mapping": "compact3_pairmean_after_per_channel_p01_p99",
+      "query_gallery": "one deterministic query and gallery well per eligible gene; plates disjoint within gene",
+      "exclude": ["same-well pairs", "same-plate pairs within gene", "genes observed on fewer than two plates"],
+      "manifest_sha256": "94d570cb66d71de20e9ded203d8727623fe85a807d8b5b9cdbe0de3fce1318f5",
+      "formal_status": "READY_FIXED_MANIFEST"
+    }
+  },
+  "cell_tracking_splits": {
+    "ctc": {
+      "protocol": "ctc-labelled-training-sequence-domain-heldout-v1",
+      "scope": "all 20 official labelled training datasets, including 2-D and 3-D",
+      "split": "fixed sequence-and-domain held-out folds generated only from labelled training data",
+      "metrics": ["TRA", "SEG", "detection_AP", "instance_mDice"],
+      "primary_metrics": ["TRA", "SEG"],
+      "manifest_sha256": "7a0f5bc2579f6ae22a2b8f2b16103530cd678466a4b2bbd1f617692b8e3cac27",
+      "evaluator": "official py-ctcmetrics commit 59481c48a62d4376fe34bed3e3606b4ec4d60972; fixed prediction contract in Evaluation Rules/06_CTC_Native_Protocol.md",
+      "formal_status": "APPROVED_PENDING_FIXED_HEAD_AND_LINKER"
+    }
+  },
+  "dense_splits": {
+    "conic": "official-baseline-fold0-nested-v1",
+    "livecell": {
+      "protocol": "official-coco-train-val-test",
+      "image_records": {"train": 3253, "val": 570, "test": 1564},
+      "unique_image_files": {"train": 3188, "val": 569, "test": 1512},
+      "train_val_shared_filenames": 30,
+      "annotation_sha256": {
+        "train": "6788902479bc0ffd2838fb7160a778078f464ea6034ed76bb5a0e40263cb9e78",
+        "val": "eb72a68f5065d9ade1805b496eecdcd14ca275e5f1bc6aae7e07279bddadfdc7",
+        "test": "9eb5805ca031cebcd70bab4a4aa0c89d98646c206d333803a8d5b10ea7fe9960"
+      }
+    },
+    "pannuke": [
+      "pannuke-fold1-train-fold2-val-fold3-test",
+      "pannuke-fold2-train-fold1-val-fold3-test",
+      "pannuke-fold3-train-fold2-val-fold1-test"
+    ]
+  },
+  "segmentation": {
+    "cellpose": {"resolution": 512, "resize": "pad", "layers": [23], "class_weight": "none"},
+    "conic": {"resolution": 256, "resize": "stretch", "layers": [4, 11, 17, 23], "class_weight": "sqrt_inverse", "split": "official-baseline-fold0-nested-v1"},
+    "livecell": {"resolution": 512, "resize": "pad", "layers": [4, 11, 17, 23], "class_weight": "none", "split": "official-coco-train-val-test"},
+    "monuseg": {"resolution": 768, "resize": "pad", "layers": [23], "class_weight": "none"},
+    "multimodal_cellseg": {"resolution": 512, "resize": "pad", "layers": [23], "class_weight": "none"},
+    "pannuke": {"resolution": 256, "resize": "stretch", "layers": [4, 11, 17, 23], "class_weight": "none"},
+    "tissuenet": {"resolution": 256, "resize": "stretch", "layers": [23], "class_weight": "none"},
+    "bbbc038": {
+      "resolution": 512,
+      "resize": "pad",
+      "layers": [4, 11, 17, 23],
+      "class_weight": "none",
+      "reporting_status": "observational"
+    }
+  }
+}

@@ -131,7 +131,23 @@ def ac_compile_parallelize(
                 preserve_rng_state=True,
             )
             logger.info("using selective checkpointing on backbone with selective policy")
+        num_blocks = len(backbone.blocks)
+        checkpointing_blocks = int(getattr(cfg.train, "checkpointing_blocks", 0) or num_blocks)
+        if not 1 <= checkpointing_blocks <= num_blocks:
+            raise ValueError(
+                f"train.checkpointing_blocks must be 0 or in [1, {num_blocks}], got {checkpointing_blocks}"
+            )
+        first_checkpointed_block = num_blocks - checkpointing_blocks
+        logger.info(
+            "activation checkpointing %d/%d backbone blocks (indices %d-%d)",
+            checkpointing_blocks,
+            num_blocks,
+            first_checkpointed_block,
+            num_blocks - 1,
+        )
         for i, b in enumerate(backbone.blocks):
+            if i < first_checkpointed_block:
+                continue
             backbone.blocks[i] = _checkpointing_wrapper(b)
 
     # 2/ Compile blocks

@@ -256,6 +256,11 @@ gram:
   use_loss: false # (bool) if true gram is used, else not
   compute_stats: false # (bool): if true compute auxilliary stats
   loss_weight: 1.0 # (float): weight of the loss
+  inter_image_loss_weight: 0.0 # (float): relative weight of the per-crop CLS relation Gram loss
+  global_relation_loss_weight: 0.0 # (float): independent weight for the decoupled global-anchor relation loss
+  global_relation_ckpt: null # (str): permanently frozen teacher for cross-image relations
+  global_relation_scope: global # (str): global gathers the per-view relation graph across ranks
+  global_relation_observation_protocol: clean_teacher # clean_teacher | mask_matched_student
   ema_teacher: false # (bool): using the EMA teacher as GRAM teacher
   ckpt: null  #(str): Checkpoint to the teacher
   it_load_ema_teacher: -1 # (int): iteration at which the ema teacher is loaded into the gram teacher
@@ -293,6 +298,7 @@ train:
   centering: "sinkhorn_knopp" # or "sinkhorn_knopp"
   checkpointing: false
   checkpointing_full: false  # aggressive checkpointing
+  checkpointing_blocks: 0  # 0 checkpoints all backbone blocks; otherwise checkpoint the last N
   compile: true
   cudagraphs: false
   sharded_eval_checkpoint: false

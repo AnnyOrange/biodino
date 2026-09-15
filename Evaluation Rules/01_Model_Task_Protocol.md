@@ -1,6 +1,6 @@
 # 01 — Model and Task Protocol
 
-状态：APPROVED（2026-09-09）。
+状态：APPROVED（v3，2026-09-11）。
 
 ## 1. 比较单元
 
@@ -49,10 +49,13 @@
 | regression | **64** | best/fallback；count 全图不 crop | 同上 | `StandardScaler + Ridge(alpha=1.0)`；BBBC013 例外见数据规则 | R2；同时保留 MAE/Spearman |
 | retrieval/clustering | **64** | resize 256 + center crop 224 | 同上，L2 normalized | cosine retrieval；MiniBatchKMeans + Hungarian alignment，seed 0 | Recall@1 和 NMI |
 | segmentation | **32** | dataset-specific，见下表 | dataset-specific last1/even4 patch tokens | frozen encoder + linear probe，50 epochs，probe batch 32，eval every 50，seed 0 | test mDice；同时保留 mIoU/AJI/AP/bPQ |
-| detection proxy | **8** | 224 stretch | final block patch map | frozen center-to-patch linear head，AdamW，5 epochs，seed 0 | test patch F1 |
+| detection proxy | **8** | 224 stretch | final block patch map | frozen center-to-patch linear head，AdamW，5 epochs，seed 0 | v3 无正式 detection aggregate；BBBC038 仅 observation，保存 test patch F1 |
 | OOD | **64** | resize 256 + crop 224 | final CLS + patch mean | fixed ID/OOD protocol，seed 0 | AUROC（与 ID 均值分开） |
+| cell tracking | **8** | CTC native 2-D/3-D geometry | final patch map / dense features | frozen encoder + fixed instance head + deterministic linker；sequence/domain-heldout，seed 0 | TRA、SEG；同时保存 detection AP、instance mDice |
 
 注意：这里 batch 64 指 frozen classification/regression/retrieval/OOD。segmentation 的 feature/probe batch 32 和 detection batch 8 是任务协议本身，不是为了挤显存临时降低。
+
+RxRx3-core 是 retrieval/clustering 的固定多通道例外：所有模型先对六个 Cell Painting channels 分别做 p01/p99 normalization，再将 (1,2)、(3,4)、(5,6) pair-mean 为 RGB；禁止根据模型选择不同 channel mapping。正式 batch 仍为 64，使用全 eligible-gene plate-disjoint manifest；2026-09-10 的 128-gene、batch-4 screen 只能作为纳入决策依据。
 
 ## 5. Classification / regression resolution
 
@@ -65,18 +68,18 @@
 | cyclops-protein-loc | 224 | 256 | 同上 |
 | midog25-atypical | 384 | 439 | 同上 |
 | chestmnist | 512 | 585 | 同上 |
-| conic-cell-count | 224 | 224 | 保留完整计数区域，不做 center crop |
-| livecell-cell-count | 224 | 224 | 保留完整计数区域，不做 center crop |
+| conic-cell-count | 224 | 224 | v2/v3 排除；仅供历史结果复核 |
+| livecell-cell-count | 224 | 224 | v2/v3 排除；仅供历史结果复核 |
 | 其他合法 classification/regression | 224 | 256 | 固定 fallback；不能按机器改变 |
 
 ## 6. Segmentation dataset-best protocol
 
 | 数据集 | feature resolution | resize | layers | class weighting |
 |---|---:|---|---|---|
-| bbbc038 | 512 | pad | even4 | none |
+| bbbc038 | 512 | pad | even4 | none；仅 observation |
 | cellpose | 512 | pad | last1 | none |
-| conic | 256 | stretch | even4 | sqrt-inverse |
-| livecell | 512 | pad | even4 | none |
+| conic | 256 | stretch | even4 | sqrt-inverse；source-grouped split |
+| livecell | 512 | pad | even4 | none；official split |
 | monuseg | 768 | pad | last1 | none |
 | multimodal_cellseg | 512 | pad | last1 | none |
 | pannuke | 256 | stretch | even4 | none |
@@ -99,7 +102,7 @@
 
 ## 8. External FM dense addendum
 
-PanNuke/CoNIC 的 external-FM 比较使用同一 dataset split、256 stretch、feature batch 32、probe batch 32、50 epochs、eval every 50、seed 0；CoNIC 同样使用 `sqrt_inverse` class weighting。固定位置网格的 ViT 在 256 输入上显式插值 spatial positional embedding，禁止悄悄退回 model-native 224 crop。
+v3 正式 external-FM segmentation comparison 必须覆盖 Tier A 的 6 个数据集。其中特殊 dense 规则为：PanNuke 使用相同的三折协议；CoNIC 使用 `official-baseline-fold0-nested-v1` source-grouped split 和 `sqrt_inverse` class weight；两者均为 256 stretch。LIVECell 必须使用固定 hash 的 official COCO train/val/test。所有数据集均使用 feature batch 32、probe batch 32、50 epochs、eval every 50、seed 0。固定位置网格的 ViT 在 256 输入上显式插值 spatial positional embedding，禁止悄悄退回 model-native 224 crop。
 
 外部架构没有与 DINO block `[4,11,17,23]` 一一对应的中间层定义，因此统一使用各模型最后一个 spatial dense map，并在结果中记录 `feature_layers=external-final-dense-map`。该表属于 external-FM dense comparison，不能伪称为 DINO even4 layer ablation。正式模型集合固定为：`dinov2 mae siglip2 bioclip cytoself jump_cp cytoimagenet pe uni conch phikon2 virchow2 gigapath hoptimus0`。某模型在 24 GiB、batch 32 下 OOM 时记录 `FAILED_RESOURCE`，禁止私自降低 batch 后混入主表。
 

@@ -69,7 +69,9 @@ awk -v t="$TEACHER_WARMUP_EPOCHS" -v e="$EPOCHS" -v r="$REF_TEACHER_WARMUP" -v r
   echo "ERROR: teacher temp ramp $TEACHER_WARMUP_EPOCHS not proportional to EPOCHS=$EPOCHS" >&2; exit 2
 }
 
-CHECKPOINT_PERIOD=$((EPOCHS * OFFICIAL_EPOCH_LENGTH))
+# Default to the duration endpoint, but allow campaigns to retain denser
+# resumable checkpoints (for example, CHECKPOINT_PERIOD=1025 for every epoch).
+CHECKPOINT_PERIOD=${CHECKPOINT_PERIOD:-$((EPOCHS * OFFICIAL_EPOCH_LENGTH))}
 RGB_MEAN=${RGB_MEAN:-'[0.514666,0.488834,0.498267]'}
 RGB_STD=${RGB_STD:-'[0.338707,0.339202,0.336091]'}
 NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}

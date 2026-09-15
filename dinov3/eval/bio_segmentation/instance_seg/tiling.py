@@ -33,11 +33,13 @@ def forward_tta(model: torch.nn.Module, tile: torch.Tensor) -> Dict[str, Optiona
             o = model(t)
             npm, hv, tp = o["np"], o["hv"].clone(), o.get("tp")
             if fh:
-                npm = torch.flip(npm, [3]); hv = torch.flip(hv, [3])
+                npm = torch.flip(npm, [3])
+                hv = torch.flip(hv, [3])
                 tp = torch.flip(tp, [3]) if tp is not None else None
                 hv[:, 0] = -hv[:, 0]
             if fv:
-                npm = torch.flip(npm, [2]); hv = torch.flip(hv, [2])
+                npm = torch.flip(npm, [2])
+                hv = torch.flip(hv, [2])
                 tp = torch.flip(tp, [2]) if tp is not None else None
                 hv[:, 1] = -hv[:, 1]
             acc_np = npm.float() if acc_np is None else acc_np + npm.float()
@@ -141,6 +143,7 @@ def sliding_window_predict(
     tta: bool = False,
     tta_mode: str = "flip4",
     blend_mode: str = "uniform",
+    tile_batch_size: int = 1,
 ) -> Dict[str, Optional[np.ndarray]]:
     """Run a DINOHoVerNet over a single (possibly large) image.
 
@@ -150,12 +153,14 @@ def sliding_window_predict(
         crop_size: tile size (must be a multiple of patch_size).
         stride: tile stride (overlap = crop_size - stride).
         num_types: 0 for binary datasets, else number of type channels.
+        tile_batch_size: number of spatial tiles evaluated in one model call.
 
     Returns:
         dict of numpy arrays at the original (H, W): "np" [2,H,W], "hv" [2,H,W],
         and "tp" [C,H,W] (or None).
     """
-    device = image.device
+    if tile_batch_size < 1:
+        raise ValueError("tile_batch_size must be positive")
     _, H, W = image.shape
 
     # Pad to >= crop and a multiple of patch_size (reflect padding).
@@ -169,21 +174,34 @@ def sliding_window_predict(
     count = np.zeros((ph, pw), dtype=np.float32)
     blend = _blend_window(crop_size, blend_mode)
 
-    for y in _starts(ph, crop_size, stride):
-        for x in _starts(pw, crop_size, stride):
-            tile = img[:, y : y + crop_size, x : x + crop_size].unsqueeze(0)
-            if not tta:
-                out = model(tile)
-            elif tta_mode == "flip4":
-                out = forward_tta(model, tile)
-            elif tta_mode == "dihedral8":
-                out = forward_dihedral_tta(model, tile)
-            else:
-                raise ValueError(f"Unsupported TTA mode: {tta_mode}")
-            np_acc[:, y : y + crop_size, x : x + crop_size] += out["np"][0].float().cpu().numpy() * blend[None]
-            hv_acc[:, y : y + crop_size, x : x + crop_size] += out["hv"][0].float().cpu().numpy() * blend[None]
-            if tp_acc is not None and out.get("tp") is not None:
-                tp_acc[:, y : y + crop_size, x : x + crop_size] += out["tp"][0].float().cpu().numpy() * blend[None]
+    coordinates = [
+        (y, x)
+        for y in _starts(ph, crop_size, stride)
+        for x in _starts(pw, crop_size, stride)
+    ]
+    for offset in range(0, len(coordinates), tile_batch_size):
+        batch_coordinates = coordinates[offset : offset + tile_batch_size]
+        tiles = torch.stack([
+            img[:, y : y + crop_size, x : x + crop_size]
+            for y, x in batch_coordinates
+        ])
+        if not tta:
+            out = model(tiles)
+        elif tta_mode == "flip4":
+            out = forward_tta(model, tiles)
+        elif tta_mode == "dihedral8":
+            out = forward_dihedral_tta(model, tiles)
+        else:
+            raise ValueError(f"Unsupported TTA mode: {tta_mode}")
+        np_batch = out["np"].float().cpu().numpy()
+        hv_batch = out["hv"].float().cpu().numpy()
+        tp_batch = out.get("tp")
+        tp_batch = tp_batch.float().cpu().numpy() if tp_batch is not None else None
+        for index, (y, x) in enumerate(batch_coordinates):
+            np_acc[:, y : y + crop_size, x : x + crop_size] += np_batch[index] * blend[None]
+            hv_acc[:, y : y + crop_size, x : x + crop_size] += hv_batch[index] * blend[None]
+            if tp_acc is not None and tp_batch is not None:
+                tp_acc[:, y : y + crop_size, x : x + crop_size] += tp_batch[index] * blend[None]
             count[y : y + crop_size, x : x + crop_size] += blend
 
     count = np.maximum(count, 1e-6)

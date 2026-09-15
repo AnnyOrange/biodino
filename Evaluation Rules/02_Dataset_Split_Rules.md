@@ -1,6 +1,6 @@
 # 02 — Dataset and Split Rules
 
-状态：APPROVED（2026-09-09）。这里区分“已有实现”和“是否适合正式发表”；发现有泄漏风险时，阻断评测，不沿用错误 split。
+状态：APPROVED（v3，2026-09-11）。这里区分“正式纳入”“观察”和“排除”；发现有泄漏风险时，阻断评测，不沿用错误 split。
 
 ## 1. 固定数据集层级
 
@@ -9,27 +9,39 @@
 - classification/multilabel（15）：`bloodmnist pathmnist tissuemnist breastmnist organamnist organcmnist organsmnist dermamnist octmnist pneumoniamnist retinamnist chestmnist bbbc048-cellcycle cyclops-protein-loc midog25-atypical`
 - regression（1）：`bbbc005`
 - retrieval/clustering（2，LC25000 退出后）：`nct-crc-he-1k crc-val-he-7k`
-- segmentation（7）：`bbbc038 cellpose conic livecell monuseg pannuke tissuenet`
-- detection（1）：`livecell`
+- segmentation（6）：`cellpose conic livecell monuseg pannuke tissuenet`
+- detection（0）：当前无正式数据集
 
-Tier A 对应既有 HS6 cross-model 主口径，但删除了 LC25000。聚合名称应改为 `Ret2`，不能继续叫旧的 `Ret3`。
+Tier A 从既有 HS6 cross-model 口径中删除 LC25000 和 BBBC038；CoNIC/LIVECell 仅保留原生 segmentation。retrieval 聚合名称为 `Ret2`，不能继续叫旧的 `Ret3`；segmentation 聚合含当前列出的 6 个正式数据集。
 
 ### Tier B：完整生物学与跨成像扩展（正式 full suite 必须单独报告）
 
 - classification：`pcam nct-crc-he chammi-allen-task1 chammi-allen-task2 chammi-cp-task1 chammi-cp-task2 chammi-cp-task3 chammi-hpa-task1 chammi-hpa-task2`
-- regression：`bbbc013 conic-cell-count livecell-cell-count`
-- retrieval/clustering：`hpa-subcellular rxrx1-cross`
+- regression：`bbbc013`
+- retrieval/clustering：`hpa-subcellular rxrx1-cross rxrx3-core`
 - segmentation：`multimodal_cellseg`
-- detection：`bbbc038 conic`
+- detection：当前无正式数据集
+- cell tracking：`ctc`
 - OOD：`xray cryo`
 
 Tier A 和 Tier B 都要跑，分别聚合；禁止用扩展集替换主集中的缺失数据。
+
+### Observation：只观察，不进入 aggregate / 主排名
+
+- segmentation：`bbbc038`
+- detection：`bbbc038`
+
+BBBC038 结果可以继续保存和横向查看，但必须标记 `OBSERVATIONAL`；不得计入 Tier A、Tier B、overall mean、胜负统计或模型主排名。
 
 ### 禁止进入正式结果
 
 - `lc25000`：已退出所有正式 classification/retrieval/clustering 评测。
 - `nct-crc-he-100`：样本过小，只允许 smoke/debug。
+- `regression/conic-cell-count`、`detection/conic`：退出正式评估与 aggregate；`segmentation/conic` 仍正式纳入。
+- `regression/livecell-cell-count`、`detection/livecell`：退出正式评估与 aggregate；`segmentation/livecell` 仍正式纳入。
+- `bbbc038`：只允许 observation campaign，禁止出现在 formal Tier A/Tier B manifest。
 - CHAMMI `hpa-task3`、`cp-task4`：Train 中不存在测试标签，是 open-set task；在专门 open-set protocol 完成前禁止用 closed-set logistic regression。
+- `midogpp`：不纳入正式矩阵；2026-09-10 candidate-crop proxy 结果只保留诊断，不进入 aggregate 或主排名。
 - 任意 `max_samples` / `max_per_class` / `SMOKE=1` 结果。
 
 ## 2. Classification / multilabel split
@@ -58,8 +70,8 @@ Tier A 和 Tier B 都要跑，分别聚合；禁止用扩展集替换主集中�
 |---|---|---|
 | bbbc005 | committed 80/20 group split；group=`plate/count/field`；7675 train / 1925 test，seed 0 | 合法；split SHA256 `6bcfd65a7bd38e9a2e919f850409bc5c59eb59b6beece3ef62ce5d15840575b4` |
 | bbbc013 | 按 compound 分开，对 log1p dose 做 leave-one-replicate-row-out；每 compound 4 folds，每 fold 36 train/12 test | 合法；不能改成普通随机 80/20 |
-| conic-cell-count | prepared source-image-grouped CoNIC-10fold-v1 train/test | 合法，启动前验证 manifest hash |
-| livecell-cell-count | LIVECell official COCO train → official test | 合法 official split |
+| conic-cell-count | prepared source-image-grouped CoNIC-10fold-v1 train/test | 协议技术上可运行，但 v2 排除，不进入正式评估 |
+| livecell-cell-count | LIVECell official COCO train → official test | 协议技术上可运行，但 v2 排除，不进入正式评估 |
 
 BBBC013 的 `bbbc013.json` group split 文件存在，但正式 BBBC013 regression 采用 compound OOF 特例；不得误用普通 group 80/20。
 
@@ -71,45 +83,54 @@ retrieval/clustering 不训练 supervised probe；“split”指固定样本集�
 |---|---|---|
 | nct-crc-he-1k | 固定 1K 集合，within-set leave-one-out；self-match 屏蔽 | Tier A 合法 |
 | crc-val-he-7k | 固定 7K validation patient 集合，within-set leave-one-out；self-match 屏蔽 | Tier A 合法 |
-| hpa-subcellular | `hpa_same_gene_query_gallery.csv` 的 disjoint query/gallery；clustering 使用 single-location manifest | Tier B 合法，manifest 必须 hash 固定 |
-| rxrx1-cross | `rxrx1_official_cross_experiment_core.csv` 的跨 experiment query/gallery；默认 balanced core，不用 full | Tier B 合法，manifest 必须 hash 固定 |
+| hpa-subcellular | `hpa_same_gene_query_gallery.csv` 的 disjoint query/gallery；clustering 使用 single-location manifest | **v2 正式纳入 Tier B**；manifest 必须 hash 固定 |
+| rxrx1-cross | `rxrx1_official_cross_experiment_core.csv` 的跨 experiment query/gallery；默认 balanced core，不用 full | **v2 正式纳入 Tier B**；manifest 必须 hash 固定 |
+| rxrx3-core | CRISPR query-guide；每个 eligible gene 使用确定性的 gallery/query well，gene 内 plate-disjoint；排除 same-well、same-plate 和不足两个 plate 的 gene；六通道固定用逐通道 p01/p99 后 pair-mean `compact3` | **v3 正式纳入 Tier B**；必须生成全 eligible-gene 固定 manifest 并锁定 hash；128-gene quick screen 不可复用为正式结果 |
 
 统一 feature 为 final CLS + final patch mean、L2 normalized、224 crop、batch 64。retrieval 主指标 Recall@1，clustering 主指标 NMI；同时保存 Recall@5/10、mAP、MRR、ARI 和 cluster accuracy。
 
-## 5. Segmentation / detection split 审计
+## 5. CTC cell-tracking split
+
+CTC 以原生 `cell_tracking` 任务正式纳入 Tier B，覆盖本地 20 个官方 labelled training datasets（2-D、3-D 均含）。从 labelled training sequences 建立固定的 sequence-and-domain held-out folds，训练数据与 held-out sequence/domain 不得交叉。主指标为 TRA、SEG，同时保存 detection AP 和 instance mDice；必须按 domain 分层报告，并另外给 macro average。
+
+2026-09-10 的 `ctc_2d_count_proxy_v1` 只有十个二维域、01→02 的 80 帧 count regression，不是 tracking/segmentation，状态保持 `OBSERVATIONAL`，不得进入 v3 CTC cell-tracking aggregate。正式启动前必须提交 split manifest/hash、原生 evaluator 和 20-domain 完整性检查。
+
+## 6. Segmentation / detection split 审计
 
 | 数据集 | 当前 train / val / test | 审计结论 |
 |---|---|---|
-| LIVECell | official COCO train / val / test | 合法；segmentation 与 detection 共用 |
+| LIVECell | official COCO train / val / test | **Tier A 正式纳入**；必须原样使用官方 split 与固定 annotation hash，不自行重切 |
 | TissueNet | official train / val / test NPZ | 合法 |
 | MoNuSeg | official train 中固定 seed42 的 20% 做 val；official test 做 test | 合法；`monuseg_val_indices.npy` 必须固定 |
 | Cellpose | public train pool 的确定性前 80%/后 20% 为 train/val；official test 为 test | 可用；必须固定排序与是否包含 `train_cyto2` |
-| BBBC038 | 有 mask 的 stage1_train 做 seed42 70/15/15；官方 test 无 GT 不使用 | 可用但不是 official test；必须固定 `bbbc038_splits.npz` |
+| BBBC038 | 有 mask 的 stage1_train 做 seed42 70/15/15；官方 test 无 GT 不使用 | **OBSERVATIONAL**；可观察但不进入 aggregate / 主排名，必须固定 `bbbc038_splits.npz` |
 | Multimodal_CellSeg | train/val CSV；`test_source_heldout.csv` 只含 held-out Tuning source | 合法 source-heldout；WSI/超大图过滤规则必须固定 |
-| CoNIC | official-baseline outer fold 0 + nested validation | **正式 v1**：按 source image 分组、cohort 分层；外层 80/20、seed 5、10 splits 取 fold 0；外层 train 内再以 seed 5 按 source 分层划 87.5/12.5，形成约 70/10/20；公开 20% 只能称 development holdout，不能称隐藏 challenge test |
-| PanNuke | 官方 3-fold 轮换 | **正式 v1**：分别跑 `F1 train/F2 val/F3 test`、`F2 train/F1 val/F3 test`、`F3 train/F2 val/F1 test`；三组均报告并取均值，禁止 val=test |
+| CoNIC | official-baseline outer fold 0 + nested validation | **Tier A 正式纳入**；必须按 source-image grouped split 重跑 |
+| PanNuke | 官方 3-fold 轮换 | **正式 v2/v3**：分别跑 `F1 train/F2 val/F3 test`、`F2 train/F1 val/F3 test`、`F3 train/F2 val/F1 test`；三组均报告并取均值，禁止 val=test |
 
 当前已定位的固定文件：
 
 - BBBC038 split SHA256：`4eb72dc1e58453126893261fedff661b7eb58dc9863ae04d991e7a5282f57ac4`（100 val、100 test，其余 train）。
-- CoNIC legacy random index（3984/498/499）仅用于识别旧结果，禁止正式使用。正式协议标识为 `official-baseline-fold0-nested-v1`；本地得到 3469 train / 494 val / 1018 development holdout，index 与 source 均两两不相交。划分由 `patch_info.csv` 和确定性算法运行时生成，campaign 必须记录该 CSV 的 SHA256。
+- CoNIC legacy random index（3984/498/499）仅用于识别旧结果。v2/v3 正式 grouped 协议标识为 `official-baseline-fold0-nested-v1`；本地得到 3469 train / 494 val / 1018 development holdout，index 与 source 均两两不相交。新 formal segmentation campaign 必须调度它并重跑。
+- LIVECell 官方 COCO JSON 固定为 3253/570/1564 条 image records，对应 3188/569/1512 个 unique filenames；官方文件本身含重复 image records，且 train/val 有 30 个同名文件。v2/v3 按用户决定原样采用官方 split，通过三个 annotation SHA256 锁定（当前见 `protocol_v3.json`），不得静默去重或另行随机切分；报告样本量时同时记录 records 与 unique filenames。
 - PanNuke 本地 fold 大小固定为 F1=2656、F2=2523、F3=2722；三个正式协议标识分别为 `pannuke-fold1-train-fold2-val-fold3-test`、`pannuke-fold2-train-fold1-val-fold3-test`、`pannuke-fold3-train-fold2-val-fold1-test`。
 - MoNuSeg val index SHA256：`932a09d0e936bd2ee83438145f6e6955dac224b747f2536ae06d31c764ff5c91`（7 个 val）。
 - Multimodal split：876 train、176 val、101 source-heldout test；test source 为 `Tuning`，与 train/val source 集合分开。三个 CSV 的 SHA256 必须由 campaign manifest 完整记录。
 
-## 6. Split 正确性的启动前自动检查
+## 7. Split 正确性的启动前自动检查
 
 每个 campaign 必须通过：
 
-1. train/val/test 路径或 sample id 两两无 overlap；
+1. train/val/test 路径或 sample id 两两无 overlap；LIVECell 是显式例外，必须逐字节匹配已固定的官方 COCO JSON，并同时报告其官方文件中的重复 records/同名文件审计；
 2. group-aware 数据集的 group id 两两无 overlap；
 3. classification test labels 是 train labels 的子集（open-set 专项除外）；
 4. 文件数量、类别数、split hash 与本规则/manifest 相同；
 5. retrieval query/gallery 角色不重复，且每个 query label 在 gallery 中存在；
 6. result 中记录的 `n_train/n_test/n_query/n_gallery` 与 manifest 相同；
-7. PanNuke 必须展开为三个 protocol 并分别输出；CoNIC 必须使用 `official-baseline-fold0-nested-v1`，否则结果标记 `INVALID_PROTOCOL`。
+7. PanNuke 必须展开为三个 protocol 并分别输出；formal segmentation manifest 必须包含 CoNIC/LIVECell。若 formal manifest 出现 `regression/{conic-cell-count,livecell-cell-count}`、`detection/{conic,livecell}` 或任意任务的 BBBC038，直接标记 `INVALID_PROTOCOL`。BBBC038 必须使用独立 observation campaign。
+8. v3 formal manifest 必须包含 `retrieval/rxrx3-core` 和 `cell_tracking/ctc`；两者 manifest SHA256 仍为 `PENDING_IMPLEMENTATION` 时禁止启动。任何 `midogpp` formal cell 直接标记 `INVALID_PROTOCOL`。
 
-## 7. 官方依据
+## 8. 官方依据
 
 - PanNuke 原论文说明数据被随机分成三个 training/validation/testing folds，组织类型在三份中均分，并对三个 split 的结果取平均：<https://arxiv.org/abs/2003.10778>。
 - CoNIC 官方 baseline 的 `generate_split.py` 使用 `patch_info.csv` 的 source 前缀分组、cohort 分层、`SEED=5`、`StratifiedShuffleSplit(n_splits=10, train_size=.8, test_size=.2)`；官方 baseline 训练示例使用 fold 0：<https://github.com/vqdang/hover_net/blob/conic/generate_split.py>、<https://github.com/vqdang/hover_net/tree/conic>。

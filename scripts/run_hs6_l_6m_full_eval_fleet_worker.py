@@ -149,11 +149,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poll-seconds", type=float, default=30)
     parser.add_argument("--ready-age-seconds", type=float, default=30)
     parser.add_argument("--claim-stale-seconds", type=float, default=12 * 3600)
+    parser.add_argument(
+        "--claim-heartbeat-seconds",
+        type=float,
+        default=60,
+        help="Refresh an active cross-host claim lease at this interval.",
+    )
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument("--official-epoch-length", type=int, default=DEFAULT_OFFICIAL_EPOCH_LENGTH)
+    parser.add_argument(
+        "--effective-global-batch",
+        type=int,
+        default=1024,
+        help="Effective training batch used to derive image_visits in the adapter manifest.",
+    )
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--full-eval-period", type=int, default=DEFAULT_FULL_EVAL_PERIOD)
     parser.add_argument("--expected-checkpoints", type=int, default=0)
+    parser.add_argument(
+        "--exclude-datasets",
+        default="",
+        help="Comma- or space-separated dataset names to remove from every lane.",
+    )
+    parser.add_argument(
+        "--include-lanes",
+        default="",
+        help="Comma- or space-separated lane names to run; empty keeps every lane.",
+    )
+    parser.add_argument(
+        "--claim-reservation-marker",
+        default="",
+        help="Take over a pre-created claim only when it contains this exact marker file.",
+    )
     parser.add_argument(
         "--min-local-checkpoint-id",
         type=int,
@@ -234,6 +261,7 @@ def prepare_adapter(
     checkpoint_id: int,
     source: Path,
     official_epoch_length: int,
+    effective_global_batch: int,
 ) -> None:
     input_root.mkdir(parents=True, exist_ok=True)
     with (input_root / ".manifest.lock").open("a+") as lock:
@@ -259,7 +287,7 @@ def prepare_adapter(
             updates = checkpoint_id + 1
             with manifest.open("a") as handle:
                 handle.write(
-                    f"{checkpoint_id}\t{updates * 1024}\t"
+                    f"{checkpoint_id}\t{updates * effective_global_batch}\t"
                     f"{updates / official_epoch_length:.8f}\tteacher\t{source}\n"
                 )
 
@@ -276,7 +304,8 @@ def clear_stale_claim(claim: Path, stale_seconds: float) -> bool:
     owner_path = claim / "owner.json"
     try:
         owner = json.loads(owner_path.read_text())
-        age = time.time() - float(owner["claimed_at_unix"])
+        lease_time = owner.get("heartbeat_at_unix", owner["claimed_at_unix"])
+        age = time.time() - float(lease_time)
     except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         age = time.time() - claim.stat().st_mtime
         owner = {}
@@ -294,11 +323,34 @@ def clear_stale_claim(claim: Path, stale_seconds: float) -> bool:
     return not claim.exists()
 
 
-def claim_lane(claim_root: Path, key: str, owner: dict[str, object], stale_seconds: float) -> Path | None:
+def refresh_claim_lease(claim: Path, owner: dict[str, object]) -> None:
+    heartbeat_unix = time.time()
+    atomic_json(
+        claim / "owner.json",
+        {
+            **owner,
+            "heartbeat_at_unix": heartbeat_unix,
+            "heartbeat_at_utc": utc_now(),
+        },
+    )
+
+
+def claim_lane(
+    claim_root: Path,
+    key: str,
+    owner: dict[str, object],
+    stale_seconds: float,
+    reservation_marker: str = "",
+) -> Path | None:
     claim = claim_root / f"{key}.lock"
     try:
         claim.mkdir()
     except FileExistsError:
+        marker = claim / reservation_marker if reservation_marker else None
+        if marker is not None and marker.is_file():
+            marker.unlink()
+            atomic_json(claim / "owner.json", owner)
+            return claim
         if not clear_stale_claim(claim, stale_seconds):
             return None
         try:
@@ -341,7 +393,9 @@ def base_env(args: argparse.Namespace, checkpoint_id: int, jobs: int) -> dict[st
             "DET_BATCH_SIZE": "4",
             "DETECTION_CHANNEL_POLICY": "auto",
             "OOD_DEVICE": f"cuda:{args.gpu}",
-            "OOD_BATCH_SIZE": "32",
+            "OOD_BATCH_SIZE": os.environ.get(
+                "OOD_BATCH_SIZE", os.environ.get("FROZEN_BATCH_SIZE", "64")
+            ),
             "OOD_NUM_WORKERS": "2",
             "NUM_WORKERS": "2",
             "EVAL_BLAS_THREADS": "1",
@@ -353,7 +407,14 @@ def base_env(args: argparse.Namespace, checkpoint_id: int, jobs: int) -> dict[st
     return env
 
 
-def run_lane(args: argparse.Namespace, checkpoint_id: int, lane: Lane, log_path: Path) -> int:
+def run_lane(
+    args: argparse.Namespace,
+    checkpoint_id: int,
+    lane: Lane,
+    log_path: Path,
+    claim: Path,
+    owner: dict[str, object],
+) -> int:
     output = args.output_root / f"point_{checkpoint_id}" / lane.name
     if args.jobs_per_gpu > 0:
         jobs = args.jobs_per_gpu
@@ -373,16 +434,22 @@ def run_lane(args: argparse.Namespace, checkpoint_id: int, lane: Lane, log_path:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", buffering=1) as log:
         print(f"[{utc_now()}] lane={lane.name} command={' '.join(command)}", file=log)
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=args.repo,
             env=env,
             stdout=log,
             stderr=subprocess.STDOUT,
-            check=False,
         )
-        print(f"[{utc_now()}] lane={lane.name} rc={result.returncode}", file=log)
-    return result.returncode
+        refresh_claim_lease(claim, owner)
+        while True:
+            try:
+                returncode = process.wait(timeout=args.claim_heartbeat_seconds)
+                break
+            except subprocess.TimeoutExpired:
+                refresh_claim_lease(claim, owner)
+        print(f"[{utc_now()}] lane={lane.name} rc={returncode}", file=log)
+    return returncode
 
 
 def update_checkpoint_status(output_root: Path, checkpoint_id: int, lanes: tuple[Lane, ...]) -> None:
@@ -425,6 +492,10 @@ def validate_args(args: argparse.Namespace) -> None:
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise SystemExit(f"missing required path(s): {missing}")
+    if args.claim_heartbeat_seconds <= 0:
+        raise SystemExit("claim heartbeat interval must be positive")
+    if args.claim_stale_seconds <= 2 * args.claim_heartbeat_seconds:
+        raise SystemExit("claim stale interval must exceed two heartbeat intervals")
 
 
 def main() -> int:
@@ -438,9 +509,29 @@ def main() -> int:
     expected_checkpoints = args.expected_checkpoints or (
         args.official_epoch_length * args.epochs // args.full_eval_period
     )
-    lanes = LANES
+    excluded_datasets = set(args.exclude_datasets.replace(",", " ").split())
+    included_lanes = set(args.include_lanes.replace(",", " ").split())
+    unknown_lanes = included_lanes - {lane.name for lane in LANES}
+    if unknown_lanes:
+        raise SystemExit(f"unknown lane name(s): {sorted(unknown_lanes)}")
+    lanes = tuple(
+        Lane(
+            name=lane.name,
+            tasks=lane.tasks,
+            datasets_env=lane.datasets_env,
+            datasets=" ".join(
+                dataset for dataset in lane.datasets.split() if dataset not in excluded_datasets
+            ),
+            jobs=lane.jobs,
+            extra_env=lane.extra_env,
+        )
+        for lane in LANES
+    )
+    lanes = tuple(lane for lane in lanes if lane.datasets)
+    if included_lanes:
+        lanes = tuple(lane for lane in lanes if lane.name in included_lanes)
     if args.dense_first:
-        lanes = tuple(sorted(LANES, key=lambda lane: lane.name not in DENSE_LANE_NAMES))
+        lanes = tuple(sorted(lanes, key=lambda lane: lane.name not in DENSE_LANE_NAMES))
 
     state_root = args.output_root / "_state"
     claim_root = state_root / "claims"
@@ -476,6 +567,7 @@ def main() -> int:
                     checkpoint_id,
                     source,
                     args.official_epoch_length,
+                    args.effective_global_batch,
                 )
                 update_checkpoint_status(args.output_root, checkpoint_id, lanes)
                 for lane in lanes:
@@ -502,13 +594,26 @@ def main() -> int:
                         "source": str(source),
                         "worker": worker,
                     }
-                    claim = claim_lane(claim_root, key, owner, args.claim_stale_seconds)
+                    claim = claim_lane(
+                        claim_root,
+                        key,
+                        owner,
+                        args.claim_stale_seconds,
+                        args.claim_reservation_marker,
+                    )
                     if claim is None:
                         continue
                     atomic_json(worker_status, {**owner, "state": "running"})
                     started = time.time()
                     log_path = log_root / f"{key}.{host}.attempt{attempts + 1}.log"
-                    returncode = run_lane(args, checkpoint_id, lane, log_path)
+                    returncode = run_lane(
+                        args,
+                        checkpoint_id,
+                        lane,
+                        log_path,
+                        claim,
+                        owner,
+                    )
                     if returncode == 0:
                         shutil.rmtree(
                             args.output_root / f"point_{checkpoint_id}" / lane.name / "cache",

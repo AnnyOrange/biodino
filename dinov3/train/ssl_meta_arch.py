@@ -16,7 +16,7 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.checkpoint import checkpoint as activation_checkpoint
+from torch.utils.checkpoint import checkpoint as activation_checkpoint, create_selective_checkpoint_contexts
 
 import dinov3.distributed as distributed
 from dinov3.checkpointer import init_fsdp_model_from_checkpoint
@@ -39,6 +39,7 @@ from dinov3.loss import (
     ConditionalMorphologyGraphLoss,
     ConditionalMorphologyGraphWeights,
     ConditionalFeaturePredictor,
+    CrossRankGramLoss,
     DINOLoss,
     DistributedSIGReg,
     ExpertConsensusResidualLoss,
@@ -316,6 +317,46 @@ class SSLMetaArch(nn.Module):
         student_model_dict = dict()
         teacher_model_dict = dict()
         gram_model_dict = dict()
+        gram_global_model_dict = dict()
+
+        gram_global_relation_loss_weight = float(
+            getattr(cfg.gram, "global_relation_loss_weight", 0.0)
+        )
+        gram_global_relation_scope = str(
+            getattr(cfg.gram, "global_relation_scope", "global")
+        ).lower()
+        gram_global_relation_observation_protocol = str(
+            getattr(cfg.gram, "global_relation_observation_protocol", "clean_teacher")
+        ).lower()
+        if gram_global_relation_loss_weight < 0:
+            raise ValueError("gram.global_relation_loss_weight must be non-negative")
+        if gram_global_relation_scope not in {"local", "global"}:
+            raise ValueError(
+                "gram.global_relation_scope must be 'local' or 'global', got "
+                f"{gram_global_relation_scope!r}"
+            )
+        if gram_global_relation_observation_protocol not in {
+            "clean_teacher",
+            "mask_matched_student",
+        }:
+            raise ValueError(
+                "gram.global_relation_observation_protocol must be 'clean_teacher' or "
+                f"'mask_matched_student', got {gram_global_relation_observation_protocol!r}"
+            )
+        if gram_global_relation_loss_weight > 0 and not cfg.gram.use_loss:
+            raise ValueError(
+                "gram.global_relation_loss_weight requires gram.use_loss=true"
+            )
+        if gram_global_relation_loss_weight > 0 and cfg.gram.ema_teacher:
+            raise ValueError(
+                "decoupled global-relation Gram requires a separate patch teacher, not gram.ema_teacher"
+            )
+        if gram_global_relation_loss_weight > 0 and not getattr(
+            cfg.gram, "global_relation_ckpt", None
+        ):
+            raise ValueError(
+                "gram.global_relation_ckpt is required when global_relation_loss_weight > 0"
+            )
 
         student_backbone, teacher_backbone, embed_dim = build_model_from_cfg(cfg)
         torch.cuda.empty_cache()
@@ -333,6 +374,12 @@ class SSLMetaArch(nn.Module):
             logger.info("Gram backbone built (gram.use_loss or compute_stats is enabled)")
         else:
             logger.info("Gram backbone skipped (gram.use_loss=False, compute_stats=False)")
+        if gram_global_relation_loss_weight > 0:
+            gram_global_backbone, _ = build_model_from_cfg(cfg, only_teacher=True)
+            torch.cuda.empty_cache()
+            gc.collect()
+            gram_global_model_dict["backbone"] = gram_global_backbone
+            logger.info("Decoupled global-relation Gram backbone built")
         logger.info(f"OPTIONS -- architecture : embed_dim: {embed_dim}")
 
         self.embed_dim = embed_dim  # D
@@ -1299,6 +1346,17 @@ class SSLMetaArch(nn.Module):
         self.gram_ema_teacher = False
         self.has_gram_teacher = False
         self.gram_teacher_initialized = False
+        self.gram_global_relation_loss_weight = gram_global_relation_loss_weight
+        self.gram_global_relation_scope = gram_global_relation_scope
+        self.gram_global_relation_observation_protocol = (
+            gram_global_relation_observation_protocol
+        )
+        self.gram_global_relation_ckpt = getattr(
+            self.cfg.gram, "global_relation_ckpt", None
+        )
+        self.has_gram_global_teacher = self.gram_global_relation_loss_weight > 0
+        self.gram_global_teacher_initialized = False
+        self.gram_global_teacher = None
         if self.gram_use_loss:
             # Gram regularization
             self.gram_loss = GramLoss(
@@ -1315,7 +1373,37 @@ class SSLMetaArch(nn.Module):
             else:
                 self.gram_teacher = None
 
+            if self.has_gram_global_teacher:
+                self.gram_global_teacher = nn.ModuleDict(gram_global_model_dict)
+                self.gram_global_teacher.requires_grad_(False)
+                self.gram_global_relation_loss = CrossRankGramLoss(
+                    apply_norm=self.cfg.gram.normalized,
+                    remove_only_teacher_neg=self.cfg.gram.remove_only_teacher_neg,
+                    remove_neg=self.cfg.gram.remove_neg,
+                    relation_scope=self.gram_global_relation_scope,
+                )
+                logger.info(
+                    "Global-relation Gram teacher parameter at init: %s",
+                    next(self.gram_global_teacher.named_parameters()),
+                )
+
             self.gram_loss_weight = self.cfg.gram.loss_weight
+            self.gram_inter_image_loss_weight = float(
+                getattr(self.cfg.gram, "inter_image_loss_weight", 0.0)
+            )
+            if self.gram_inter_image_loss_weight < 0:
+                raise ValueError(
+                    "gram.inter_image_loss_weight must be non-negative, got "
+                    f"{self.gram_inter_image_loss_weight}"
+                )
+            if (
+                self.gram_inter_image_loss_weight > 0
+                and self.gram_global_relation_loss_weight > 0
+            ):
+                raise ValueError(
+                    "Use either legacy gram.inter_image_loss_weight or the decoupled "
+                    "gram.global_relation_loss_weight, not both"
+                )
             if self.cfg.gram.get("loss_weight_schedule"):
                 iter_per_epoch = cfg.train.OFFICIAL_EPOCH_LENGTH
                 total_iterations = iter_per_epoch * cfg.optim.epochs
@@ -1364,6 +1452,18 @@ class SSLMetaArch(nn.Module):
 
             logger.info("OPTIONS -- GRAM")
             logger.info(f"OPTIONS -- GRAM -- loss_weight: {cfg.gram.loss_weight}")
+            logger.info(
+                "OPTIONS -- GRAM -- inter-image relation loss weight: %s",
+                self.gram_inter_image_loss_weight,
+            )
+            logger.info(
+                "OPTIONS -- GRAM -- decoupled global relation: weight=%s scope=%s "
+                "observation=%s ckpt=%s",
+                self.gram_global_relation_loss_weight,
+                self.gram_global_relation_scope,
+                self.gram_global_relation_observation_protocol,
+                self.gram_global_relation_ckpt,
+            )
             logger.info(f"OPTIONS -- GRAM -- ema teacher: {cfg.gram.ema_teacher}")
             logger.info(f"OPTIONS -- GRAM -- ckpt: {cfg.gram.ckpt}")
             if self.cfg.gram.rep_update:
@@ -1465,6 +1565,26 @@ class SSLMetaArch(nn.Module):
                 raise ValueError(f"Provide a correct path to {self.gram_ckpt}")
             self.gram_teacher.requires_grad_(False)
             self.gram_teacher.eval()
+        if self.has_gram_global_teacher:
+            logger.info(
+                "Loading frozen global-relation Gram anchor from %s",
+                self.gram_global_relation_ckpt,
+            )
+            init_fsdp_model_from_checkpoint(
+                self.gram_global_teacher,
+                self.gram_global_relation_ckpt,
+                skip_load_keys=[
+                    "dino_head",
+                    "ibot_head",
+                    "dino_loss.center",
+                    "ibot_patch_loss.center",
+                ],
+                keys_not_sharded=["backbone.rope_embed.periods", "qkv.bias_mask"],
+                process_group=distributed.get_default_process_group(),
+            )
+            self.gram_global_teacher.requires_grad_(False)
+            self.gram_global_teacher.eval()
+            self.gram_global_teacher_initialized = True
         if self.cfg.student.resume_from_teacher_chkpt:
             logger.info(f"Loading pretrained weights from {self.cfg.student.resume_from_teacher_chkpt}")
             init_fsdp_model_from_checkpoint(
@@ -2724,6 +2844,16 @@ class SSLMetaArch(nn.Module):
         if self.gram_use_loss:
             gram_global = self.get_gram_teacher_output(
                 gram_teacher_crops.unflatten(0, (n_global_crops, B)) if gram_teacher_crops is not None else None,
+                student_images=global_crops.unflatten(0, (n_global_crops, B)),
+                student_masks=masks,
+                student_channel_ids=global_channel_ids.unflatten(0, (n_global_crops, B))
+                if global_channel_ids is not None
+                else None,
+                student_channel_valid_mask=student_global_channel_valid_mask.unflatten(
+                    0, (n_global_crops, B)
+                )
+                if student_global_channel_valid_mask is not None
+                else None,
                 channel_ids=gram_teacher_channel_ids.unflatten(0, (n_global_crops, B))
                 if gram_teacher_channel_ids is not None
                 else None,
@@ -3097,6 +3227,10 @@ class SSLMetaArch(nn.Module):
         self,
         images,
         *,
+        student_images,
+        student_masks,
+        student_channel_ids=None,
+        student_channel_valid_mask=None,
         masks,
         teacher_global,
         student_global,
@@ -3106,10 +3240,13 @@ class SSLMetaArch(nn.Module):
     ):
         # Get student patch features
         student_patches = student_global["patch_pre_head"].flatten(0, 1)  # [n_crops * B, P, D]
+        student_cls = student_global["cls_pre_head"]  # [n_crops, B, D]
+        global_relation_teacher_cls = None
 
         # Get gram targets
         if self.gram_ema_teacher:
             teacher_patches = teacher_global["patch_pre_head"].flatten(0, 1)  # [n_crops * B, P, D]
+            teacher_cls = teacher_global["cls_pre_head"]  # [n_crops, B, D]
         else:
             if not self.gram_teacher_initialized:
                 raise ValueError("Gram teacher has not been initialized. Load a checkpoint or from the EMA teacher.")
@@ -3128,6 +3265,43 @@ class SSLMetaArch(nn.Module):
                     is_training=True,
                 )
             teacher_patches = backbone_out["x_norm_patchtokens"]  # [n_crops * B, P_T, D]
+            teacher_cls = backbone_out["x_norm_clstoken"].unflatten(0, (n_crops, B))
+
+            if self.has_gram_global_teacher:
+                if not self.gram_global_teacher_initialized:
+                    raise ValueError("Global-relation Gram teacher has not been initialized")
+                relation_images = images
+                relation_masks = None
+                relation_channel_ids = channel_ids
+                relation_channel_valid_mask = channel_valid_mask
+                if self.gram_global_relation_observation_protocol == "mask_matched_student":
+                    if student_images is None or student_masks is None:
+                        raise ValueError(
+                            "mask_matched_student requires student images and masks"
+                        )
+                    relation_images = student_images.flatten(0, 1)
+                    relation_masks = student_masks
+                    relation_channel_ids = (
+                        student_channel_ids.flatten(0, 1)
+                        if student_channel_ids is not None
+                        else None
+                    )
+                    relation_channel_valid_mask = (
+                        student_channel_valid_mask.flatten(0, 1)
+                        if student_channel_valid_mask is not None
+                        else None
+                    )
+                with torch.no_grad():
+                    global_relation_out = self.gram_global_teacher.backbone(
+                        relation_images,
+                        masks=relation_masks,
+                        channel_ids=relation_channel_ids,
+                        channel_valid_mask=relation_channel_valid_mask,
+                        is_training=True,
+                    )
+                global_relation_teacher_cls = global_relation_out[
+                    "x_norm_clstoken"
+                ].unflatten(0, (n_crops, B))
 
             # Downsample Gram teacher features if needed
             if teacher_patches.shape[1] != student_patches.shape[1]:
@@ -3161,6 +3335,9 @@ class SSLMetaArch(nn.Module):
         return {
             "student_patches": student_patches,  # [n_crops * B, P, D] or [n_selected_patches, D]
             "teacher_patches": teacher_patches,  # [n_crops * B, P, D] or [n_selected_patches, D]
+            "student_cls": student_cls,  # [n_crops, B, D]
+            "teacher_cls": teacher_cls,  # [n_crops, B, D]
+            "global_relation_teacher_cls": global_relation_teacher_cls,
             # Unmasked patches, for computing statistics
             "orig_student_patches": orig_student_patches,  # [n_crops * B, P, D]
             "orig_teacher_patches": orig_teacher_patches,  # [n_crops * B, P, D]
@@ -3601,6 +3778,54 @@ class SSLMetaArch(nn.Module):
             loss_accumulator += gram_loss * gram_loss_weight
             loss_dict["gram_loss"] = gram_loss
 
+            if self.gram_inter_image_loss_weight > 0:
+                # Treat each global crop as an independent batch relation graph:
+                # [n_crops, B, D] -> [n_crops, B, B]. This complements the
+                # within-image patch Gram without mixing the two crop views.
+                gram_inter_image_loss = self.gram_loss(
+                    gram_global["student_cls"],
+                    gram_global["teacher_cls"],
+                    img_level=True,
+                )
+                loss_accumulator += (
+                    gram_loss_weight
+                    * self.gram_inter_image_loss_weight
+                    * gram_inter_image_loss
+                )
+                loss_dict["gram_inter_image_loss"] = gram_inter_image_loss
+                loss_dict["gram_inter_image_loss_weight"] = self.gram_inter_image_loss_weight
+
+            if self.gram_global_relation_loss_weight > 0:
+                global_relation_teacher_cls = gram_global[
+                    "global_relation_teacher_cls"
+                ]
+                if global_relation_teacher_cls is None:
+                    raise RuntimeError("Missing frozen global-relation Gram targets")
+                gram_global_relation_loss = self.gram_global_relation_loss(
+                    gram_global["student_cls"],
+                    global_relation_teacher_cls,
+                )
+                loss_accumulator += (
+                    self.gram_global_relation_loss_weight
+                    * gram_global_relation_loss
+                )
+                loss_dict["gram_global_relation_loss"] = gram_global_relation_loss
+                loss_dict["gram_global_relation_loss_weight"] = (
+                    self.gram_global_relation_loss_weight
+                )
+                loss_dict["gram_global_relation_batch"] = (
+                    gram_global["student_cls"].shape[1]
+                    * (
+                        distributed.get_world_size()
+                        if self.gram_global_relation_scope == "global"
+                        else 1
+                    )
+                )
+                loss_dict["gram_global_relation_mask_matched"] = float(
+                    self.gram_global_relation_observation_protocol
+                    == "mask_matched_student"
+                )
+
             if self.gram_compute_stats:
                 with torch.no_grad():
                     # Save stats over masked / unmasked tokens
@@ -3655,6 +3880,8 @@ class SSLMetaArch(nn.Module):
         self.teacher.eval()
         if self.has_gram_teacher:
             self.gram_teacher.eval()
+        if self.has_gram_global_teacher:
+            self.gram_global_teacher.eval()
 
     def forward(self, inputs):
         raise NotImplementedError
@@ -3761,7 +3988,12 @@ class SSLMetaArch(nn.Module):
                 "fp32": torch.float32,
             }
             param_dtype = dtype_by_name[self.cfg.compute_precision.param_dtype]
-            for model in (self.student, self.model_ema, getattr(self, "gram_teacher", None)):
+            for model in (
+                self.student,
+                self.model_ema,
+                getattr(self, "gram_teacher", None),
+                getattr(self, "gram_global_teacher", None),
+            ):
                 if model is not None:
                     model.to_empty(device="cuda")
                     model.to(dtype=param_dtype)
@@ -3774,6 +4006,9 @@ class SSLMetaArch(nn.Module):
         inference_only_models_process_groups = [process_subgroup]
         if self.has_gram_teacher:
             inference_only_models.append(self.gram_teacher)
+            inference_only_models_process_groups.append(default_process_group)
+        if self.has_gram_global_teacher:
+            inference_only_models.append(self.gram_global_teacher)
             inference_only_models_process_groups.append(default_process_group)
         if self.cfg.distillation.enabled:
             inference_only_models.append(self.teacher)
@@ -3798,11 +4033,40 @@ class SSLMetaArch(nn.Module):
             return
         from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
 
+        if bool(getattr(self.cfg.train, "checkpointing_full", False)):
+            checkpointing_wrapper = checkpoint_wrapper
+            policy_name = "full"
+        else:
+            save_ops = [
+                torch.ops.aten.mm.default,
+                torch.ops.aten._scaled_mm.default,
+                torch.ops.aten._scaled_dot_product_efficient_attention.default,
+                torch.ops.aten._scaled_dot_product_flash_attention.default,
+                torch.ops._c10d_functional.reduce_scatter_tensor.default,
+            ]
+            checkpointing_wrapper = partial(
+                checkpoint_wrapper,
+                context_fn=partial(create_selective_checkpoint_contexts, save_ops),
+                preserve_rng_state=True,
+            )
+            policy_name = "selective"
+
+        num_blocks = len(backbone.blocks)
+        checkpointing_blocks = int(getattr(self.cfg.train, "checkpointing_blocks", 0) or num_blocks)
+        if not 1 <= checkpointing_blocks <= num_blocks:
+            raise ValueError(
+                f"train.checkpointing_blocks must be 0 or in [1, {num_blocks}], got {checkpointing_blocks}"
+            )
+        first_checkpointed_block = num_blocks - checkpointing_blocks
         for i, block in enumerate(backbone.blocks):
-            backbone.blocks[i] = checkpoint_wrapper(block, preserve_rng_state=True)
+            if i < first_checkpointed_block:
+                continue
+            backbone.blocks[i] = checkpointing_wrapper(block)
         logger.info(
-            "DISTRIBUTED DDP -- activation checkpointing on %d student backbone blocks",
-            len(backbone.blocks),
+            "DISTRIBUTED DDP -- %s activation checkpointing on %d/%d student backbone blocks",
+            policy_name,
+            checkpointing_blocks,
+            num_blocks,
         )
 
     def finish_distributed_training_setup(self) -> None:
