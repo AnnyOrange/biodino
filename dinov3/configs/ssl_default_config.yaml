@@ -208,6 +208,9 @@ global_bridge_transport:
   observation_crop_size: 0 # 0 keeps the training crop; 224 matches frozen evaluation
 gram:
   use_loss: false # (bool) if true gram is used, else not
+  # Fail before training if the official fixed-anchor microscopy contract is
+  # not satisfied. The contract uses Meta's final Gram weight (2.0) directly.
+  require_official_fixed_anchor_contract: false
   compute_stats: false # (bool): if true compute auxilliary stats
   loss_weight: 1.0 # (float): weight of the loss
   inter_image_loss_weight: 0.0 # (float): relative weight of the per-crop CLS relation Gram loss

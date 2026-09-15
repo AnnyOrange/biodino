@@ -16,10 +16,14 @@ BASE_RUN=$REPO/outputs/01_training_runs/HS6_L_robust_biosafe256_gb1024_lr1e4_wu3
 ANCHOR_CKPT=$BASE_RUN/eval/training_$ANCHOR_CHECKPOINT_ID/teacher_checkpoint.pth
 ANCHOR_SHA256=c14adbb36543b952231b41a5bc5e5dfd6a1204b4bdb8cbecdd8193999dd8456a
 OFFICIAL_GRAM_AST_SHA256=9c1f3d4a34329e8e9467d44439520b5b558cb7216bb73d596f0aeab154a199f0
+OFFICIAL_DINOV3_COMMIT=6876159a11b4df116f30f667f8c9888617df0751
 
 BATCH_SIZE_PER_GPU=32
 GRAD_ACCUM_STEPS=8
 NUM_WORKERS=${NUM_WORKERS:-1}
+ACTIVATION_CHECKPOINTING=${ACTIVATION_CHECKPOINTING:-false}
+ACTIVATION_CHECKPOINTING_FULL=${ACTIVATION_CHECKPOINTING_FULL:-false}
+ACTIVATION_CHECKPOINTING_BLOCKS=${ACTIVATION_CHECKPOINTING_BLOCKS:-0}
 OFFICIAL_EPOCH_LENGTH=4098
 EPOCHS=15
 CHECKPOINT_PERIOD=488
@@ -38,7 +42,7 @@ case "$MODE" in
     OUTPUT_DIR=${OUTPUT_DIR:-$REPO/outputs/01_training_runs/HS6_L5_ck12687_official_gram_a12687_b32_4xdeepcad_u1_smoke_20260915}
     ;;
   formal)
-    OUTPUT_DIR=${OUTPUT_DIR:-$REPO/outputs/01_training_runs/HS6_L5_ck12687_official_gram_a12687_b32_gb1024_4xdeepcad_u2440_20260915}
+    OUTPUT_DIR=${OUTPUT_DIR:-$REPO/outputs/01_training_runs/HS6_L5_ck12687_official_gram_a12687_b32_gb1024_noac_4xdeepcad_u2440_contract_v2_20260915}
     ;;
   *)
     echo "ERROR: MODE must be smoke or formal, got $MODE" >&2
@@ -112,9 +116,9 @@ cmd=(
   train.wds_deterministic_resampling=true
   train.prefetch_factor=1
   train.pin_memory=false
-  train.checkpointing=true
-  train.checkpointing_full=true
-  train.checkpointing_blocks=24
+  train.checkpointing="$ACTIVATION_CHECKPOINTING"
+  train.checkpointing_full="$ACTIVATION_CHECKPOINTING_FULL"
+  train.checkpointing_blocks="$ACTIVATION_CHECKPOINTING_BLOCKS"
   student.in_chans=3
   teacher.in_chans=3
   student.enable_channelvit=false
@@ -137,14 +141,18 @@ cmd=(
   crops.local_crops_size=112
   crops.gram_teacher_crops_size=512
   crops.gram_teacher_no_distortions=true
+  crops.localcrops_subset_of_globalcrops=false
+  crops.share_color_jitter=false
+  crops.paired_global_geometry=false
   crops.augmentation_policy=bio_safe
-  crops.horizontal_flips=true
+  crops.horizontal_flips=false
   crops.float_input=false
   "crops.rgb_mean=$RGB_MEAN"
   "crops.rgb_std=$RGB_STD"
   sigreg.enabled=false
   channel_subset.enabled=false
   gram.use_loss=true
+  gram.require_official_fixed_anchor_contract=true
   gram.compute_stats=false
   gram.loss_weight=2.0
   gram.inter_image_loss_weight=0.0
@@ -154,8 +162,8 @@ cmd=(
   gram.ckpt="$ANCHOR_CKPT"
   gram.it_load_ema_teacher=-1
   gram.rep_update=true
-  gram.update_frequency=512
-  gram.it_first_update=51740
+  gram.update_frequency=10000
+  gram.it_first_update=1010000
   gram.max_updates=3
   gram.tokens_used=all
   gram.normalized=true
@@ -167,16 +175,17 @@ cmd=(
   gram.global_teacher_resize_antialias=false
   evaluation.eval_period_iterations="$EVAL_PERIOD"
   checkpointing.period="$CHECKPOINT_PERIOD"
-  checkpointing.max_to_keep=100
+  checkpointing.max_to_keep=null
   checkpointing.keep_every=99999999999999999
   checkpointing.sharded=false
 )
 
 log "mode=$MODE base=ck$BASE_CHECKPOINT_ID logical_start=$START_ITERATION endpoint=ck$ENDPOINT_CHECKPOINT"
 log "optimizer_state=fresh_from_teacher model_and_gram_anchor=$ANCHOR_CKPT sha256=$ANCHOR_SHA256"
-log "official_gram=AST:$actual_gram_ast_sha normalized=true img_level=true tokens=all remove_neg=false weight=2"
+log "official_gram=meta_commit:$OFFICIAL_DINOV3_COMMIT AST:$actual_gram_ast_sha normalized=true img_level=true tokens=all remove_neg=false weight=2"
 log "geometry=student256/clean_teacher512 resize=bicubic antialias=false extensions=disabled"
 log "batch=${NPROC_PER_NODE}x${BATCH_SIZE_PER_GPU}xaccum${GRAD_ACCUM_STEPS}=$EFFECTIVE_GLOBAL_BATCH checkpoints=every${CHECKPOINT_PERIOD}:keep_all"
+log "activation_checkpointing=$ACTIVATION_CHECKPOINTING full=$ACTIVATION_CHECKPOINTING_FULL blocks=$ACTIVATION_CHECKPOINTING_BLOCKS"
 log "output=$OUTPUT_DIR"
 
 cd "$REPO"
