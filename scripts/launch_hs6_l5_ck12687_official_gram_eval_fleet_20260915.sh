@@ -14,7 +14,7 @@ LANES=classification_a,classification_b,classification_c,classification_d,regres
 launch_worker() {
   local host=$1 python=$2 worker=$3
   ssh -o BatchMode=yes "$host" \
-    "cd '$REPO' && nohup env FROZEN_BATCH_SIZE=64 '$python' -u '$WORKER' \
+    "cd '$REPO' && setsid -f env FROZEN_BATCH_SIZE=64 '$python' -u '$WORKER' \
       --repo '$EVAL_REPO' \
       --train-run '$TRAIN_RUN' \
       --snapshot-root '$TRAIN_RUN/eval' \
@@ -38,7 +38,7 @@ launch_worker() {
       --ready-age-seconds 60 \
       --max-attempts 5 \
       --allow-busy-gpu \
-      > '$OUTPUT_ROOT/logs/$worker.driver.log' 2>&1 < /dev/null & echo \$!"
+      > '$OUTPUT_ROOT/logs/$worker.driver.log' 2>&1 < /dev/null"
 }
 
 mkdir -p "$INPUT_ROOT" "$OUTPUT_ROOT/logs"
@@ -47,9 +47,9 @@ if [[ ! -e "$OUTPUT_ROOT/point_12687" ]]; then
 fi
 
 # Four currently unclaimed cards on the 8x3090 host. Existing workers remain on 2/5/6/7.
-for gpu in 0 1 3 4; do
+for gpu in ${QI_GPUS:-0 1 3 4}; do
   ssh -o BatchMode=yes 3090-qi \
-    "cd '$REPO' && nohup env FROZEN_BATCH_SIZE=64 /home/bbnc/anaconda3/envs/dinov3/bin/python -u '$WORKER' \
+    "cd '$REPO' && setsid -f env FROZEN_BATCH_SIZE=64 /home/bbnc/anaconda3/envs/dinov3/bin/python -u '$WORKER' \
       --repo '$EVAL_REPO' --train-run '$TRAIN_RUN' --snapshot-root '$TRAIN_RUN/eval' \
       --snapshot-dir-prefix training_ --snapshot-filename teacher_checkpoint.pth \
       --input-root '$INPUT_ROOT' --output-root '$OUTPUT_ROOT' \
@@ -60,7 +60,7 @@ for gpu in 0 1 3 4; do
       --min-local-checkpoint-id 13175 --expected-checkpoints 99 \
       --include-lanes '$LANES' --jobs-per-gpu 3 --poll-seconds 60 \
       --ready-age-seconds 60 --max-attempts 5 --allow-busy-gpu \
-      > '$OUTPUT_ROOT/logs/3090qi-gpu${gpu}-gram12687.driver.log' 2>&1 < /dev/null & echo \$!"
+      > '$OUTPUT_ROOT/logs/3090qi-gpu${gpu}-gram12687.driver.log' 2>&1 < /dev/null"
 done
 
 launch_worker cpu1 /home/inspur/anaconda3/envs/dinov3/bin/python cpu1-gpu0-gram12687
