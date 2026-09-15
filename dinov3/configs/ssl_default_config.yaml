@@ -245,6 +245,9 @@ train:
   # Optional early stop in optimizer updates while retaining schedules built
   # for the full ``optim.epochs`` horizon. Useful for matched causal screens.
   max_updates: null
+  # Logical iteration to use when initializing from teacher weights without an
+  # optimizer checkpoint. This is only valid with ``--no-resume``.
+  start_iteration_override: null
   monitor_gradient_norm: false
   chunk_schedule: []
   use_teacher_head: true
