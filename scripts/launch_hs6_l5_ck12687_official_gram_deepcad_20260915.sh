@@ -4,7 +4,7 @@ set -euo pipefail
 
 REPO=${REPO:-/mnt/huawei_deepcad/dinov3}
 PYTHON_BIN=${PYTHON_BIN:-/home/deepcad/anaconda3/envs/dinov3/bin/python}
-MODE=${MODE:-formal} # smoke | formal
+MODE=${MODE:-formal} # smoke | formal | resume
 GPU_GROUP=${GPU_GROUP:-0,1,2,3}
 NPROC_PER_NODE=${NPROC_PER_NODE:-4}
 MASTER_PORT=${MASTER_PORT:-32187}
@@ -29,6 +29,7 @@ EPOCHS=15
 CHECKPOINT_PERIOD=488
 EVAL_PERIOD=488
 RUN_UPDATES=2440
+RESUME=0
 
 DATASET_PATH='mixwds_robust:0.3=/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*.tar||0.7=/mnt/huawei_blm/deepcad_5t_v1/wds_patched_shuffle/filtered_mixed_train*.tar::pct=1,99'
 RGB_MEAN='[0.5126699404721016,0.5020022506395592,0.5064769301636908]'
@@ -44,8 +45,13 @@ case "$MODE" in
   formal)
     OUTPUT_DIR=${OUTPUT_DIR:-$REPO/outputs/01_training_runs/HS6_L5_ck12687_official_gram_a12687_b32_gb1024_noac_4xdeepcad_u2440_contract_v2_20260915}
     ;;
+  resume)
+    RESUME=1
+    MAX_UPDATES=61000
+    OUTPUT_DIR=${OUTPUT_DIR:-$REPO/outputs/01_training_runs/HS6_L5_ck12687_official_gram_a12687_b32_gb1024_noac_4xdeepcad_u2440_contract_v2_20260915}
+    ;;
   *)
-    echo "ERROR: MODE must be smoke or formal, got $MODE" >&2
+    echo "ERROR: MODE must be smoke, formal, or resume, got $MODE" >&2
     exit 2
     ;;
 esac
@@ -85,21 +91,37 @@ IFS=',' read -r -a gpu_ids <<<"$GPU_GROUP"
   log "ERROR GPU_GROUP=$GPU_GROUP does not contain $NPROC_PER_NODE GPUs"
   exit 2
 }
-if [[ -e "$OUTPUT_DIR" ]]; then
+if [[ "$RESUME" == 1 ]]; then
+  [[ -s "$OUTPUT_DIR/ckpt/15127/checkpoint.pth" ]] || {
+    log "ERROR resume requires the complete ck15127 optimizer checkpoint"
+    exit 2
+  }
+elif [[ -e "$OUTPUT_DIR" ]]; then
   log "ERROR refusing to overwrite existing output: $OUTPUT_DIR"
   exit 2
 fi
 
-MAX_UPDATES=$((START_ITERATION + RUN_UPDATES))
+if [[ "$RESUME" != 1 ]]; then
+  MAX_UPDATES=$((START_ITERATION + RUN_UPDATES))
+fi
 ENDPOINT_CHECKPOINT=$((MAX_UPDATES - 1))
 EFFECTIVE_GLOBAL_BATCH=$((NPROC_PER_NODE * BATCH_SIZE_PER_GPU * GRAD_ACCUM_STEPS))
+
+resume_args=(--no-resume)
+start_iteration_args=(train.start_iteration_override="$START_ITERATION")
+optimizer_provenance=fresh_from_teacher
+if [[ "$RESUME" == 1 ]]; then
+  resume_args=()
+  start_iteration_args=(train.start_iteration_override=null)
+  optimizer_provenance=resume_full_optimizer_ck15127
+fi
 
 cmd=(
   "$PYTHON_BIN" -m torch.distributed.run
   --nnodes=1 --node_rank=0 --nproc_per_node="$NPROC_PER_NODE"
   --master_addr=127.0.0.1 --master_port="$MASTER_PORT"
   dinov3/train/train.py
-  --no-resume
+  "${resume_args[@]}"
   --config-file dinov3/configs/train/microscopy_continual_vitl16.yaml
   --output-dir "$OUTPUT_DIR"
   --seed 0
@@ -108,7 +130,7 @@ cmd=(
   train.num_workers="$NUM_WORKERS"
   train.seed=0
   train.OFFICIAL_EPOCH_LENGTH="$OFFICIAL_EPOCH_LENGTH"
-  train.start_iteration_override="$START_ITERATION"
+  "${start_iteration_args[@]}"
   train.max_updates="$MAX_UPDATES"
   train.cache_dataset=false
   train.compile=false
@@ -181,7 +203,7 @@ cmd=(
 )
 
 log "mode=$MODE base=ck$BASE_CHECKPOINT_ID logical_start=$START_ITERATION endpoint=ck$ENDPOINT_CHECKPOINT"
-log "optimizer_state=fresh_from_teacher model_and_gram_anchor=$ANCHOR_CKPT sha256=$ANCHOR_SHA256"
+log "optimizer_state=$optimizer_provenance model_and_gram_anchor=$ANCHOR_CKPT sha256=$ANCHOR_SHA256"
 log "official_gram=meta_commit:$OFFICIAL_DINOV3_COMMIT AST:$actual_gram_ast_sha normalized=true img_level=true tokens=all remove_neg=false weight=2"
 log "geometry=student256/clean_teacher512 resize=bicubic antialias=false extensions=disabled"
 log "batch=${NPROC_PER_NODE}x${BATCH_SIZE_PER_GPU}xaccum${GRAD_ACCUM_STEPS}=$EFFECTIVE_GLOBAL_BATCH checkpoints=every${CHECKPOINT_PERIOD}:keep_all"
