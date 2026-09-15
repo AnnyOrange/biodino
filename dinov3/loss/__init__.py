@@ -4,7 +4,7 @@
 # the terms of the DINOv3 License Agreement.
 
 from .dino_clstoken_loss import DINOLoss
-from .gram_loss import GramLoss
+from .gram_loss import CrossRankGramLoss, GramLoss
 from .ibot_patch_loss import iBOTPatchLoss
 from .koleo_loss import KoLeoLoss, KoLeoLossDistributed
 from .sigreg_loss import DistributedSIGReg

@@ -16,6 +16,9 @@ DRY_RUN=${DRY_RUN:-0}
 RESUME=${RESUME:-0}
 NUM_WORKERS=${NUM_WORKERS:-2}
 PREFETCH_FACTOR=${PREFETCH_FACTOR:-1}
+TRAIN_CHECKPOINTING=${TRAIN_CHECKPOINTING:-false}
+TRAIN_CHECKPOINTING_FULL=${TRAIN_CHECKPOINTING_FULL:-false}
+TRAIN_CHECKPOINTING_BLOCKS=${TRAIN_CHECKPOINTING_BLOCKS:-0}
 
 NPROC_PER_NODE=8
 BATCH_SIZE_PER_GPU=${BATCH_SIZE_PER_GPU:-16}
@@ -53,17 +56,30 @@ fi
   echo "ERROR: missing frozen 1M WDS" >&2
   exit 2
 }
-[[ -d /mnt/huawei_blm/deepcad_10t_v1/wds_patched_shuffle ]] || {
-  echo "ERROR: missing 10t_v1 WDS" >&2
-  exit 2
-}
+if [[ "${SKIP_BASE_10T_CHECK:-0}" != 1 ]]; then
+  [[ -d /mnt/huawei_blm/deepcad_10t_v1/wds_patched_shuffle ]] || {
+    echo "ERROR: missing 10t_v1 WDS" >&2
+    exit 2
+  }
+fi
 
 old_shards=$(find /mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle -maxdepth 1 -type f -name 'filtered_mixed_train_w*.tar' | wc -l)
-new_shards=$(find /mnt/huawei_blm/deepcad_10t_v1/wds_patched_shuffle -maxdepth 1 -type f -name 'filtered_mixed_train*.tar' | wc -l)
-[[ "$old_shards" -gt 0 && "$new_shards" -gt 0 ]] || {
-  echo "ERROR: shard counts old=$old_shards new=$new_shards" >&2
-  exit 2
-}
+if [[ "${SKIP_BASE_10T_CHECK:-0}" != 1 ]]; then
+  new_shards=$(find /mnt/huawei_blm/deepcad_10t_v1/wds_patched_shuffle -maxdepth 1 -type f -name 'filtered_mixed_train*.tar' | wc -l)
+else
+  new_shards=0
+fi
+if [[ "${SKIP_BASE_10T_CHECK:-0}" != 1 ]]; then
+  [[ "$old_shards" -gt 0 && "$new_shards" -gt 0 ]] || {
+    echo "ERROR: shard counts old=$old_shards new=$new_shards" >&2
+    exit 2
+  }
+else
+  [[ "$old_shards" -gt 0 ]] || {
+    echo "ERROR: shard counts old=$old_shards new=$new_shards" >&2
+    exit 2
+  }
+fi
 
 if [[ "$RESUME" == 1 ]]; then
   latest_checkpoint=$(find "$OUTPUT_DIR/ckpt" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
@@ -109,7 +125,9 @@ cmd=(
   train.wds_shuffle_buffer=50
   train.prefetch_factor="$PREFETCH_FACTOR"
   train.pin_memory=false
-  train.checkpointing=false
+  train.checkpointing="$TRAIN_CHECKPOINTING"
+  train.checkpointing_full="$TRAIN_CHECKPOINTING_FULL"
+  train.checkpointing_blocks="$TRAIN_CHECKPOINTING_BLOCKS"
   student.in_chans=3
   teacher.in_chans=3
   student.enable_channelvit=false
@@ -151,6 +169,7 @@ log "output=$OUTPUT_DIR"
 log "HS6: mixwds_robust 0.3/0.7, bio_safe 256/112, LR=1e-4, wu=3, tw=30, nosig"
 log "schedule=$EPOCHS epochs x $OFFICIAL_EPOCH_LENGTH updates; final_ckpt=$((EPOCHS * OFFICIAL_EPOCH_LENGTH - 1))"
 log "batch=$NPROC_PER_NODE GPUs x $BATCH_SIZE_PER_GPU/GPU x accum $GRAD_ACCUM_STEPS = $effective_batch"
+log "activation_checkpointing=$TRAIN_CHECKPOINTING full=$TRAIN_CHECKPOINTING_FULL blocks=$TRAIN_CHECKPOINTING_BLOCKS"
 if [[ "$RESUME" == 1 ]]; then
   log "resume=ckpt/$latest_checkpoint workers=$NUM_WORKERS prefetch_factor=$PREFETCH_FACTOR"
 else

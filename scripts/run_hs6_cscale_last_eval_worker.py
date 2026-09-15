@@ -67,18 +67,29 @@ CSV_PATH = LOG / "kshot.csv"
 GPUS = [int(x) for x in os.environ.get("HS6_GPUS", "0,1,2,3,4,5,6,7").split(",") if x.strip()]
 SLOTS = int(os.environ.get("HS6_SLOTS_PER_GPU", "3"))
 BATCH = int(os.environ.get("HS6_BATCH", "64"))
+NUM_WORKERS = int(os.environ.get("HS6_EVAL_NUM_WORKERS", "2"))
 FREE_MIN = int(os.environ.get("HS6_FREE_MIN_MIB", "8000"))
 EVAL_TAG = os.environ.get("HS6_CSCALE_EVAL_TAG", "cscale_prop15_20260904")
 MIN_CKPT = 10_000_000
-CSCALE_DATASETS = (
-    "bloodmnist",
-    "tissuemnist",
-    "cyclops-protein-loc",
+CSCALE_DATASETS = tuple(
+    value.strip()
+    for value in os.environ.get(
+        "HS6_CSCALE_DATASETS",
+        "bloodmnist,tissuemnist,cyclops-protein-loc",
+    ).split(",")
+    if value.strip()
 )
 FULL_LINEAR = CSCALE_DATASETS
 K10_ORDER = CSCALE_DATASETS
+KSHOT_SEEDS = tuple(
+    int(value.strip())
+    for value in os.environ.get("HS6_KSHOT_SEEDS", "0,1,2").split(",")
+    if value.strip()
+)
+KEEP_FEATURES = os.environ.get("HS6_KEEP_FEATURES", "0").lower() in {"1", "true", "yes"}
+INCLUDE_EP0 = os.environ.get("HS6_INCLUDE_EP0", "0").lower() in {"1", "true", "yes"}
 LAST = {1: 1024, 2: 2049, 4: 4099, 8: 8199}
-EPOCH_OF = {1024: 1, 2049: 2, 4099: 4, 8199: 8}
+EPOCH_OF = {0: 0, 1024: 1, 2049: 2, 4099: 4, 8199: 8}
 
 
 def load_kshot():
@@ -145,12 +156,37 @@ def discover_runs() -> list[dict]:
                 "nick": nick,
             }
         )
+    if INCLUDE_EP0:
+        # The e1 config records the exact official initialization used by the
+        # controlled run. Add one architecture-matched baseline per nick.
+        for nick in NICKS:
+            e1 = next((run for run in out if run["nick"] == nick and run["epochs"] == 1), None)
+            if e1 is None:
+                continue
+            init_path = None
+            for line in e1["cfg"].read_text(encoding="utf-8").splitlines():
+                if line.lstrip().startswith("resume_from_teacher_chkpt:"):
+                    init_path = Path(line.split(":", 1)[1].strip().strip("'\""))
+                    break
+            if init_path is None or not init_path.is_file() or init_path.stat().st_size <= MIN_CKPT:
+                print(f"SKIP ep0 {nick}: invalid resume_from_teacher_chkpt={init_path}", flush=True)
+                continue
+            out.append(
+                {
+                    "epochs": 0,
+                    "ckpt": 0,
+                    "ckpt_path": init_path,
+                    "cfg": e1["cfg"],
+                    "train": e1["train"],
+                    "nick": nick,
+                }
+            )
     out.sort(key=lambda r: (r["nick"], r["epochs"]))
     return out
 
 
 def kshot_done_set() -> set[tuple[str, str, str, str, str]]:
-    need = {(str(k), str(s)) for k in (5, 10) for s in (0, 1, 2)}
+    need = {(str(k), str(s)) for k in (5, 10) for s in KSHOT_SEEDS}
     have: dict[tuple[str, str, str, str, str], set] = {}
     if not CSV_PATH.is_file():
         return set()
@@ -193,7 +229,7 @@ def jobs() -> list[dict]:
                     "rank": ds_i,
                     "name": f"Cscale-{nick}-e{run['epochs']}-{ckpt}-{ds}-full",
                     "kind": "cls",
-                    "save_feat": False,
+                    "save_feat": KEEP_FEATURES,
                     "ckpt": run["ckpt_path"],
                     "cfg": run["cfg"],
                     "od": od,
@@ -211,6 +247,11 @@ def jobs() -> list[dict]:
             if (nick, "compute", "1M", str(ckpt), ds) in done_k:
                 continue
             od = eval_dir / "bio_classification" / ds / str(ckpt)
+            # Full and k-shot share the same result/feature directory.  Do not
+            # let two extractors race; the full job writes the canonical JSON
+            # and retained features before the CPU k-shot probes are eligible.
+            if not cls_ok(od / "last_result.json"):
+                continue
             out.append(
                 {
                     "rank": 100 + ds_i,
@@ -278,7 +319,7 @@ def launch(job: dict, gpu: int) -> subprocess.Popen:
         "--resolution-protocol", "best",
         "--image-size", "224",
         "--batch-size", str(BATCH),
-        "--num-workers", "2",
+        "--num-workers", str(NUM_WORKERS),
         "--channel-policy", "auto",
         "--split-protocol", "current",
         "--autocast-dtype", "bf16",
@@ -316,7 +357,7 @@ def run_kshot(job: dict) -> None:
     y_tr = np.asarray(y_train).reshape(-1)
     done = KSHOT.existing_keys(CSV_PATH)
     for k in (5, 10):
-        for seed in (0, 1, 2):
+        for seed in KSHOT_SEEDS:
             key = (job["nick"], job["axis"], str(job["pool"]), str(job["ckpt_id"]), job["ds"], str(k), str(seed))
             if key in done:
                 continue
@@ -340,7 +381,7 @@ def run_kshot(job: dict) -> None:
             }
             KSHOT.append_row(CSV_PATH, row)
     feat_dir = job["od"] / "features"
-    if feat_dir.is_dir():
+    if feat_dir.is_dir() and not KEEP_FEATURES:
         shutil.rmtree(feat_dir, ignore_errors=True)
     print(f"KSHOT {job['name']}", flush=True)
 
@@ -375,7 +416,8 @@ def main() -> None:
     runs = discover_runs()
     print(
         f"cscale-last host={HOST} role={ROLE} nicks={NICKS} python={PYTHON} "
-        f"gpus={GPUS} slots={SLOTS} batch={BATCH} runs={len(runs)} datasets={FULL_LINEAR}",
+        f"gpus={GPUS} slots={SLOTS} batch={BATCH} workers={NUM_WORKERS} "
+        f"runs={len(runs)} datasets={FULL_LINEAR}",
         flush=True,
     )
     for run in runs:
