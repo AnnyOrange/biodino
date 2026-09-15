@@ -632,7 +632,7 @@ def main() -> None:
         help="ADDITIVE multichannel eval: pass --multichannel to feature_extractor so the "
              "dataset's TRUE channels are fed (no 3ch collapse) to spatial multi-channel stems. "
              "Run/cache names get a '_mc' suffix so results don't collide with the RGB run. "
-             "Only meaningful for stem_type=dualroute/residual_mc + a multichannel-capable "
+             "Only meaningful for stem_type=dualroute + a multichannel-capable "
              "dataset (currently tissuenet).",
     )
     parser.add_argument(

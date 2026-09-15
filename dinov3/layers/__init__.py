@@ -10,7 +10,6 @@ from .ffn_layers import Mlp, SwiGLUFFN
 from .fp8_linear import convert_linears_to_fp8
 from .layer_scale import LayerScale
 from .patch_embed import PatchEmbed, PatchEmbedPerChannel
-from .residual_multichannel_stem import ResidualMultiChannelStem
 from .rms_norm import RMSNorm
 from .rope_position_encoding import RopePositionEmbedding
 from .lora import LoRALinear, LoRAQKVLinear, mark_only_lora_as_trainable, lora_state_dict

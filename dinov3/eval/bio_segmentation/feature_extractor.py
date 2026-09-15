@@ -93,10 +93,6 @@ CHANNEL_POLICIES = ("auto", "native", "first3", "compact3", "zerofill3", "mean3"
 def _is_spatial_multichannel_stem(backbone: nn.Module) -> bool:
     return getattr(backbone, "stem_type", None) in {
         "dualroute",
-        "residual_mc",
-        "rgb_extra_residual",
-        "residual_mc_v2",
-        "rgb_extra_residual_v2",
     }
 
 
@@ -883,7 +879,7 @@ def main():
     parser.add_argument('--multichannel', action='store_true',
                         help='ADDITIVE multichannel path: feed the dataset\'s TRUE channels '
                              '(no 3ch collapse) + channel mask to spatial multi-channel stems. '
-                             'Effective for stem_type=dualroute/residual_mc '
+                             'Effective for stem_type=dualroute '
                              'backbones + datasets with a multichannel loader (currently tissuenet). '
                              'Default off keeps the RGB path byte-for-byte.')
     parser.add_argument(

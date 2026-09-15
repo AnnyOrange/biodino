@@ -34,8 +34,10 @@ from dinov3.data import DataAugmentationDINO, collate_data_and_cast, make_datase
 from dinov3.data.loaders import make_data_loader
 from dinov3.data.masking import MaskingGenerator
 from dinov3.eval.bio_segmentation.model_utils import load_dinov3_backbone
-from dinov3.loss.conditional_morphology_graph_loss import ConditionalEdgeGraphPredictor
-from dinov3.loss.nested_channel_innovation_loss import ConditionalFeaturePredictor
+from dinov3.loss.conditional_morphology_graph_loss import (
+    ConditionalEdgeGraphPredictor,
+    ConditionalFeaturePredictor,
+)
 from dinov3.train.ssl_meta_arch import _sample_channel_subset_mask
 
 
@@ -343,7 +345,6 @@ def _evaluate_predictor(
             identity_errors.append((subset_norm - full_norm).square().mean(dim=(-1, -2)))
 
             view_count, sample_count = subset.shape[:2]
-            edge_subset = _edge_kernel(subset.flatten(0, 1), src, dst)
             edge_full = _edge_kernel(full.flatten(0, 1), src, dst)
             edge_shuffled = _edge_kernel(shuffled.flatten(0, 1), src, dst)
             edge_prediction = _edge_kernel(predicted.flatten(0, 1), src, dst)

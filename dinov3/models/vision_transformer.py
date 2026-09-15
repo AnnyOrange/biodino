@@ -17,7 +17,6 @@ from dinov3.layers import (
     Mlp,
     PatchEmbed,
     PatchEmbedPerChannel,
-    ResidualMultiChannelStem,
     RMSNorm,
     RopePositionEmbedding,
     SelfAttentionBlock,
@@ -61,7 +60,7 @@ def init_weights_vit(module: nn.Module, name: str = ""):
         module.reset_parameters()
     if isinstance(module, LayerScale):
         module.reset_parameters()
-    if isinstance(module, (PatchEmbed, PatchEmbedPerChannel, DualRouteStem, ResidualMultiChannelStem)):
+    if isinstance(module, (PatchEmbed, PatchEmbedPerChannel, DualRouteStem)):
         module.reset_parameters()
     if isinstance(module, RMSNorm):
         module.reset_parameters()
@@ -99,7 +98,6 @@ class DinoVisionTransformer(nn.Module):
         untie_global_and_local_cls_norm: bool = False,
         enable_channelvit: bool = False,
         stem_type: str | None = None,
-        residual_mc_extra_scale_init: float = 1e-3,
         device: Any | None = None,
         **ignored_kwargs,
     ):
@@ -117,28 +115,11 @@ class DinoVisionTransformer(nn.Module):
         self.enable_channelvit = enable_channelvit
         self.stem_type = stem_type
         self.in_chans = in_chans
+        if self.stem_type not in (None, "", "auto", "dualroute"):
+            raise ValueError(f"Unsupported stem_type={self.stem_type!r}")
 
         # Branch logic: dual-route stem vs ChannelViT vs standard DINOv3
-        if self.stem_type in ("residual_mc", "rgb_extra_residual", "residual_mc_v2", "rgb_extra_residual_v2"):
-            # Conservative multi-channel stem: keep official RGB PatchEmbed for
-            # channels 0/1/2 and add a tiny residual from channels 3+.
-            rgb_fill_mode = (
-                "repeat_low" if self.stem_type in ("residual_mc_v2", "rgb_extra_residual_v2") else "zero"
-            )
-            self.patch_embed = ResidualMultiChannelStem(
-                img_size=img_size,
-                patch_size=patch_size,
-                embed_dim=embed_dim,
-                extra_scale_init=residual_mc_extra_scale_init,
-                rgb_fill_mode=rgb_fill_mode,
-            )
-            self.channel_embed = None
-            logger.info(
-                "Residual multi-channel stem enabled (RGB base + extra residual, fill=%s, extra_scale_init=%s)",
-                rgb_fill_mode,
-                residual_mc_extra_scale_init,
-            )
-        elif self.stem_type == "dualroute":
+        if self.stem_type == "dualroute":
             # #1 dual-route stem: RGB Conv2d (joint <=3ch) || channel-adaptive
             # pooling (independent multichannel). Returns RGB-shaped tokens, so
             # the rest of the ViT is unchanged. channel_embed (ChannelViT vocab)
@@ -306,7 +287,7 @@ class DinoVisionTransformer(nn.Module):
         B, C, H, W = x.shape
         
         # Patch embedding
-        if self.stem_type in ("dualroute", "residual_mc", "rgb_extra_residual", "residual_mc_v2", "rgb_extra_residual_v2"):
+        if self.stem_type == "dualroute":
             # Multi-channel stems consume channel metadata; they return
             # RGB-shaped (B, H', W', D), so the standard (else) branch below
             # applies unchanged (token count == H'*W', no channel explosion).
