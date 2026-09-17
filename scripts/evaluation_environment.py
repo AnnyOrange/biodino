@@ -73,12 +73,28 @@ def main():
     parser.add_argument("--install", help="Create an isolated system-site-packages venv at this path")
     parser.add_argument("--output")
     parser.add_argument("--require-cuda", action="store_true")
+    parser.add_argument("--environment-archive")
+    parser.add_argument("--archive-sha256")
     args = parser.parse_args()
     if args.install:
         target = Path(args.install).resolve()
         if not (target / "bin/python").exists():
             subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(target)], check=True)
-        subprocess.run([str(target / "bin/python"), "-m", "pip", "install", "-r", str(SPEC)], check=True)
+        if args.environment_archive:
+            import tarfile
+
+            checksum = hashlib.sha256()
+            with Path(args.environment_archive).open("rb") as stream:
+                for block in iter(lambda: stream.read(16 * 1024 * 1024), b""):
+                    checksum.update(block)
+            if not args.archive_sha256 or checksum.hexdigest() != args.archive_sha256:
+                raise RuntimeError("Offline environment archive checksum mismatch")
+            site = subprocess.check_output([str(target / "bin/python"), "-c",
+                                           "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
+            with tarfile.open(args.environment_archive) as archive:
+                archive.extractall(site, filter="data")
+        else:
+            subprocess.run([str(target / "bin/python"), "-m", "pip", "install", "-r", str(SPEC)], check=True)
         command = [str(target / "bin/python"), str(Path(__file__).resolve())]
         if args.output:
             command.extend(["--output", args.output])
