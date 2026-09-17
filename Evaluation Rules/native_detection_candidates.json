@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "implementation": "dinov3.eval.bio_detection.native",
+  "protocol_source": "PROPOSED_BY_US",
+  "task": "Native bounding-box detection, not center classification/count proxy",
+  "evaluator": "Torchvision Faster R-CNN frozen DINOBackbone, trainable1x1 neck256/RPN/RoI heads; pycocotools COCO-style AP maxDets300",
+  "selection_model_budget": "1TB",
+  "frozen": false,
+  "selected_hyperparameters": null,
+  "seed": 0,
+  "search": {"features": ["last", "4-even"], "learning_rate": [0.001, 0.005], "epochs": [10], "weight_decay": [0.0005], "momentum": [0.9], "schedule": "StepLR every3epochs gamma0.1"},
+  "preprocessing": {"min_size": 512, "max_size": 1024, "full_field": true, "normalization": "Torchvision ImageNet RGB", "frozen_backbone_autocast": "bf16", "head_dtype": "float32", "augmentation": "none", "rpn_anchor_sizes": [16, 32, 64, 128, 256], "aspect_ratios": [0.5, 1.0, 2.0]},
+  "primary_metric": "bbox_ap_50_95",
+  "direction": "max",
+  "aggregation": "Native image/object COCO-style interpolation, all images and negative images retained; maxDets300 is a declared crowded-microscopy extension to default100",
+  "datasets": {
+    "BCCD": {"split_source": "OFFICIAL", "grouping": "Released source image; patient provenance unavailable", "split": "205train/87validation/72test", "license": "MIT", "box_convention": "Released continuous XYXY, no invented one-pixel shift", "cleaning_source": "PROPOSED_BY_US", "quarantine": "Only two source-degenerate point objects in BloodImage_00343 and BloodImage_00338; retain allotherboxes andimages", "source": "https://github.com/Shenggan/BCCD_Dataset", "data_preflight": "PASS_FULL_DECODE_CLASS_BOX_SPLIT_AND_PIXEL_DUPLICATE_CHECK"},
+    "BBBC041": {"split_source": "OFFICIAL test / PROPOSED_BY_US validation", "grouping": "Source image; patient/researcher mapping unavailable", "split": "SHA256-ranked seed0 ceil10% officialtraining forval; 1087train/121validation/120test", "license": "CC-BY-NC-SA-3.0", "classes": "All seven released categories, including ambiguous difficult; explicitlynot6-class staging reproduction", "scope": "1328 annotation-linked images; portal reports1364 image releases", "source": "https://bbbc.broadinstitute.org/BBBC041", "data_preflight": "PASS_FULL_MD5_DECODE_CLASS_BOX_SPLIT_AND_PIXEL_DUPLICATE_CHECK"}
+  }
+}

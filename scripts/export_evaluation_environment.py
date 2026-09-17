@@ -20,7 +20,9 @@ from evaluation_environment import fingerprint, requirements
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--base-inventory", help="Remote installed-version JSON; export only differing distributions")
     args = parser.parse_args()
+    base = json.loads(Path(args.base_inventory).read_text()) if args.base_inventory else {}
     target = Path(args.output)
     if target.exists():
         raise FileExistsError(target)
@@ -38,6 +40,9 @@ def main():
                 pending.append(value.name)
     files = {}
     for dist in distributions.values():
+        key = dist.metadata["Name"].lower().replace("_", "-")
+        if base.get(key) == dist.version:
+            continue
         for relative in dist.files or []:
             relative = Path(relative)
             if relative.is_absolute() or ".." in relative.parts or "__pycache__" in relative.parts:

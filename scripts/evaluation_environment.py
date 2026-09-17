@@ -20,6 +20,8 @@ MODULES = {"scikit-learn": "sklearn", "Pillow": "PIL", "opencv-python": "cv2",
            "PyYAML": "yaml"}
 THREAD_ENV = {name: "1" for name in
               ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")}
+for name, value in THREAD_ENV.items():
+    os.environ.setdefault(name, value)
 
 
 def requirements():
@@ -28,6 +30,8 @@ def requirements():
 
 
 def fingerprint(require_cuda=False):
+    if any(os.environ.get(name) != value for name, value in THREAD_ENV.items()):
+        raise RuntimeError("Evaluation numerical thread variables must match the pinned specification")
     versions = {}
     for name, expected in requirements().items():
         found = importlib.metadata.version(name)
@@ -58,7 +62,8 @@ def fingerprint(require_cuda=False):
                      if name.startswith("nvidia-") or name == "triton"}
     compatibility = {"python_minor": platform.python_version_tuple()[:2], "versions": versions,
                      "torch_cuda": torch.version.cuda, "cuda_packages": cuda_packages,
-                     "thread_environment": THREAD_ENV}
+                     "thread_environment": {name: os.environ[name] for name in THREAD_ENV},
+                     "torch_cpu_threads": torch.get_num_threads()}
     encoded = json.dumps(compatibility, sort_keys=True).encode()
     return {"hostname": platform.node(), "python": sys.executable,
             "python_version": platform.python_version(), "devices": devices,

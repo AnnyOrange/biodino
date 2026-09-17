@@ -1,0 +1,71 @@
+{
+  "version": 2,
+  "status": "CANDIDATES_REQUIRE_ACTUAL_1TB_SELECTION_AND_FREEZE",
+  "runner": "python -m dinov3.eval.bio_frozen_eval.expansion_campaign",
+  "freeze_policy": "Local clean published 1TB development is permitted; four-machine pinned-environment preflight required to freeze or launch distributed evaluation. No budget-specific retuning.",
+  "datasets": {
+    "HEST_Benchmark": {
+      "id": "hest-official-pca256-ridge-v2", "adapter": "hest", "evaluator": "hest-ridge",
+      "task": "morphology-to-gene-expression regression", "protocol_source": "OFFICIAL",
+      "source": "https://github.com/mahmoodlab/HEST", "seed": 1,
+      "primary_metric": "gene_wise_pearson", "direction": "max",
+      "grouping": "Official sample_id CSV folds; patient mapping unavailable",
+      "preprocessing": {"image_size": 224, "resize_size": 224, "patch_avgpool": true,
+        "image_normalization": "ImageNet RGB", "autocast": "bf16", "storage_dtype": "float16",
+        "embedding_normalization": "L2", "targets": "barcode-aligned log1p counts, official var_50genes"},
+      "search": {"features": ["last", "4-even", "last4"], "hyperparameters": {"alpha_multiplier": [0.1, 1.0, 10.0]}},
+      "estimator": "Train-only StandardScaler/PCA256; Ridge lsqr no-intercept max_iter1000, alpha=multiplier*100/(256*genes)",
+      "selection_limitation": "1TB outer evaluation folds used only for agreed protocol development; selected 1TB score is not unbiased confirmation. Multiplier search is PROPOSED_BY_US.",
+      "aggregation": "Equal genes within fold, equal official folds within tissue; canonical nine tissues macro average; HCC reported separately"
+    },
+    "CellFMCount": {
+      "id": "cellfm-dapi-source-quarantine-ridge-v2", "adapter": "cellfm", "evaluator": "ridge",
+      "task": "native DAPI scalar cell-count regression", "protocol_source": "PROPOSED_BY_US", "seed": 0,
+      "source": "https://zenodo.org/records/17088532", "primary_metric": "mae", "direction": "min",
+      "grouping": "Released image identity and decoded-pixel duplicates; biological specimen mapping unavailable",
+      "split": "Source test retained except three conflicting-count observations; quarantine all 12 DAPI members of six source-conflict groups, hold out ceil10% surviving trainval for validation",
+      "preprocessing": {"image_size": 256, "resize_size": 256, "patch_avgpool": true,
+        "image_normalization": "Existing grayscale minmax RGB and mean-color square padding; ImageNet RGB", "autocast": "bf16", "embedding_normalization": "L2", "storage_dtype": "float16"},
+      "search": {"features": ["last", "4-even", "last4"], "hyperparameters": {"alpha": [0.01, 0.1, 1.0, 10.0, 100.0]}},
+      "aggregation": "Pooled image-count MAE primary, R2 and Spearman secondary; curated test scope 272, not original275",
+      "limitations": ["Official source annotation conflicts quarantined, never averaged or silently selected", "Finite source edge clicks retained for scalar count; no localization interpretation", "Specimen/donor OOD not established"]
+    },
+    "AllenCell_Morphology": {
+      "id": "allen-well-disjoint-volume-ridge-v2", "adapter": "grouped", "evaluator": "ridge",
+      "task": "log1p cell-volume regression", "protocol_source": "PROPOSED_BY_US", "seed": 0,
+      "source": "https://github.com/chaudatascience/channel_adaptive_models", "primary_metric": "mae", "direction": "min",
+      "grouping": "PlateId:WellId, FOVs and all cell crops kept together",
+      "split": "Released Task_two unseen-structure test wells; merge Train/Task_one, ceil10% whole wells for deterministic SHA256 validation; decoded duplicate cleanup",
+      "preprocessing": {"image_size": 224, "resize_size": 256, "patch_avgpool": true,
+        "image_normalization": "Existing flattened multichannel percentile loader; three real WTC-11 channels, shared encoder channel policy auto", "autocast": "bf16", "embedding_normalization": "L2", "storage_dtype": "float16"},
+      "search": {"features": ["last", "4-even", "last4"], "hyperparameters": {"alpha": [0.01, 0.1, 1.0, 10.0, 100.0]}},
+      "aggregation": "Pooled cell MAE in log1p-volume units; R2/Spearman secondary",
+      "limitations": ["Official CHAMMI classification source, proposed regression task", "Well/FOV disjoint, not plate disjoint"]
+    },
+    "CytoImageNet": {
+      "id": "cyto-original-source-grouped-knn-v2", "adapter": "grouped", "evaluator": "knn",
+      "task": "weak-label morphology classification", "protocol_source": "PROPOSED_BY_US", "seed": 0,
+      "source": "https://github.com/stan-hua/CytoImageNet", "primary_metric": "accuracy", "direction": "max",
+      "grouping": "Released idx original source image; decoded exact duplicates cleaned",
+      "split": "Per-class source-group SHA256 order, ceil10% test and validation each; exclude classes with fewer than three surviving source groups",
+      "preprocessing": {"image_size": 224, "resize_size": 256, "patch_avgpool": true,
+        "image_normalization": "Released grayscale RGB conversion and existing ImageNet eval transform", "autocast": "bf16", "embedding_normalization": "L2", "storage_dtype": "float16"},
+      "search": {"features": ["last", "4-even", "last4"], "hyperparameters": {"k": [10, 20, 200], "temperature": [0.07, 0.2]}},
+      "aggregation": "Micro image accuracy primary; macro class balanced accuracy secondary",
+      "limitations": ["Official crop-random split has 64805 source IDs crossing train/val; repaired protocol is not official894-class reproduction", "Upstream donor/well provenance and training-corpus overlap remain separate checks"]
+    },
+    "OpenCell": {
+      "id": "opencell-protein-heldout-localization-logistic-v2", "adapter": "opencell", "evaluator": "logistic",
+      "task": "unambiguous major subcellular-localization classification", "protocol_source": "PROPOSED_BY_US", "seed": 0,
+      "source": "https://opencell.sf.czbiohub.org/download", "primary_metric": "balanced_accuracy", "direction": "max",
+      "grouping": "ENSG protein identity; all cell lines and FOVs of protein together",
+      "split": "At least10 eligible single-grade3 proteins/class; stable SHA256 choose up to16/class, then per-class default_rng(seed) protein permutation: ceil15% test, ceil15% validation, remainder training; ALL selected protein FOVs",
+      "scope": "215 proteins,14 localization classes,1064 official projection FOVs, subset of6301 available",
+      "preprocessing": {"image_size": 256, "resize_size": 256, "patch_avgpool": true,
+        "image_normalization": "Official two-channel projection: per-FOV minmax taggedprotein channel1 to red, Hoechst channel0 to green, blue zero, full-FOV square padding; ImageNet RGB", "autocast": "bf16", "embedding_normalization": "L2", "storage_dtype": "float16"},
+      "search": {"features": ["last", "4-even", "last4"], "hyperparameters": {"C": [0.01, 0.1, 1.0, 10.0, 100.0]}},
+      "aggregation": "Macro class balanced FOV accuracy primary; image accuracy/macroF1 secondary",
+      "limitations": ["Proposed FOV projection task, not Cytoself cell-crop reproduction", "Public raw images CC-BY-SA4.0; figure-analysis code license not used to infer data terms"]
+    }
+  }
+}

@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -72,13 +73,14 @@ def _records(task_root, split, fold):
     return records, path
 
 
-def inspect_hest(root):
+def inspect_hest(root, verify_payload=False):
     """Bounded preflight: inspect split/identity metadata, not image payloads."""
     import h5py
 
     root = Path(root)
     result = {"source_url": SOURCE_URL, "status": "PASS", "tasks": {},
-              "grouping": "official sample_id", "patient_disjoint_verified": False}
+              "grouping": "official sample_id", "patient_disjoint_verified": False,
+              "payload_verified": bool(verify_payload)}
     if not root.is_dir():
         return {**result, "status": "FAIL", "errors": [f"Missing root: {root}"]}
     for task in sorted(p for p in root.iterdir() if p.is_dir() and (p / "splits").is_dir()):
@@ -111,6 +113,11 @@ def inspect_hest(root):
                                     raise ValueError("Patch/barcode counts differ")
                                 if patches["img"].ndim != 4 or patches["img"].shape[-1] != 3:
                                     raise ValueError("HEST patches must be NHWC RGB")
+                                if patches["img"].dtype != np.uint8:
+                                    raise ValueError("HEST patch dtype must be uint8")
+                                if verify_payload:
+                                    for start in range(0, len(bars), 256):
+                                        np.asarray(patches["img"][start:start + 256])
                             with h5py.File(task / key[1], "r") as expr:
                                 obs, var = _index(expr["obs"]), _index(expr["var"])
                                 _unique(obs, "expression barcodes")
@@ -120,6 +127,11 @@ def inspect_hest(root):
                             checked[key] = {"spots": len(bars), "barcode_sha256": _identity_hash(bars),
                                             "expression_obs_sha256": _identity_hash(obs),
                                             "expression_var_sha256": _identity_hash(var)}
+                            if verify_payload:
+                                target = load_hest_targets(task / key[1], genes, bars)
+                                checked[key]["target_shape"] = list(target.shape)
+                                checked[key]["log1p_count_range"] = [float(target.min()), float(target.max())]
+                                checked[key]["target_sha256"] = hashlib.sha256(target.tobytes()).hexdigest()
                         spots += checked[key]["spots"]
                     fold_report[split] = {"sample_ids": [r["sample_id"] for r in rows],
                                           "samples": len(rows), "spots": spots,
@@ -165,26 +177,18 @@ def load_hest_targets(expr_path, genes, barcodes):
             for out, row in enumerate(rows):
                 values[out] = np.asarray(source[row])[cols]
         else:
+            from scipy import sparse
+
             encoding = source.attrs.get("encoding-type", "")
             if isinstance(encoding, bytes):
                 encoding = encoding.decode()
-            indptr = source["indptr"][:]
-            if encoding == "csr_matrix":
-                mapping = {col: out for out, col in enumerate(cols)}
-                for out, row in enumerate(rows):
-                    lo, hi = int(indptr[row]), int(indptr[row + 1])
-                    for col, value in zip(source["indices"][lo:hi], source["data"][lo:hi]):
-                        if int(col) in mapping:
-                            values[out, mapping[int(col)]] += value
-            elif encoding == "csc_matrix":
-                mapping = {row: out for out, row in enumerate(rows)}
-                for out, col in enumerate(cols):
-                    lo, hi = int(indptr[col]), int(indptr[col + 1])
-                    for row, value in zip(source["indices"][lo:hi], source["data"][lo:hi]):
-                        if int(row) in mapping:
-                            values[mapping[int(row)], out] += value
-            else:
+            if encoding not in {"csr_matrix", "csc_matrix"}:
                 raise ValueError(f"Unsupported H5AD X encoding: {encoding}")
+            # Bulk sparse reads avoid thousands of tiny remote HDF5 operations.
+            constructor = sparse.csr_matrix if encoding == "csr_matrix" else sparse.csc_matrix
+            matrix = constructor((source["data"][:], source["indices"][:], source["indptr"][:]),
+                                 shape=(len(obs), len(var)))
+            values = matrix[rows][:, cols].toarray().astype(np.float64)
     if not np.isfinite(values).all() or (values < 0).any():
         raise ValueError("HEST targets must be finite nonnegative counts")
     return np.log1p(values)
@@ -224,6 +228,8 @@ class HESTPatchDataset:
         self.targets = np.concatenate(targets, axis=0)
         self.paths = [f"{path}::{sample_id}::{barcode}" for path, _, sample_id, barcode in self.samples]
         self.protocol_complete = max_samples is None
+        self._handles = {}
+        self._pid = os.getpid()
 
     def __len__(self):
         return len(self.samples)
@@ -233,11 +239,29 @@ class HESTPatchDataset:
         from PIL import Image
 
         path, spot, _, _ = self.samples[index]
-        with h5py.File(path, "r") as handle:
-            pixels = np.asarray(handle["img"][spot])
+        if self._pid != os.getpid():
+            self.close()
+            self._pid = os.getpid()
+        if path not in self._handles:
+            self._handles[path] = h5py.File(path, "r")
+        pixels = np.asarray(self._handles[path]["img"][spot])
         if pixels.dtype != np.uint8:
             raise ValueError("HEST patches must contain uint8 RGB pixels")
         return Image.fromarray(pixels), self.targets[index], self.paths[index]
+
+    def close(self):
+        for handle in self._handles.values():
+            handle.close()
+        self._handles.clear()
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_handles"] = {}
+        return state
+
+    def __del__(self):
+        if hasattr(self, "_handles"):
+            self.close()
 
 
 def run_hest_probe_split(x_train, y_train, x_test, y_test, alpha_multiplier=1.0, latent_dim=256, seed=1):
@@ -265,6 +289,7 @@ def run_hest_probe_split(x_train, y_train, x_test, y_test, alpha_multiplier=1.0,
     alpha = alpha_multiplier * 100.0 / (latent_dim * y_train.shape[1])
     predictions = Ridge(alpha=alpha, solver="lsqr", fit_intercept=False, max_iter=1000,
                         random_state=seed).fit(a, y_train).predict(b)
+    predictions = np.asarray(predictions).reshape(len(b), y_train.shape[1])
     correlations = []
     for gene in range(y_test.shape[1]):
         truth, pred = y_test[:, gene], predictions[:, gene]
