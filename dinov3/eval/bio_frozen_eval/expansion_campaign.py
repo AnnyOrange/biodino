@@ -80,7 +80,9 @@ def read_manifest(args, config):
     expected = {"CellFMCount": ("cellfmcount-dapi-count", "regression"),
                 "AllenCell_Morphology": ("allen-cell-volume-well-grouped", "regression"),
                 "CytoImageNet": ("cytoimagenet-source-grouped", "classification"),
-                "OpenCell": ("opencell-major-localization-protein-heldout", "classification")}
+                "OpenCell": ("opencell-major-localization-protein-heldout", "classification"),
+                "VGG_Cell_Counting": ("vgg-synthetic-cell-count", "regression"),
+                "FILM": ("FILM", "c_elegans_age_classification")}
     if args.dataset in expected and (manifest.get("dataset"), manifest.get("task")) != expected[args.dataset]:
         raise ValueError("Data manifest belongs to a different dataset/task")
     if manifest.get("seed", config["seed"]) != config["seed"]:
@@ -108,6 +110,17 @@ def read_manifest(args, config):
 
 def verify_data(args, config, manifest):
     root = Path(args.benchmark_root)
+    if config["adapter"] in {"vgg", "film"}:
+        if config["adapter"] == "vgg":
+            from .vgg_count import build_vgg_manifest
+            rebuilt = build_vgg_manifest(root, config["seed"], n_train=32)
+        else:
+            from .film import build_film_manifest
+            rebuilt = build_film_manifest(root / "ood/ood_classification/datasets/FILM", tuple(config["repetition_seeds"]))
+        approved = {k: v for k, v in manifest.items() if k != "loader_smoke"}
+        if rebuilt != approved:
+            raise ValueError("Approved CV dataset no longer matches source pixels, annotations and folds")
+        return None
     if config["adapter"] == "hest":
         release_path = Path(args.manifest).parent / "release_verification.json"
         release = json.loads(release_path.read_text())
@@ -147,6 +160,12 @@ def verify_data(args, config, manifest):
 
 
 def dataset(args, config, manifest, split):
+    if config["adapter"] == "vgg":
+        from .vgg_count import VGGCountDataset
+        return VGGCountDataset(args.benchmark_root, manifest, split)
+    if config["adapter"] == "film":
+        from .film import FILMAgeDataset
+        return FILMAgeDataset(Path(args.benchmark_root) / "ood/ood_classification/datasets/FILM", manifest, split)
     if config["adapter"] == "cellfm":
         from .cellfmcount import CellFMCountDataset
         return CellFMCountDataset(args.benchmark_root, manifest, split)
@@ -164,7 +183,8 @@ def make_encoder(args, config, identity, feature):
     encoder = Dinov3CkptEncoder(Path(args.checkpoint), Path(args.train_config), args.device,
         1, config["preprocessing"]["patch_avgpool"], torch.bfloat16,
         image_size=config["preprocessing"]["image_size"],
-        resize_size=config["preprocessing"]["resize_size"])
+        resize_size=config["preprocessing"]["resize_size"],
+        channel_policy=config["preprocessing"].get("channel_policy", "auto"))
     if len(encoder.model.backbone.blocks) != identity["model_depth"]:
         raise ValueError("Loaded model depth differs from admitted checkpoint")
     layers = feature_layers(identity["model_depth"], feature)
@@ -283,6 +303,67 @@ def hest_score(config, parameters, bank):
             "mae": float(np.mean([row["metrics"]["mae"] for row in reports]))}, reports
 
 
+def cv_bank(args, config, manifest, identity, feature, evaluation=False):
+    splits = ("all",) if config["adapter"] == "film" else (("development", "test") if evaluation else ("development",))
+    bank, layers = extract_global(args, config, manifest, identity, feature, splits)
+    return bank, layers
+
+
+def cv_score(config, parameters, bank, manifest, evaluation=False):
+    if config["adapter"] == "vgg":
+        from .probes import run_regression_probe_split
+        records = [r for r in manifest["records"] if r["source_split"] == "development"]
+        if evaluation:
+            records += [r for r in manifest["records"] if r["source_split"] == "test"]
+        x = np.concatenate([value[0] for value in bank.values()])
+        y = np.concatenate([value[1] for value in bank.values()])
+        index = {r["sample_id"]: i for i, r in enumerate(records)}
+        reports = []
+        for fold in manifest["folds"]:
+            train = [index[s] for s in fold["train"]]
+            test = [index[s] for s in fold["test" if evaluation else "val"]]
+            metrics = run_regression_probe_split(x[train], y[train], x[test], y[test], alpha=parameters["alpha"]).metrics
+            reports.append({"fold": fold["fold"], "metrics": metrics})
+    else:
+        from .film import run_film_fold_probe
+        reports = []
+        for repetition, entry in enumerate(manifest["repetitions"]):
+            for fold in range(len(entry["folds"])):
+                inner = [run_film_fold_probe(bank["all"][0], manifest, repetition, fold,
+                          C=parameters["C"], inner_fold=i) for i in range(3)]
+                reports.append({"repetition": repetition, "fold": fold,
+                    "metrics": {k: float(np.mean([r[k] for r in inner])) for k in
+                                ("accuracy", "balanced_accuracy", "macro_f1")}, "inner_folds": inner})
+    return {key: float(np.mean([r["metrics"][key] for r in reports]))
+            for key in reports[0]["metrics"]}, reports
+
+
+def select_protocol(rows, config, depth):
+    validate_search(rows, config, depth)
+    winner = choose(rows, config["primary_metric"], config["direction"],
+                    len(config["search"]["features"]) * len(candidates(config)))
+    if config["adapter"] != "film":
+        return winner
+    protocols = []
+    expected = {(r, f) for r in range(3) for f in range(3)}
+    for row in rows:
+        if {(f["repetition"], f["fold"]) for f in row["folds"]} != expected or len(row["folds"]) != 9:
+            raise ValueError("FILM requires every unique outer fold's inner-validation report")
+    for repetition, fold in sorted(expected):
+        choices = []
+        for row in rows:
+            report = next(f for f in row["folds"] if (f["repetition"], f["fold"]) == (repetition, fold))
+            value = report["metrics"][config["primary_metric"]]
+            if not np.isfinite(value):
+                raise ValueError("Nonfinite FILM inner-validation metric")
+            choices.append((value, row))
+        _, selected = max(choices, key=lambda item: item[0])
+        protocols.append({"repetition": repetition, "fold": fold,
+                          **{k: selected[k] for k in ("feature", "hyperparameters", "zero_based_layers")}})
+    return {"feature": "fold-specific", "fold_protocols": protocols,
+            "selection": "Independent inner grouped CV within each outer training partition"}
+
+
 def run(args):
     registry = json.loads(Path(args.registry).read_text())
     config = registry["datasets"][args.dataset]
@@ -307,9 +388,7 @@ def run(args):
                 raise ValueError(f"Selected sweep differs from frozen admission: {key}")
         if sweep["environment"]["environment_sha256"] != identity["environment"]["environment_sha256"]:
             raise ValueError("Selection environment changed")
-        validate_search(sweep["rows"], config, identity["model_depth"])
-        winner = choose(sweep["rows"], config["primary_metric"], config["direction"],
-                        len(config["search"]["features"]) * len(candidates(config)))
+        winner = select_protocol(sweep["rows"], config, identity["model_depth"])
         frozen = {**identity, "status": "FROZEN", "selection_budget": "1TB", "selection_git_commit": sweep["git_commit"],
                   "selection_sweep_sha256": file_digest(args.sweep), "selected": winner,
                   "config": config, "selection_model": {k: identity[k] for k in
@@ -323,11 +402,16 @@ def run(args):
         rows = []
         for feature in config["search"]["features"]:
             hest = config["adapter"] == "hest"
+            cv = config["adapter"] in {"vgg", "film"}
             layers = feature_layers(identity["model_depth"], feature)
             extraction_error = None
             try:
-                bank, layers = hest_bank(args, config, manifest, identity, feature) if hest else extract_global(
-                    args, config, manifest, identity, feature, ("train", "val"))
+                if hest:
+                    bank, layers = hest_bank(args, config, manifest, identity, feature)
+                elif cv:
+                    bank, layers = cv_bank(args, config, manifest, identity, feature)
+                else:
+                    bank, layers = extract_global(args, config, manifest, identity, feature, ("train", "val"))
             except Exception as error:
                 extraction_error = str(error)
             for parameters in candidates(config):
@@ -336,6 +420,8 @@ def run(args):
                         raise RuntimeError(extraction_error)
                     if hest:
                         metrics, folds = hest_score(config, parameters, bank)
+                    elif cv:
+                        metrics, folds = cv_score(config, parameters, bank, manifest)
                     else:
                         metrics, folds = probe(config, parameters, bank["train"], bank["val"]), None
                     row = {"status": "SUCCESS", "metrics": {k: float(v) if np.isfinite(v) else None for k, v in metrics.items()}, "folds": folds}
@@ -349,13 +435,11 @@ def run(args):
                 rows.append(row)
                 print(json.dumps(row), flush=True)
         try:
-            validate_search(rows, config, identity["model_depth"])
-            winner = choose(rows, config["primary_metric"], config["direction"],
-                            len(config["search"]["features"]) * len(candidates(config)))
+            winner = select_protocol(rows, config, identity["model_depth"])
         except ValueError:
             winner = None
         write_new(output / "sweep.json", {**identity, "status": "SELECTION_COMPLETE_NOT_YET_FROZEN" if winner else "FAILURE", "rows": rows,
-            "selected": winner, "selection_split": "official outer test folds, development only" if config["adapter"] == "hest" else "validation",
+            "selected": winner, "selection_split": "official outer test folds, development only" if config["adapter"] == "hest" else ("per-outer-fold inner grouped CV" if config["adapter"] == "film" else "validation"),
             "test_used_for_development": config["adapter"] == "hest"})
         if winner is None:
             raise ValueError("Full sweep saved but failed/nonfinite candidates prevent freezing")
@@ -380,9 +464,33 @@ def run(args):
                 and previous.get("protocol_sha256") == frozen["protocol_sha256"]):
             raise ValueError("Budget progression requires matching successful evaluation at the previous budget")
     selected = frozen["selected"]
+    if config["adapter"] == "film":
+        from .film import run_film_fold_probe
+        banks = {}
+        folds = []
+        for entry in selected["fold_protocols"]:
+            feature = entry["feature"]
+            if feature not in banks:
+                banks[feature], layers = cv_bank(args, config, manifest, identity, feature, evaluation=True)
+                if layers != entry["zero_based_layers"]:
+                    raise ValueError("Frozen FILM taps changed")
+            report = run_film_fold_probe(banks[feature]["all"][0], manifest, entry["repetition"],
+                                        entry["fold"], C=entry["hyperparameters"]["C"])
+            folds.append({**entry, "metrics": {k: report[k] for k in ("accuracy", "balanced_accuracy", "macro_f1")}})
+        metrics = {k: float(np.mean([f["metrics"][k] for f in folds])) for k in folds[0]["metrics"]}
+        seed_means = [np.mean([f["metrics"]["balanced_accuracy"] for f in folds if f["repetition"] == r]) for r in range(3)]
+        metrics["balanced_accuracy_seed_std"] = float(np.std(seed_means, ddof=0))
+        write_new(output / "result.json", {**identity, "status": "SUCCESS", "feature": "fold-specific",
+            "fold_protocols": selected["fold_protocols"], "metric": config["primary_metric"],
+            "metrics": metrics, "folds": folds, "protocol_sha256": frozen["protocol_sha256"], "retuned": False})
+        return
     if config["adapter"] == "hest":
         bank, layers = hest_bank(args, config, manifest, identity, selected["feature"])
         metrics, folds = hest_score(config, selected["hyperparameters"], bank)
+    elif config["adapter"] == "vgg":
+        bank, layers = cv_bank(args, config, manifest, identity, selected["feature"], evaluation=True)
+        metrics, folds = cv_score(config, selected["hyperparameters"], bank, manifest, evaluation=True)
+        metrics["mae_draw_std"] = float(np.std([f["metrics"]["mae"] for f in folds], ddof=0))
     else:
         bank, layers = extract_global(args, config, manifest, identity, selected["feature"], ("train", "test"))
         metrics, folds = probe(config, selected["hyperparameters"], bank["train"], bank["test"]), None

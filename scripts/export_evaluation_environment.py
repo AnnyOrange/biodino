@@ -41,7 +41,7 @@ def main():
     files = {}
     for dist in distributions.values():
         key = dist.metadata["Name"].lower().replace("_", "-")
-        if base.get(key) == dist.version:
+        if base.get(key) == dist.version and key != "opencv-python-headless":
             continue
         for relative in dist.files or []:
             relative = Path(relative)

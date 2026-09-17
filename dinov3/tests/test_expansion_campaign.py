@@ -6,10 +6,36 @@ import unittest
 
 import numpy as np
 
-from dinov3.eval.bio_frozen_eval.expansion_campaign import choose, candidates, verify_data, read_manifest, validate_search
+from dinov3.eval.bio_frozen_eval.expansion_campaign import choose, candidates, verify_data, read_manifest, validate_search, select_protocol, cv_score
 
 
 class ExpansionCampaignTests(unittest.TestCase):
+    def test_film_selects_independent_inner_winners_not_global_winner(self):
+        config = {"adapter": "film", "primary_metric": "balanced_accuracy", "direction": "max",
+                  "search": {"features": ["last"], "hyperparameters": {"C": [.1, 1.]}}}
+        rows = []
+        for C in [.1, 1.]:
+            folds = [{"repetition": r, "fold": f, "metrics": {"balanced_accuracy":
+                     float(C == (.1 if f == 0 else 1.))}} for r in range(3) for f in range(3)]
+            rows.append({"status": "SUCCESS", "feature": "last", "zero_based_layers": [11],
+                         "hyperparameters": {"C": C}, "metrics": {"balanced_accuracy": .5}, "folds": folds})
+        selected = select_protocol(rows, config, 12)
+        self.assertEqual(len(selected["fold_protocols"]), 9)
+        for entry in selected["fold_protocols"]:
+            self.assertEqual(entry["hyperparameters"]["C"], .1 if entry["fold"] == 0 else 1.)
+        rows[0]["folds"].pop()
+        with self.assertRaisesRegex(ValueError, "every unique"):
+            select_protocol(rows, config, 12)
+
+    def test_vgg_development_scoring_does_not_require_test_features(self):
+        manifest = {"records": [{"sample_id": str(i), "source_split": "development"} for i in range(8)],
+                    "folds": [{"fold": 0, "train": ["0", "1", "2", "3"],
+                               "val": ["4", "5", "6", "7"], "test": ["hidden"]}]}
+        x = np.arange(8, dtype=float)[:, None]
+        metric, folds = cv_score({"adapter": "vgg"}, {"alpha": 1.}, {"development": (x, x[:, 0])}, manifest)
+        self.assertTrue(np.isfinite(metric["mae"]))
+        self.assertEqual(len(folds), 1)
+
     def test_grid_keeps_declared_order_and_all_candidates(self):
         config = {"search": {"hyperparameters": {"k": [10, 20], "temperature": [.07, .2]}}}
         self.assertEqual(candidates(config), [{"k": 10, "temperature": .07}, {"k": 10, "temperature": .2},

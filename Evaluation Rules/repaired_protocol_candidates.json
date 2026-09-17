@@ -54,6 +54,30 @@
       "aggregation": "Micro image accuracy primary; macro class balanced accuracy secondary",
       "limitations": ["Official crop-random split has 64805 source IDs crossing train/val; repaired protocol is not official894-class reproduction", "Upstream donor/well provenance and training-corpus overlap remain separate checks"]
     },
+    "VGG_Cell_Counting": {
+      "id": "vgg-n32-five-draw-ridge-v2", "adapter": "vgg", "evaluator": "ridge",
+      "task": "synthetic full-field cell counting", "protocol_source": "PROPOSED_BY_US", "seed": 0,
+      "source": "https://www.robots.ox.ac.uk/~vgg/research/counting/", "primary_metric": "mae", "direction": "min",
+      "grouping": "Independent synthetic source image, no derived crops",
+      "split": "Official first100 development / second100 test; five N32 train/N32 validation draws from development, proposed deterministic seeds0..4",
+      "preprocessing": {"image_size": 256, "resize_size": 256, "patch_avgpool": true,
+        "channel_policy": "auto", "image_normalization": "Native RGB full256x256 field, ImageNet RGB", "autocast": "bf16", "embedding_normalization": "L2", "storage_dtype": "float16"},
+      "search": {"features": ["last", "4-even", "last4"], "hyperparameters": {"alpha": [0.1, 1.0, 10.0, 100.0, 1000.0]}},
+      "aggregation": "Equal mean of five per-draw validation MAEs for selection; frozen evaluation mean/population SD of five test MAEs on same100 images",
+      "limitations": ["Global-feature scalar count baseline, not density/MESA reproduction", "Research-only noncommercial code terms and requiredcitation; no separate explicit standalone image archive license or commercial permission"]
+    },
+    "FILM": {
+      "id": "film-age-nested-grouped3fold-v2", "adapter": "film", "evaluator": "logistic",
+      "task": "C.elegans age classification", "protocol_source": "PROPOSED_BY_US", "seed": 0, "repetition_seeds": [0, 1, 2],
+      "source": "https://arxiv.org/html/2504.04305v3", "primary_metric": "balanced_accuracy", "direction": "max",
+      "grouping": "Named biological sample; average paired D6_sample1 FOV embeddings, all126 spectral planes inseparable",
+      "split": "Repeated stratified sample-group3fold outer CV, seeds0/1/2; independent3fold inner CV within each outer training partition",
+      "preprocessing": {"image_size": 224, "resize_size": 256, "patch_avgpool": true,
+        "channel_policy": "mean3", "image_normalization": "Released SPEND-denoised126-band stacks, shared whole-stack p1/p99 clipping, fixed spectral mean replicatedRGB; ImageNet", "autocast": "bf16", "embedding_normalization": "L2", "storage_dtype": "float16"},
+      "search": {"features": ["last", "4-even"], "hyperparameters": {"C": [0.01, 0.1, 1.0, 10.0, 100.0]}},
+      "aggregation": "Select feature/C separately for each of9 outer folds from its3 inner folds only; freeze all9 recipes. Equal fold means then equal seed means; population seed SD is not independent-cohort uncertainty",
+      "limitations": ["27 named groups/28 FOV stacks only; hidden animal/batch linkage unavailable", "Spectral-mean RGB loses chemical information, not native spectroscopy or lysosome assay reproduction", "Author SPEND denoising training provenance not assigned to our folds; CC-BY4.0 released-data observational benchmark"]
+    },
     "OpenCell": {
       "id": "opencell-protein-heldout-localization-logistic-v2", "adapter": "opencell", "evaluator": "logistic",
       "task": "unambiguous major subcellular-localization classification", "protocol_source": "PROPOSED_BY_US", "seed": 0,
