@@ -1,0 +1,23 @@
+{
+  "registry_id": "hs6-unprotocolized-model-identities-v1",
+  "models": {
+    "hs6-splus-1tb-ck9224": {
+      "model_family": "hs6-S+",
+      "model_budget": "1TB",
+      "checkpoint_sha256": "831aee2f7f296a4184273f3458364ba39879ba1148c5c1e430dbabb690bbba0d",
+      "train_config_sha256": "882f970a80c3c9f6059813931e9c5eee6d4beaf5a88d1e2e70b082da24116121",
+      "depth": 12,
+      "branch": "teacher",
+      "selection_note": "Previously selected retrospective historical-test anchor; fixed before these new-dataset sweeps, not a new-dataset checkpoint search.",
+      "checkpoint_hint": "outputs/01_training_runs/HS6_Splus_robust_biosafe256_gb1024_lr2e4_wu3_tw30_nosig_e15_seed0_8x5090xr_20260821b/ckpt/9224/checkpoint.pth",
+      "train_config_hint": "outputs/01_training_runs/HS6_Splus_robust_biosafe256_gb1024_lr2e4_wu3_tw30_nosig_e15_seed0_8x5090xr_20260821b/config.yaml"
+    }
+  },
+  "blocked_models": {
+    "hs6-H+_1TB": "Resident H100 ck15374 known; checkpoint/config hashes and architecture fingerprint not yet admitted.",
+    "hs6-S+_5TB": "No verified checkpoint of this model family/budget located; L 5TB is not a substitute.",
+    "hs6-S+_20TB": "No verified checkpoint of this model family/budget located; L 20TB is not a substitute.",
+    "hs6-H+_5TB": "No verified checkpoint of this model family/budget located.",
+    "hs6-H+_20TB": "No verified checkpoint of this model family/budget located."
+  }
+}

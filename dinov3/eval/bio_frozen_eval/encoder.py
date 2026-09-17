@@ -136,6 +136,7 @@ class Dinov3CkptEncoder:
         channel_policy: str = "auto",
         channel_tta_samples: int = 8,
         channel_policy_seed: int = 0,
+        feature_layers: list[int] | None = None,
     ):
         if channel_policy not in CHANNEL_POLICIES:
             raise ValueError(f"Unknown channel_policy={channel_policy!r}; expected one of {CHANNEL_POLICIES}")
@@ -144,8 +145,15 @@ class Dinov3CkptEncoder:
         self.device = torch.device(device)
         maybe_init_dist_for_dcp(checkpoint)
         backbone = load_dinov3_backbone(str(checkpoint), str(train_config), device=self.device, freeze=True)
+        if feature_layers is not None:
+            depth = len(backbone.blocks)
+            if not feature_layers or feature_layers != sorted(set(feature_layers)) or any(
+                index < 0 or index >= depth for index in feature_layers
+            ):
+                raise ValueError(f"Invalid zero-based feature_layers={feature_layers} for depth={depth}")
         self.model = LinearFeatureModel(
-            backbone, n_last_blocks=n_last_blocks, use_avgpool=use_avgpool, autocast_dtype=autocast_dtype
+            backbone, n_last_blocks=feature_layers if feature_layers is not None else n_last_blocks,
+            use_avgpool=use_avgpool, autocast_dtype=autocast_dtype
         )
         self.model.to(self.device).eval()
         self.image_size = image_size

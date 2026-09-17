@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "audited_utc": "2026-09-17",
+  "audit_scope": "Read-only local metadata and primary-source review; no GPU evaluation or protocol selection completed.",
+  "datasets": [
+    {
+      "dataset": "CytoImageNet",
+      "path": "/mnt/huawei_deepcad/benchmark/Representation/CytoImageNet",
+      "task": "894-class weak-label classification",
+      "classification": "OFFICIAL",
+      "official_split": "Published metadata dset train/val; stratified 90/10 image-row split, no official test split identified.",
+      "grouping": "Source image idx is the minimum leakage unit; upstream specimen/plate/well grouping requires recovered metadata.",
+      "metric": "Categorical top-1 accuracy; macro accuracy is a separately declared secondary metric.",
+      "status": "NOT_READY_SOURCE_GROUP_LEAKAGE",
+      "blocker": "Official split has source-image crop leakage. Preserve official reproduction separately; scientific source-idx-grouped train/validation/evaluation protocol must be labeled PROPOSED_BY_US, validate label coverage, and audit pretraining overlap. Exact evaluator and preprocessing not frozen.",
+      "sources": ["https://github.com/stan-hua/CytoImageNet", "https://github.com/stan-hua/CytoImageNet/blob/master/scripts/model_pretraining.py", "https://www.kaggle.com/datasets/stanleyhua/cytoimagenet"],
+      "local_evidence": {"metadata": "metadata/metadata.csv", "rows": 890737, "train_rows": 801663, "val_rows": 89074, "classes": 894, "unique_source_idx": 412470, "source_idx_crossing_train_val": 64805, "labels_present_in_both_splits": 894, "license_record": "SOURCE.md reports CC0 Public Domain; upstream component provenance still requires overlap/usage audit", "existing_evaluator": "bio_frozen_eval classification/logistic probe and DINOv3 linear/kNN implementations"}
+    },
+    {
+      "dataset": "ACROBAT",
+      "path": "/mnt/huawei_deepcad/benchmark/Representation/ACROBAT",
+      "task": "IHC-to-H&E whole-slide registration",
+      "classification": "OFFICIAL",
+      "official_split": "2022 challenge advertises 750 train, 100 validation, 300 test cases; released SND dataset has 750/100/303 cases. Do not substitute the 2023 blinded OOD challenge protocol.",
+      "grouping": "Patient/case; all stains, WSIs and tiles of a patient share split and aggregation unit.",
+      "metric": "Median across image pairs of pairwise 90th-percentile landmark target registration error, in micrometers.",
+      "status": "NOT_READY_OFFICIAL_REGISTRATION",
+      "blocker": "Only validation WSIs downloaded, no verified official scoring targets. Existing retrieval is a PROPOSED_BY_US surrogate, not official registration. Same relative tile coordinates in unregistered WSIs are not true spatial pairs. Registration adapter and landmark units required. SND CC BY 4.0 release says publication notification not required, whereas old challenge rules request approval for non-registration publications; clarify source-terms discrepancy for proposed retrieval publication.",
+      "sources": ["https://acrobat.grand-challenge.org/Overview/", "https://acrobat.grand-challenge.org/challenge-ranking/", "https://acrobat.grand-challenge.org/Participation_Rules/", "https://researchdata.se/en/catalogue/dataset/2022-190-1"],
+      "local_evidence": {"validation_wsis": 200, "validation_patients": 100, "stain_counts": {"HE": 100, "ER": 29, "PGR": 28, "HER2": 14, "KI67": 29}, "download_scope": "extracted/valid only", "license_record": "CC BY 4.0 dataset release, separately from challenge participation conditions", "existing_draft": "scripts/make_fig3_representation_draft.py samples relative-coordinate validation tiles; not registration ground truth"}
+    },
+    {
+      "dataset": "AllenCell",
+      "path": "/mnt/huawei_deepcad/benchmark/Representation/AllenCell",
+      "task": "Proposed same-FOV brightfield/fluorescence retrieval",
+      "classification": "PROPOSED_BY_US",
+      "official_split": "No official retrieval split or metric identified for the selected local 35-FOV subset; upstream is a general-purpose hiPSC image resource.",
+      "grouping": "FOV minimum; plate, well and acquisition day for tuning/evaluation separation. All channels and z-slices of a FOV remain together.",
+      "metric": "Proposed bidirectional recall@1/5/10, mAP@k and MRR; aggregate/bootstrap over FOV or plate, not slices.",
+      "status": "NOT_READY_PROPOSED_RETRIEVAL",
+      "blocker": "Need declared development/evaluation FOV or plate manifest, channel identities, z-projection/full-volume treatment and exact query/gallery policy. Reuse existing disjoint query/gallery retrieval rather than new similarity scorer. Custom Allen research/noncommercial terms apply; not automatically CC0.",
+      "sources": ["https://www.allencell.org/data-downloading.html", "https://www.allencell.org/terms-of-use.html", "https://pmc.ncbi.nlm.nih.gov/articles/PMC9834050/"],
+      "local_evidence": {"fovs": 35, "structure_classes": 7, "fovs_per_structure": 5, "manifest": "manifests/fov_subset_manifest.csv", "selection_seed": 20260811, "manifest_fields": ["structure", "plate_id", "size_bytes", "s3_key", "url"], "selection_metadata": "Classification/CHAMMI/Allen/enriched_meta.csv", "license_record": "Allen terms allow research/noncommercial use and limited scholarly publication with attribution; commercial redistribution requires written permission"}
+    },
+    {
+      "dataset": "AllenCell_Morphology",
+      "path": "/mnt/huawei_deepcad/benchmark/Regression/AllenCell_Morphology",
+      "task": "Frozen-feature log1p(cell_volume) regression",
+      "classification": "PROPOSED_BY_US",
+      "official_split": "Existing local opt-in task uses official CHAMMI Allen Train -> Task_one source splits; Task_two can represent a separate shifted-distribution evaluation, not a validation set to silently retune against.",
+      "grouping": "Cells from the same FOV, well, plate or acquisition day require grouping audit using enriched CHAMMI metadata; cell-row disjointness alone is insufficient.",
+      "metric": "Existing MAE, R2 and Spearman on log1p(cell_volume); transformed target and aggregation must be stated explicitly.",
+      "status": "NOT_READY_GROUP_AUDIT_AND_SELECTION",
+      "blocker": "Loader already exists as allen-cell-volume. Verify official source-split FOV/plate leakage, target metadata and preprocessing, then run 1TB-only ridge selection and freeze. No official Allen volume-regression benchmark claim justified.",
+      "sources": ["https://www.allencell.org/data-downloading.html", "https://www.allencell.org/terms-of-use.html", "https://pmc.ncbi.nlm.nih.gov/articles/PMC9834050/"],
+      "local_evidence": {"readme": "Regression/AllenCell_Morphology/README.md", "data": "Symlink to Classification/CHAMMI/Allen", "existing_loader": "bio_frozen_eval.registry.build_dataset allen-cell-volume -> CHAMMIRegressionDataset", "target": "log1p(cell_volume)", "existing_status": "Final-figure opt-in, excluded from ID default aggregate", "license_record": "Allen custom research/noncommercial terms; upstream software licenses do not substitute for data terms"}
+    },
+    {
+      "dataset": "CIMA",
+      "path": "/mnt/huawei_deepcad/benchmark/Representation/CIMA",
+      "task": "Multi-stain histological-section registration",
+      "classification": "ESTABLISHED_CONVENTION",
+      "official_split": "108 registration image pairs across 9 tissue-section sets; canonical supervised train/validation/test split not verified. BIRL supports fixed pair-cover evaluation.",
+      "grouping": "Tissue/specimen set including all stains, landmarks and resolution copies; overlaps with ANHIR CIMA tissue sets require cross-dataset isolation.",
+      "metric": "BIRL landmark TRE/rTRE and registration robustness; exact pair-cover and summary statistic must be verified and frozen.",
+      "status": "NOT_READY_REGISTRATION_PROTOCOL",
+      "blocker": "Need registration adapter, fixed direction/pair cover, resolution and coordinate units, development/test grouping and exact aggregation. Retrieval would be PROPOSED_BY_US rather than the established registration task. Original-author Kaggle data license CC BY-SA 4.0 must not be conflated with BSD repository code license.",
+      "sources": ["https://github.com/Borda/dataset-histology-landmarks", "https://github.com/Borda/BIRL", "https://www.kaggle.com/datasets/jirkaborovec/histology-cima-dataset"],
+      "local_evidence": {"extracted_files_reported": 486, "tissue_sets": 9, "tissue_set_names": ["lung-lesion_1", "lung-lesion_2", "lung-lesion_3", "lung-lobes_1", "lung-lobes_2", "lung-lobes_3", "lung-lobes_4", "mammary-gland_1", "mammary-gland_2"], "license_record": "metadata/kaggle_dataset.json licenseName=CC BY-SA 4.0; metadata/LICENSE from landmarks repository BSD-3-Clause has a different scope", "landmarks": "CSV paired with images across scales"}
+    },
+    {
+      "dataset": "CLEM_Reg",
+      "path": "/mnt/huawei_deepcad/benchmark/Representation/CLEM_Reg",
+      "task": "3D correlative fluorescence/volume electron microscopy registration",
+      "classification": "OFFICIAL",
+      "official_split": "Paper benchmarks three acquired HeLa-cell volume pairs; no standard train/validation/test split identified.",
+      "grouping": "Whole cell/volume, never individual z-slices or channel patches. Three volumes provide only three independent biological/acquisition units.",
+      "metric": "Paper evaluates fluorescence signal overlap with EM target structures, centroid distance and manual landmark accuracy; NRMSE is used for parameter robustness relative to manual reference overlays.",
+      "status": "NOT_READY_3D_SCORING_ASSETS",
+      "blocker": "Need 3D registration-aware adapter with physical-coordinate calibration; verify target-object masks and expert overlays. Existing 2D retrieval cannot represent official registration. Data license must be checked per EMPIAR/BioStudies entry; MIT napari-clemreg is code license only.",
+      "sources": ["https://pmc.ncbi.nlm.nih.gov/articles/PMC12446066/", "https://github.com/krentzd/napari-clemreg", "https://www.ebi.ac.uk/empiar/", "https://www.ebi.ac.uk/biostudies/"],
+      "local_evidence": {"volume_pairs": ["EMPIAR-10819", "EMPIAR-11537", "EMPIAR-11666"], "formats": ["EM TIFF", "FM CZI"], "landmarks": "metadata/landmarks.csv present for all three entries", "metadata": "empiar_entry.json and biostudies_entry.json present per entry", "license_record": "No blanket verified dataset license; entry-specific terms remain to audit", "download_scope": "Processed/downsampled EM and FM, not multi-terabyte raw series"}
+    },
+    {
+      "dataset": "ANHIR",
+      "path": "/mnt/huawei_deepcad/benchmark/Representation/ANHIR",
+      "task": "Automatic non-rigid multi-stain histology registration",
+      "classification": "OFFICIAL",
+      "official_split": "Local official-format dataset_medium.csv: 230 training and 251 evaluation directed pairs. Evaluation landmarks remain private server-side; official pairs are not specimen/image-disjoint.",
+      "grouping": "Tissue set/specimen for any proposed supervised split; preserve official pair status for challenge reproduction and explicitly disclose shared images. Do not describe official pair holdout as specimen OOD.",
+      "metric": "Official primary ranking is mean across pairs of method ranks of per-pair median rTRE; report average median rTRE, fraction of landmarks improved relative to initial alignment, and runtime separately.",
+      "status": "NOT_READY_LICENSE_AND_HIDDEN_GT",
+      "blocker": "Kaggle mirror declares license Unknown; direct official image/data use and redistribution terms not verified (official pages return access errors). All 251 evaluation target landmark files absent locally: official held-out scoring needs challenge server/access. BSD BIRL and Apache ANHIR method licenses do not license data. Registration evaluator is a genuine missing task; similarity retrieval is a separate PROPOSED_BY_US surrogate.",
+      "sources": ["https://anhir.grand-challenge.org/Data/", "https://anhir.grand-challenge.org/Performance_Metrics/", "https://anhir.grand-challenge.org/FAQ/", "https://www.kaggle.com/datasets/harsha130/anhir-data", "https://github.com/Borda/BIRL"],
+      "local_evidence": {"pair_cover": "extracted/dataset_medium/dataset_medium.csv", "pairs": 481, "training_pairs": 230, "evaluation_pairs": 251, "tissue_groups": 49, "unique_images_in_pair_cover": 245, "images_crossing_training_evaluation": 112, "missing_source_images": 0, "missing_target_images": 0, "missing_source_landmarks": 0, "missing_target_landmarks": 251, "license_record": "metadata/kaggle_dataset.json licenseName=Unknown", "cross_dataset_overlap": "Includes CIMA lung-lesion, lung-lobe and mammary-gland sets"}
+    }
+  ],
+  "feature_review": {
+    "frozen_encoder_initial_audit": "Initially integer n_last_blocks only: 4 is last four consecutive blocks, NOT even4. Local authoritative implementation subsequently added explicit-index support to LinearFeatureModel during this campaign.",
+    "reuse": "Reuse bio_segmentation pipeline explicit even4 definitions and the shared frozen encoder; exact architecture-dependent indices must be frozen and verified for every model budget.",
+    "even4_zero_based": {"12": [2, 5, 8, 11], "24": [4, 11, 17, 23], "40": [9, 19, 29, 39]},
+    "candidate_global_features": ["last CLS with optional final mean-pooled patches", "last4 CLS concatenation with optional final mean-pooled patches", "explicit even4 indices with optional final mean-pooled patches"],
+    "retrieval_defaults": "Reuse cross_split_retrieval_metrics: L2-normalized cosine, k=[1,5,10], disjoint query/gallery images. Grouped aggregation requires explicit handling.",
+    "selection": "1TB only; save full sweep and freeze before unchanged 5TB/20TB evaluation. No winner selected in this audit."
+  }
+}

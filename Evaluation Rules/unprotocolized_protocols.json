@@ -1,0 +1,50 @@
+{
+  "registry_id": "bio-unprotocolized-candidates-v1",
+  "status": "DEVELOPMENT_NOT_FORMAL_V3",
+  "selection_budget": "1TB",
+  "budget_order": ["1TB", "5TB", "20TB"],
+  "model_registry": "unprotocolized_models.json",
+  "audit_files": ["unprotocolized_representation_audit.json", "unprotocolized_ood_audit.json", "unprotocolized_external_audit.json"],
+  "datasets": {
+    "cellfmcount-dapi-count": {
+      "classification": "PROPOSED_BY_US",
+      "official_components": ["DAPI-only scope", "released fixed test IDs", "MAE"],
+      "status": "BLOCKED_DUPLICATE_CONTENT_CONFLICTING_COUNTS",
+      "license_status": "CC-BY-SA-4.0",
+      "task": "regression",
+      "split": "released DAPI trainval/test; fixed seed0 10% trainval validation (ceil)",
+      "grouping": "image ID; no specimen/donor-disjoint assertion",
+      "preprocessing": {"image_size": 256, "resize_size": 256, "image_mapping": "existing _to_rgb_uint8 minmax + _pad_to_square mean fill", "transform": "existing deterministic eval resize + center crop + ImageNet normalization"},
+      "features": ["last", "4-even", "last4"],
+      "feature_definition": "concatenate selected CLS tokens and final selected patch mean; L2; BF16 extraction; float16 storage",
+      "evaluator": "existing run_regression_probe_split StandardScaler + Ridge",
+      "alphas": [0.01, 0.1, 1.0, 10.0, 100.0],
+      "selection_metric": "mae",
+      "metric_direction": "min",
+      "seed": 0,
+      "aggregation": "pooled held-out images; no per-specimen macro claim; fixed train only, no validation refit",
+      "sources": ["https://arxiv.org/html/2511.19351v1", "https://github.com/NRT-D4/CellFMCount", "https://zenodo.org/api/records/17088532"],
+      "limitations": ["Validation holdout and frozen Ridge are our extension, not reproduction of fine-tuned density-map models.", "Original filenames/specimen IDs are absent; official image-ID split does not establish biological independence.", "Source coordinate cardinalities must match source counts; finite out-of-bounds annotations are retained as scalar-count diagnostics."]
+    },
+    "idcia-condition-count": {
+      "classification": "PROPOSED_BY_US",
+      "status": "PREFLIGHT_ONLY_USAGE_UNVERIFIED",
+      "license_status": "UNVERIFIED_NO_FORMAL_LAUNCH",
+      "task": "regression",
+      "split": "whole-treatment-condition-heldout-2train-1val-1test-v1",
+      "grouping": "celltype + treatment condition across imaging dates, antibodies, FOVs and channels",
+      "exclusion": "four subfield images with jointly allocated counts documented in dataset readme",
+      "preprocessing": {"image_size": 256, "resize_size": 256, "image_mapping": "existing _to_rgb_uint8 minmax + _pad_to_square mean fill", "transform": "existing deterministic eval resize + center crop + ImageNet normalization"},
+      "features": ["last", "4-even", "last4"],
+      "feature_definition": "concatenate selected CLS tokens and final selected patch mean; L2; BF16 extraction; float16 storage",
+      "evaluator": "existing run_regression_probe_split StandardScaler + Ridge",
+      "alphas": [0.01, 0.1, 1.0, 10.0, 100.0],
+      "selection_metric": "mae",
+      "metric_direction": "min",
+      "seed": 0,
+      "aggregation": "pooled held-out images; no per-condition macro claim; no cross-model hyperparameter retuning",
+      "sources": ["https://arxiv.org/html/2411.08992v1", "https://figshare.com/articles/dataset/Dataset/21970604"],
+      "limitations": ["Condition A-D is treatment, not replicate ID.", "Four groups only; this is OOD condition transfer, not official supplied image split reproduction.", "No donor/specimen identifiers; cannot assert donor-heldout generalization.", "This derived scalar task does not reproduce a density-map counting model."]
+    }
+  }
+}
