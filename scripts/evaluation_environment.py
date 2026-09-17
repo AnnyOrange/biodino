@@ -85,6 +85,13 @@ def main():
         target = Path(args.install).resolve()
         if not (target / "bin/python").exists():
             subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(target)], check=True)
+        site = subprocess.check_output([str(target / "bin/python"), "-c",
+                                       "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
+        # Nested uv/venv environments do not inherit their parent's packages.
+        base_sites = sorted({str(Path(path).resolve()) for path in sys.path
+                             if path and Path(path).name == "site-packages"
+                             and Path(path).is_dir() and Path(path).resolve() != Path(site).resolve()})
+        (Path(site) / "hs6_base_environment.pth").write_text("\n".join(base_sites) + "\n")
         if args.environment_archive:
             import tarfile
 
@@ -94,8 +101,6 @@ def main():
                     checksum.update(block)
             if not args.archive_sha256 or checksum.hexdigest() != args.archive_sha256:
                 raise RuntimeError("Offline environment archive checksum mismatch")
-            site = subprocess.check_output([str(target / "bin/python"), "-c",
-                                           "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
             with tarfile.open(args.environment_archive) as archive:
                 archive.extractall(site, filter="data")
         else:
