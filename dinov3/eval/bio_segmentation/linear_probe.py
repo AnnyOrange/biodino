@@ -618,11 +618,15 @@ def run_cached_linear_probe(
     # Training
     # ------------------------------------------------------------------
     best_val_miou  = -1.0
+    best_epoch = None
+    validation_history = []
     best_ckpt_path = os.path.join(output_dir, 'best_head.pth')
     os.makedirs(output_dir, exist_ok=True)
     eval_every = max(1, int(eval_every))
+    train_batches_per_epoch = len(tr_loader)
 
     for epoch in range(1, epochs + 1):
+        epoch_lr = float(optimizer.param_groups[0]['lr'])
         loss = train_one_epoch_cached(head, tr_loader, optimizer, criterion, device, epoch, orig_size)
         scheduler.step()
 
@@ -643,8 +647,16 @@ def run_cached_linear_probe(
             if "AJI" in val_metrics and "AP50" in val_metrics:
                 msg += f"  val_AJI={val_metrics['AJI']:.4f}  val_AP50={val_metrics['AP50']:.4f}"
             logger.info(msg)
+            validation_history.append({
+                'epoch': int(epoch),
+                'train_loss': float(loss),
+                'learning_rate': epoch_lr,
+                'mIoU': float(val_metrics['mIoU']),
+                'mDice': float(val_metrics['mDice']),
+            })
             if miou > best_val_miou:
                 best_val_miou = miou
+                best_epoch = int(epoch)
                 torch.save(head.state_dict(), best_ckpt_path)
 
     # ------------------------------------------------------------------
@@ -665,10 +677,25 @@ def run_cached_linear_probe(
             'probe_rng_seeded': True,
             'probe_batch_size': int(batch_size),
             'probe_epochs': int(epochs),
+            'probe_eval_every': int(eval_every),
+            'best_epoch': best_epoch,
+            'best_val_miou': float(best_val_miou),
+            'validation_history': validation_history,
+            'selection_metric': 'val_mIoU',
+            'selection_tie_break': 'earliest_epoch',
+            'optimizer': 'AdamW',
+            'scheduler': 'CosineAnnealingLR',
+            'scheduler_t_max': int(epochs),
+            'learning_rate': float(lr),
+            'weight_decay': float(weight_decay),
+            'dropout': float(dropout),
+            'train_batches_per_epoch': int(train_batches_per_epoch),
+            'global_optimizer_steps': int(epochs * train_batches_per_epoch),
             'class_weight_mode': class_weight_mode,
             'class_weight_beta': float(class_weight_beta),
             'class_weights': class_weight_values,
             'class_counts': class_counts,
+            'test_evaluations': 0,
         },
     }
 
@@ -682,6 +709,7 @@ def run_cached_linear_probe(
             ignore_index=ignore_index,
             semantic_only=semantic_only,
         )
+        results['_meta']['test_evaluations'] = 1
 
     # Save results
     out_json = os.path.join(output_dir, 'results.json')
