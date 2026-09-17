@@ -89,5 +89,14 @@ class StageTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'Source changed'):
                 stage.verify_source(path,source,digest)
 
+    def test_named_nct_1k_accepts_the_full_999_row_release(self):
+        from dinov3.eval.bio_frozen_eval import retrieval_clustering
+        class FixedRelease:
+            rows = [(b'image',i % 9,str(i)) for i in range(999)]
+            def __len__(self): return len(self.rows)
+        with patch.object(retrieval_clustering,'build_retrieval_dataset',return_value=(FixedRelease(),[])):
+            report = stage.retrieval_preflight('nct-crc-he-1k',Path('/benchmark'))
+            self.assertEqual(report['counts']['n_samples'],999)
+
 
 if __name__=='__main__': unittest.main()
