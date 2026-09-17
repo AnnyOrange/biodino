@@ -118,11 +118,15 @@ def dataset_preflight(name, task, benchmark):
     size = resolve_image_size(name,'best',224)
     resize = resolve_dataset_resize_size(name,size,0)
     source_inventory = []
-    for record in all_records:
-        path = Path(record[0])
-        if path.is_file(): source_inventory.append((str(path),path.stat().st_size,path.stat().st_mtime_ns))
     if source_files:
         source_inventory = [(str(path),path.stat().st_size,path.stat().st_mtime_ns) for path in source_files]
+    elif hasattr(dataset,'path'):
+        path = Path(dataset.path)
+        source_inventory = [(str(path),path.stat().st_size,path.stat().st_mtime_ns)]
+    else:
+        for record in all_records:
+            path = Path(record[0]); stat = path.stat()
+            source_inventory.append((str(path),stat.st_size,stat.st_mtime_ns))
     del dataset
     gc.collect()
     return dict(status='PASS',task=task,dataset=name,split=split_record['protocol'],counts=counts,
