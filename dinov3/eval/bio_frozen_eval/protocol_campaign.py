@@ -36,8 +36,9 @@ def clean_metrics(metrics):
 
 
 def code_identity(require_clean=True):
-    commit = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
-    changed = subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain",
+    git = ["git", "-c", "safe.directory=" + str(ROOT), "-C", str(ROOT)]
+    commit = subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip()
+    changed = subprocess.check_output([*git, "status", "--porcelain",
                                        "--untracked-files=normal"], text=True).strip()
     if require_clean and changed:
         raise ValueError("Experiments require a clean, committed checkout; use a detached worktree")
