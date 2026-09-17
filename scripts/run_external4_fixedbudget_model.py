@@ -215,6 +215,8 @@ EVALUATORS = {"ctc": ctc_result, "hest": hest_result, "rxrx3": rxrx3_result, "mi
 
 
 def main():
+    if Path('/mnt/huawei_deepcad/benchmark_model/fair_plot_20260915/FM_ALIGNMENT_HOLD_20260917.json').exists():
+        raise RuntimeError('FM alignment hold: legacy evaluations are paused')
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
     parser.add_argument("--campaign", type=Path, default=DEFAULT_CAMPAIGN)
