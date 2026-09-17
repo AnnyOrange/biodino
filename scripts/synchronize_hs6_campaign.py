@@ -67,8 +67,9 @@ def remote(host, python, source, request=None, timeout=120):
 
 
 def copy(host, local, target):
-    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-                    str(local), f"{host}:{target}"], check=True, timeout=1800)
+    subprocess.run(["rsync", "--partial", "--checksum", "--timeout=120", "-e",
+                    "ssh -o BatchMode=yes -o ConnectTimeout=10", str(local),
+                    f"{host}:{target}"], check=True, timeout=7200)
 
 
 def main():
