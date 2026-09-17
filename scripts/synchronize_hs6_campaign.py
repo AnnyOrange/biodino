@@ -21,7 +21,7 @@ THREADS = {name: "1" for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLA
 TESTS = ["test_unprotocolized_campaign", "test_cellfmcount", "test_grouped_benchmarks",
          "test_opencell_transloc", "test_bio_registration", "test_hest_benchmark",
          "test_native_detection", "test_native_detection_campaign", "test_expansion_campaign",
-         "test_vgg_count", "test_film"]
+         "test_vgg_count", "test_film", "test_hest_patient_groups"]
 REMOTE_CODE = r'''
 import json, pathlib, subprocess, sys
 r=json.loads(sys.argv[1]); old=pathlib.Path(r['old']); new=pathlib.Path(r['new'])
@@ -33,7 +33,7 @@ if git(old,'remote','get-url','origin')!='https://github.com/AnnyOrange/biodino.
 transport='GitHub HTTPS'
 try: git(old,'fetch','origin','main',timeout=30)
 except (subprocess.CalledProcessError,subprocess.TimeoutExpired):
- git(old,'fetch',r['bundle'],'refs/heads/main'); transport='Published GitHub commit through verified code-only bundle'
+ git(old,'fetch',r['bundle'],r['bundle_ref']); transport='Published GitHub commit through verified code-only bundle'
 if not new.exists(): git(old,'worktree','add','--detach',str(new),r['commit'])
 if git(new,'rev-parse','HEAD')!=r['commit'] or git(new,'status','--porcelain'): raise RuntimeError('Sync worktree mismatch')
 if git(old,'rev-parse','HEAD')!=head: raise RuntimeError('Existing checkout changed')
@@ -79,16 +79,23 @@ def copy(host, local, target):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--commit", help="Exact published benchmark commit; defaults to authoritative checkout HEAD")
     parser.add_argument("--hosts", nargs="+", choices=list(HOSTS), default=list(HOSTS))
     args = parser.parse_args()
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    commit = command(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
-    if command(["git", "-C", str(ROOT), "ls-remote", "origin", "refs/heads/main"]).split()[0] != commit:
+    git = ["git", "-c", f"safe.directory={ROOT}", "-C", str(ROOT)]
+    commit = command([*git, "rev-parse", args.commit or "HEAD"])
+    published = command([*git, "ls-remote", "origin", "refs/heads/main"]).split()[0]
+    if subprocess.run([*git, "cat-file", "-e", published], capture_output=True).returncode:
+        subprocess.run([*git, "fetch", "origin", published], check=True)
+    if subprocess.run([*git, "merge-base", "--is-ancestor", commit, published], capture_output=True).returncode:
         raise RuntimeError("The authoritative commit is not published on GitHub")
     bundle = output / f"published_{commit[:12]}.bundle"
+    bundle_ref = f"refs/heads/hs6-published-sync-{commit[:12]}"
     if not bundle.exists():
-        subprocess.run(["git", "-C", str(ROOT), "bundle", "create", str(bundle), "main",
+        subprocess.run([*git, "update-ref", bundle_ref, commit], check=True)
+        subprocess.run([*git, "bundle", "create", str(bundle), bundle_ref,
                         "^1d2330accebbb91e539b50924db3440fac598e7e"], check=True)
     local = ROOT.parent / f"dinov3_unprotocolized_eval_{commit[:12]}"
     if not local.exists():
@@ -118,7 +125,7 @@ def main():
             base.write_text(json.dumps(inventory, indent=2) + "\n")
             remote_bundle = str(parent / bundle.name)
             copy(host, bundle, remote_bundle)
-            request = {**config, "host": host, "commit": commit, "bundle": remote_bundle,
+            request = {**config, "host": host, "commit": commit, "bundle": remote_bundle, "bundle_ref": bundle_ref,
                        "new": str(parent / f"biodino_unprotocolized_eval_{commit[:12]}")}
             synced = json.loads(remote(host, config["python"], REMOTE_CODE, request))
             archive = output / f"{host}_environment_delta.tar"

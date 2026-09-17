@@ -3,13 +3,47 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
-from dinov3.eval.bio_frozen_eval.expansion_campaign import choose, candidates, verify_data, read_manifest, validate_search, select_protocol, cv_score
+from dinov3.eval.bio_frozen_eval.expansion_campaign import choose, candidates, verify_data, read_manifest, validate_search, select_protocol, cv_score, pin_tensor_normalization, ensure_published
 
 
 class ExpansionCampaignTests(unittest.TestCase):
+    def test_hest_requires_patient_audit_and_rejects_known_overlap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            args = SimpleNamespace(manifest=str(path), dataset="HEST_Benchmark", tissue="SKCM")
+            manifest = {"status": "PASS", "release_status": "PASS", "payload_verified": True,
+                        "tasks": {"SKCM": {}}}
+            path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "patient grouping audit"):
+                read_manifest(args, {"adapter": "hest", "seed": 1})
+            manifest["patient_grouping"] = {"status": "PASS_KNOWN_PATIENTS_ONE_UNRESOLVED",
+                                            "unknown_ids": ["TENX111"], "failures": []}
+            path.write_text(json.dumps(manifest))
+            self.assertEqual(read_manifest(args, {"adapter": "hest", "seed": 1}), manifest)
+            manifest["patient_grouping"]["failures"] = [{"patient_overlap": ["Patient1"]}]
+            path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "unresolved leakage"):
+                read_manifest(args, {"adapter": "hest", "seed": 1})
+
+    def test_published_pinned_ancestor_is_allowed_but_unpublished_commit_is_rejected(self):
+        with patch("subprocess.check_output", return_value="new refs/heads/main\n"), patch("subprocess.run", return_value=SimpleNamespace(returncode=0)):
+            self.assertEqual(ensure_published("old"), "new")
+        with patch("subprocess.check_output", return_value="new refs/heads/main\n"), patch("subprocess.run", side_effect=[SimpleNamespace(returncode=0), SimpleNamespace(returncode=1)]):
+            with self.assertRaisesRegex(ValueError, "published authoritative"):
+                ensure_published("unpublished")
+
+    def test_tensor_stats_are_frozen_independently_of_checkpoint_config(self):
+        encoder = SimpleNamespace(mc_mean=(9.,)*3, mc_std=(7.,)*3)
+        prep = {"tensor_input": True, "tensor_mean": [.1,.2,.3], "tensor_std": [.4,.5,.6]}
+        pin_tensor_normalization(encoder, prep)
+        self.assertEqual(encoder.mc_mean, (.1,.2,.3))
+        self.assertEqual(encoder.mc_std, (.4,.5,.6))
+        with self.assertRaises(ValueError):
+            pin_tensor_normalization(encoder, {**prep, "tensor_std": [0.,.5,.6]})
     def test_film_selects_independent_inner_winners_not_global_winner(self):
         config = {"adapter": "film", "primary_metric": "balanced_accuracy", "direction": "max",
                   "search": {"features": ["last"], "hyperparameters": {"C": [.1, 1.]}}}
