@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-PROTOCOL_ID = 'fm14-rules-alignment-20260917-v1'
+PROTOCOL_ID = 'fm14-rules-alignment-20260917-v2'
 MODELS = ('dinov2','mae','siglip2','pe','bioclip','cytoself','jump_cp',
           'cytoimagenet','uni','conch','phikon2','virchow2','gigapath','hoptimus0')
 CONV_MODELS = frozenset(('cytoself','cytoimagenet'))

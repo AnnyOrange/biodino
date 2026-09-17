@@ -59,6 +59,18 @@ class Tests(unittest.TestCase):
     def test_empty_spatial_tokens_rejected(self):
         with self.assertRaises(ValueError):tokens_to_spatial(torch.zeros(1,1,2),1,(2,2))
 
+    def test_sdpa_matches_published_channel_attention(self):
+        from types import SimpleNamespace
+        from benchmark_eval.rules_features import sdpa_channel_attention
+        torch.manual_seed(0)
+        attention=SimpleNamespace(num_heads=2,scale=.5,training=False,qkv=torch.nn.Linear(8,24),
+            proj=torch.nn.Linear(8,8),attn_drop=torch.nn.Dropout(0.),proj_drop=torch.nn.Dropout(0.))
+        values=torch.randn(2,5,8)
+        q,k,v=attention.qkv(values).reshape(2,5,3,2,4).permute(2,0,3,1,4).unbind(0)
+        expected=attention.proj(((q@k.transpose(-2,-1)*.5).softmax(-1)@v).transpose(1,2).reshape(2,5,8))
+        actual,_=sdpa_channel_attention(attention,values)
+        torch.testing.assert_close(actual,expected)
+
     def test_complete_dense_plan_without_loading_checkpoints(self):
         import contextlib
         import io
