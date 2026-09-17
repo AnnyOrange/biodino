@@ -264,6 +264,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    if Path('/mnt/huawei_deepcad/benchmark_model/fair_plot_20260915/FM_ALIGNMENT_HOLD_20260917.json').exists():
+        raise RuntimeError('FM alignment hold: legacy evaluations are paused')
     args = parse_args()
     out_root = Path(args.output_dir)
     summary_path = out_root / "summary.csv"

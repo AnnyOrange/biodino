@@ -1,0 +1,7 @@
+{
+  "protocol_id": "fm14-rules-alignment-20260917-v1",
+  "files": {
+    "/mnt/huawei_deepcad/benchmark_model/run_dense_probe_benchmark.py": "f0e84647e62edd794f7df121269e136226b7183f6bff44c598fb93e3c94ca961",
+    "/mnt/huawei_deepcad/benchmark_model/benchmark_eval/encoders.py": "363374ae9251c31e376fd75cb035042f8ad394a2e6dccb2d94f794c64757ca9a"
+  }
+}

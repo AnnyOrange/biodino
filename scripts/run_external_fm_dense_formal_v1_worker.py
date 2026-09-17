@@ -21,6 +21,8 @@ PANNUKE_PROTOCOLS = (
 
 
 def main() -> int:
+    if Path('/mnt/huawei_deepcad/benchmark_model/fair_plot_20260915/FM_ALIGNMENT_HOLD_20260917.json').exists():
+        raise RuntimeError('FM alignment hold: legacy evaluations are paused')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--models", nargs="+", required=True)
     parser.add_argument("--output-root", required=True)

@@ -1,4 +1,4 @@
-"""Strict shared frozen components for external FMs with a real CLS token."""
+"""Shared frozen FM14 components with declared architecture-specific readouts."""
 from __future__ import annotations
 import argparse
 import importlib.util
@@ -11,10 +11,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torchvision import transforms
+from .external_fm_features import RuleFMFeatures
+from .external_fm_protocol import MODELS
 
 ROOT = Path(__file__).resolve().parents[3]
 BENCH = Path('/mnt/huawei_deepcad/benchmark_model')
-SUPPORTED = ('dinov2','mae','phikon2','uni','virchow2','gigapath','hoptimus0')
+SUPPORTED = MODELS
 
 
 def cls_patch_feature(tokens, prefix):
@@ -25,43 +27,25 @@ def cls_patch_feature(tokens, prefix):
 
 class StandardExternalEncoder:
     def __init__(self, name, size, resize):
-        if name not in SUPPORTED: raise ValueError('External native readout is not certified for this strict CLS+patch comparison: '+name)
-        sys.path.insert(0,str(BENCH))
-        spec = importlib.util.spec_from_file_location('shared_dense_loaders',BENCH/'run_dense_probe_benchmark.py')
-        dense = importlib.util.module_from_spec(spec); spec.loader.exec_module(dense)
-        self.native = dense.DenseFeatureExtractor(name,'cuda:0',canonical=True)
+        self.features = RuleFMFeatures(name,'cuda:0',layers='last')
+        self.native = self.features.native
         self.name = name; self.size = size; self.resize = resize
         self.transform = transforms.Compose([transforms.Resize(resize,interpolation=transforms.InterpolationMode.BICUBIC),
                                             transforms.CenterCrop(size),transforms.ToTensor()])
-        if name == 'mae': self.native.model.config.mask_ratio = 0.0
-        for parameter in self.native.model.parameters(): parameter.requires_grad_(False)
         self.encoder_input_size = None
 
     @torch.inference_mode()
     def encode_images(self, images):
-        from run_external_fm_linear_probe import ExternalEncoderAdapter
-        rgb = [ExternalEncoderAdapter._tensor_first3_to_pil(x) if torch.is_tensor(x) else x.convert('RGB') for x in images]
-        x = self.native._resize(torch.stack([self.transform(image) for image in rgb])).cuda()
-        self.encoder_input_size = list(x.shape[-2:])
-        x = self.native._norm(x)
-        with torch.autocast('cuda',dtype=torch.bfloat16):
-            if self.native.spec.kind == 'transformers':
-                model = self.native.model
-                kwargs = dict(pixel_values=x,interpolate_pos_encoding=True)
-                if self.name == 'mae':
-                    patches = (x.shape[-2]//self.native.patch_size)*(x.shape[-1]//self.native.patch_size)
-                    kwargs['noise'] = torch.arange(patches,device=x.device,dtype=torch.float32).expand(x.shape[0],-1)
-                try: output = model(**kwargs)
-                except TypeError:
-                    del kwargs['interpolate_pos_encoding']
-                    output = model(**kwargs)
-                tokens = output.last_hidden_state
-                prefix = 1 + int(getattr(model.config,'num_register_tokens',0))
-            elif self.native.spec.kind == 'timm':
-                tokens = self.native.model.forward_features(x)
-                prefix = int(self.native.model.num_prefix_tokens)
-            else: raise ValueError('Unsupported strict external token architecture')
-        return cls_patch_feature(tokens,prefix).cpu().numpy().astype(np.float16)
+        prepared=[]
+        for image in images:
+            if torch.is_tensor(image):
+                tensor=image.detach().float()
+                tensor=self.transform.transforms[0](tensor)
+                prepared.append(self.transform.transforms[1](tensor))
+            else:prepared.append(self.transform(image.convert('RGB')))
+        result=self.features.frozen_feature(torch.stack(prepared))
+        self.encoder_input_size=self.features.metadata['encoder_input_size']
+        return result.cpu().numpy().astype(np.float16)
 
 
 def main():
@@ -75,6 +59,8 @@ def main():
     parser.add_argument('--num-workers',type=int,required=True)
     parser.add_argument('--seed',type=int,required=True)
     args = parser.parse_args()
+    if (BENCH/'fair_plot_20260915/FM_ALIGNMENT_HOLD_20260917.json').exists():
+        raise RuntimeError('FM14 alignment hold: audit and approval required before restarting FM experiments')
     if (args.batch_size,args.num_workers,args.seed)!=(64,2,0): raise ValueError('Rules require batch64/workers2/seed0')
     torch.manual_seed(0); np.random.seed(0)
     sys.path.insert(0,str(ROOT/'scripts'))
@@ -111,7 +97,8 @@ def main():
         target.update(checkpoint=str(probe.MODEL_REGISTRY[args.model].path),batch_size=64,seed=0,
             image_size=size,resize_size=resize,encoder_input_size=encoder.encoder_input_size,
             encoder_preprocess='dataset-best/model-published-normalization/nearest-legal-patch-grid',
-            feature_layers='final-cls-plus-final-patch-mean',dtype='bf16',channel_policy='auto',channel_mapping='deterministic-first3-repeat-if-needed',
+            feature_layers=encoder.features.metadata['feature_layers'],dtype='bf16',channel_policy='auto',
+            input_tensor_policy='preserve-float-no-PIL-quantization',
             channel_tta_samples=8,channel_policy_seed=0)
     queue.save(args.output/'last_result.json',row)
 
