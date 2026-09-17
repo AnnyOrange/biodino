@@ -247,6 +247,21 @@ def resources():
     return {int(row[0]):(int(row[1]),int(row[2])) for row in csv.reader(result.splitlines())}
 
 
+def teacher_branch_record(payload):
+    if not isinstance(payload,dict): raise RuntimeError('Explicit teacher branch required')
+    if 'teacher' in payload:
+        if not isinstance(payload['teacher'],dict) or not payload['teacher']:
+            raise RuntimeError('Invalid explicit teacher container')
+        return dict(teacher_key='teacher',consolidated_checkpoint_key='teacher',teacher_tensor_count=len(payload['teacher']))
+    state = payload.get('model')
+    if isinstance(state,dict):
+        count = sum(key.replace('module.','').startswith('teacher.backbone.') for key in state)
+        if count:
+            return dict(teacher_key='model.teacher.backbone',consolidated_checkpoint_key='model',
+                        teacher_prefix='teacher.backbone.',teacher_tensor_count=count)
+    raise RuntimeError('Explicit teacher branch required; student-only weights forbidden')
+
+
 def checkpoint_record(output, asset):
     path = Path(asset['path'])
     key = fingerprint(str(path))
@@ -261,9 +276,9 @@ def checkpoint_record(output, asset):
             return record
         import torch
         payload = torch.load(path,map_location='cpu',weights_only=False)
-        if not isinstance(payload,dict) or 'teacher' not in payload: raise RuntimeError('Explicit teacher key required')
+        teacher = teacher_branch_record(payload)
         del payload; gc.collect()
-        record = dict(path=str(path),bytes=stat.st_size,mtime_ns=stat.st_mtime_ns,sha256=sha256(path),teacher_key='teacher',
+        record = dict(path=str(path),bytes=stat.st_size,mtime_ns=stat.st_mtime_ns,sha256=sha256(path),**teacher,
                       config_path=asset['config'],config_sha256=sha256(asset['config']))
         after = path.stat()
         if (after.st_size,after.st_mtime_ns)!=(stat.st_size,stat.st_mtime_ns): raise RuntimeError('Checkpoint is still being written')
