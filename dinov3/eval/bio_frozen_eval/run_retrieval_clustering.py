@@ -87,7 +87,7 @@ def _extract(dataset, encoder, feature_file: Path, args) -> tuple[np.ndarray, np
         args.num_workers,
         args.overwrite_features,
         args.model_name,
-        save_features=True,
+        save_features=not args.no_save_features,
         save_paths=True,
     )
     return features.astype(np.float32), np.asarray(labels)
@@ -289,6 +289,7 @@ def parse_args(argv=None):
     p.add_argument("--channel-policy-seed", type=int, default=0)
     p.add_argument("--overwrite-features", action="store_true")
     p.add_argument("--overwrite-results", action="store_true")
+    p.add_argument("--no-save-features", action="store_true")
     return p.parse_args(argv)
 
 
@@ -355,7 +356,7 @@ def main(argv=None) -> int:
                 )
                 features, labels = extract_features(
                     dataset, encoder, feature_file, args.batch_size, args.num_workers,
-                    args.overwrite_features, model_name, save_features=True, save_paths=True,
+                    args.overwrite_features, model_name, save_features=not args.no_save_features, save_paths=True,
                 )
                 features = features.astype(np.float32)
                 labels = labels.astype(int)
