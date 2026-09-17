@@ -397,6 +397,10 @@ def validate_cell(task, directory, invocation):
 def worker(args):
     os.environ.update(THREADS)
     manifest = json.loads((args.output/'campaign_manifest.json').read_text())
+    family=getattr(args,'task_family','mixed')
+    if family!='mixed':
+        manifest['tasks']=[task for task in manifest['tasks'] if
+            (task['dataset']['task']=='segmentation')==(family=='segmentation')]
     commit = git('rev-parse','HEAD')
     if commit!=manifest['git_commit'] or git('status','--porcelain'): raise RuntimeError('Wrong or dirty checkout')
     import torch
@@ -404,11 +408,13 @@ def worker(args):
     import importlib.util
     has_pyarrow = importlib.util.find_spec('pyarrow') is not None
     has_external = all(importlib.util.find_spec(name) is not None for name in ('transformers','timm','safetensors'))
+    optional_modules = {'bioclip':('open_clip',), 'conch':('einops',),
+                        'cytoself':('h5py',), 'cytoimagenet':('keras','h5py')}
     if int(torch.__version__.split('.')[0])<2 or not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
         raise RuntimeError('Modern CUDA BF16 evaluator environment required')
     if args.host=='deepcad' and not set(args.gpus)<=set(range(4)): raise RuntimeError('Deepcad restricted to GPU0-3')
     state = args.output/'_state'; state.mkdir(exist_ok=True)
-    for name in ('claims','done','workers','running'): (state/name).mkdir(exist_ok=True)
+    for name in ('claims','done','workers','running','failed_resource'): (state/name).mkdir(exist_ok=True)
     host_lock = (state/'workers'/f'{args.host}.lock').open('a')
     fcntl.flock(host_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     with (state/'manifest.lock').open('a') as registration:
@@ -438,8 +444,15 @@ def worker(args):
                 report = validate_cell(task,directory,invocation)
                 save(state/'done'/f'{key}.json',report)
             except Exception as error:
-                save(directory/'validation_report.json',dict(status='INVALID_PROTOCOL' if code==0 else 'FAILED',error=str(error)))
-                save(state/'PAUSED.json',dict(task=key,host=args.host,error=str(error),time=time.time()))
+                resource_failure=bool(code and task['asset'].get('kind')=='external' and
+                    any(text in (directory/'run.log').read_text(errors='replace')[-16000:] for text in ('OutOfMemoryError','CUDA out of memory')))
+                failure=dict(status='INVALID_PROTOCOL' if code==0 else 'FAILED',error=str(error),
+                             failure_kind='FAILED_RESOURCE' if resource_failure else 'PROTOCOL_OR_RUNTIME',
+                             task=key,host=args.host,gpu=invocation['gpu'],time=time.time())
+                save(directory/'validation_report.json',failure)
+                if resource_failure:
+                    save(state/'failed_resource'/f'{key}.json',failure)
+                else:save(state/'PAUSED.json',failure)
             del active[key]
             (state/'running'/f'{key}.json').unlink(missing_ok=True)
         cards = resources(); counts = project_tests()
@@ -468,8 +481,14 @@ def worker(args):
                 if task['dataset'].get('requires_pyarrow') and not has_pyarrow: continue
                 if task['asset'].get('kind') == 'external' and not has_external: continue
                 if (state/'done'/f'{key}.json').exists() or (state/'claims'/key).exists(): continue
-                reserve = max(18432 if task['dataset']['image_size']>=384 else 4096,
-                              int(task['asset'].get('reserve_mib') or 0))
+                if task['asset'].get('kind')=='external' and any(importlib.util.find_spec(module) is None
+                        for module in optional_modules.get(task['asset']['model_id'],())):continue
+                dense=task['dataset']['task']=='segmentation'
+                if dense and (actual or own):continue
+                if task['dataset'].get('requires_modules') and any(importlib.util.find_spec(module) is None
+                        for module in task['dataset']['requires_modules']):continue
+                reserve = int(task['dataset'].get('reserve_mib') or max(18432 if task['dataset']['image_size']>=384 else 4096,
+                              int(task['asset'].get('reserve_mib') or 0)))
                 pending = sum(int(v[4].get('reserve_mib',0)) for v in active.values()
                               if v[4]['gpu']==gpu and time.time()-v[4]['started_unix']<30)
                 if total-used-pending<reserve: continue
@@ -491,7 +510,7 @@ def worker(args):
                     invocation = dict(git_commit=commit,git_status_porcelain='',host=args.host,gpu=gpu,
                         python=sys.version,python_executable=sys.executable,torch=torch.__version__,sklearn=sklearn.__version__,
                         command=cmd,environment={key:env[key] for key in ('CUDA_VISIBLE_DEVICES',*THREADS)},
-                        checkpoint=inputs,dataset=task['dataset'],batch_size=64,autocast_dtype='bf16',
+                        checkpoint=inputs,dataset=task['dataset'],batch_size=task['dataset'].get('feature_batch_size',64),autocast_dtype='bf16',
                         n_last_blocks=1,use_avgpool=True,seed=0,num_workers=2,features_persisted=False,started_unix=time.time())
                     invocation['reserve_mib'] = reserve
                     invocation['asset_kind'] = task['asset'].get('kind','dinov3')
