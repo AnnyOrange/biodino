@@ -27,7 +27,7 @@ def create_linear_input(x_tokens_list, use_n_blocks: int, use_avgpool: bool) -> 
 class LinearFeatureModel(torch.nn.Module):
     """Backbone wrapper that returns the exact vector used by DINOv3 linear heads."""
 
-    def __init__(self, backbone: torch.nn.Module, n_last_blocks: int, use_avgpool: bool, autocast_dtype: torch.dtype):
+    def __init__(self, backbone: torch.nn.Module, n_last_blocks: int | Sequence[int], use_avgpool: bool, autocast_dtype: torch.dtype):
         super().__init__()
         self.backbone = backbone
         self.n_last_blocks = n_last_blocks
@@ -50,7 +50,8 @@ class LinearFeatureModel(torch.nn.Module):
                 channel_ids=channel_ids,
                 channel_valid_mask=channel_valid_mask,
             )
-        return create_linear_input(tokens, use_n_blocks=self.n_last_blocks, use_avgpool=self.use_avgpool)
+        count = self.n_last_blocks if isinstance(self.n_last_blocks, int) else len(self.n_last_blocks)
+        return create_linear_input(tokens, use_n_blocks=count, use_avgpool=self.use_avgpool)
 
 
 class ModelWithNormalize(torch.nn.Module):
