@@ -1,0 +1,15 @@
+{
+  "protocol_id": "fm14-rules-alignment-20260917-v2",
+  "files": {
+    "/mnt/huawei_deepcad/benchmark_model/run_dense_probe_benchmark.py": "c23fe6c5be65320df7171c2a37c035f0a55216871b06ba7e7de8c9c156cc9505",
+    "/mnt/huawei_deepcad/benchmark_model/benchmark_eval/encoders.py": "175c2c39882a30b244fbd6caeafbcb6e15a118a24aaca3d935b37eadf332d354",
+    "/mnt/huawei_deepcad/benchmark_model/benchmark_eval/rules_features.py": "61152141f46566a775c8cebaea49ec92d0ebd0bc7bd3be5aacff1d25c09912e3",
+    "/mnt/huawei_deepcad/benchmark_model/benchmark_eval/rules_dense_preflight.py": "c3105292e57f9620c4e03af6486943c67ef1fa32696348cb08666bdae27bcbdb",
+    "/mnt/huawei_deepcad/benchmark_model/run_fm_rules.py": "f5772c7f3bd34f4f28f1667afd73728777e7a461fe073fb3f7dfcfd863f2d990",
+    "/mnt/huawei_deepcad/benchmark_model/run_fm_dense_rules.py": "2f420ded3dd3ac2e2407936aa73c9f44cbfeb535d021c02ae8b955400be17a2c",
+    "/mnt/huawei_deepcad/benchmark_model/run_fm_rules_campaign.py": "cbf7f0f14f7de4c2a611e7ff20088b310641b4d05091724441cd4e5de42ad6a6",
+    "/mnt/huawei_deepcad/benchmark_model/run_fm_rules_suite.py": "a64ee4208e60a488331ca0638a85ffb278567b81b50fb5ce28f2bffea67d4507",
+    "/mnt/huawei_deepcad/benchmark_model/run_benchmark.py": "becbd36d3fedf910df608fe4d06a2df3ea13d714163f2aa6311f1fde8e6cd9c3",
+    "/mnt/huawei_deepcad/benchmark_model/run_retrieval_clustering_benchmark.py": "45c5a0034ef7a0d8400c3f83757cdc6c5246af457e17cf1643d1603e9457067d"
+  }
+}
