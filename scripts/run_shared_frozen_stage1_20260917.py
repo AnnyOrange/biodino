@@ -203,7 +203,8 @@ def prepare(args):
             print(name,spec['status'],spec.get('reason',''),flush=True)
     assets = list(csv.DictReader(args.assets.open()))
     priority = {18543:0,26351:1,29279:2,12687:3}
-    assets.sort(key=lambda row:(priority.get(int(row['checkpoint_id']),4),row['arm'],int(row['checkpoint_id'])))
+    assets.sort(key=lambda row:(priority.get(int(row['checkpoint_id']),4) if row['checkpoint_id'].isdigit() else 4,
+                                row['arm'],int(row['checkpoint_id']) if row['checkpoint_id'].isdigit() else -1))
     tasks = []
     ready = [d for d in datasets if d['status']=='PASS']
     order = {'breastmnist':0,'bbbc013':1,'nct-crc-he-1k':2,'organcmnist':3,'pneumoniamnist':4}
@@ -213,9 +214,9 @@ def prepare(args):
             key = f"{asset['arm']}_ck{asset['checkpoint_id']}__{dataset['task']}__{dataset['dataset']}"
             tasks.append(dict(key=key,asset=asset,dataset=dataset))
     save(args.output/'campaign_manifest.json',dict(
-        protocol_id='bio-eval-frozen-independent-stage1',authorization='User approved staged components on 2026-09-17',
+        protocol_id='bio-eval-frozen-independent-stage1',authorization=args.authorization,
         status='RUNNING',full_v3_aggregate_allowed=False,git_commit=git('rev-parse','HEAD'),git_status_porcelain='',
-        protocol_sha256=sha256(ROOT/'Evaluation Rules/protocol_v3.json'),plan_sha256=sha256(ROOT/'Evaluation Rules/plans/shared_frozen_stage1_20260917.md'),
+        protocol_sha256=sha256(ROOT/'Evaluation Rules/protocol_v3.json'),plan_sha256=sha256(ROOT/args.plan),
         checkpoint_assets=assets,datasets=datasets,tasks=tasks,batch_size=64,autocast_dtype='bf16',
         n_last_blocks=1,use_avgpool=True,seed=0,num_workers=2,environment=THREADS,
         benchmark_root=str(args.benchmark),no_checkpoint_or_data_transfers=True,legacy_reuse=False,
@@ -268,6 +269,32 @@ def checkpoint_record(output, asset):
     record_path = output/'_state/inputs'/f'{key}.json'
     with (output/'_state/checkpoint_io.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
+        if path.is_dir():
+            files = sorted(p for p in path.iterdir() if p.is_file() and (
+                p.name == '.metadata' or p.suffix in ('.distcp','.safetensors','.bin','.pth','.h5','.json')))
+            inventory = [(p.name,p.stat().st_size,p.stat().st_mtime_ns) for p in files]
+            if not files: raise RuntimeError('Empty model asset directory')
+            if record_path.exists():
+                record = json.loads(record_path.read_text())
+                if record['inventory'] != [list(v) for v in inventory]: raise RuntimeError('Model asset directory changed')
+                if asset.get('config') and record['config_sha256'] != sha256(asset['config']): raise RuntimeError('Config changed')
+                return record
+            if asset.get('kind') == 'external':
+                teacher = dict(teacher_key='published_frozen_external',model_id=asset['model_id'])
+            else:
+                from torch.distributed.checkpoint import FileSystemReader
+                metadata = FileSystemReader(str(path)).read_metadata()
+                keys = [key for key in metadata.state_dict_metadata if 'teacher.backbone.' in key]
+                if not keys: raise RuntimeError('DCP has no explicit teacher backbone')
+                teacher = dict(teacher_key='DCP.model.teacher.backbone',teacher_tensor_count=len(keys))
+            hashes = {p.name:sha256(p) for p in files}
+            after = [(p.name,p.stat().st_size,p.stat().st_mtime_ns) for p in files]
+            if after != inventory: raise RuntimeError('Model assets still being written')
+            record = dict(path=str(path),inventory=inventory,bytes=sum(v[1] for v in inventory),
+                          sha256=fingerprint(hashes),file_sha256=hashes,**teacher,
+                          config_path=asset.get('config',''),config_sha256=sha256(asset['config']) if asset.get('config') else '')
+            save(record_path,record)
+            return record
         stat = path.stat()
         if record_path.exists():
             record = json.loads(record_path.read_text())
@@ -287,6 +314,11 @@ def checkpoint_record(output, asset):
 
 
 def command(task, output, benchmark):
+    if task['asset'].get('kind') == 'external':
+        return [sys.executable,'-u','-m','dinov3.eval.bio_frozen_eval.run_external_standard',
+                '--model',task['asset']['model_id'],'--dataset',task['dataset']['dataset'],
+                '--task',task['dataset']['task'],'--output',str(output),'--benchmark',str(benchmark),
+                '--batch-size','64','--num-workers','2','--seed','0']
     retrieval = task['dataset']['task']=='retrieval'
     module = 'run_retrieval_clustering' if retrieval else 'run_classification'
     args = [sys.executable,'-u','-m','dinov3.eval.bio_frozen_eval.'+module,
@@ -325,7 +357,7 @@ def validate_cell(task, directory, invocation):
     spec = task['dataset']
     for row in rows:
         if row.get('error') or row['dataset']!=spec['dataset']: raise ValueError('Wrong dataset or error result')
-        for key in ('checkpoint','train_config'):
+        for key in (('checkpoint',) if task['asset'].get('kind') == 'external' else ('checkpoint','train_config')):
             expected = task['asset']['path' if key=='checkpoint' else 'config']
             if Path(row[key]).resolve()!=Path(expected).resolve(): raise ValueError('Wrong model input')
     if spec['task']!='retrieval':
@@ -371,6 +403,7 @@ def worker(args):
     import sklearn
     import importlib.util
     has_pyarrow = importlib.util.find_spec('pyarrow') is not None
+    has_external = all(importlib.util.find_spec(name) is not None for name in ('transformers','timm','safetensors'))
     if int(torch.__version__.split('.')[0])<2 or not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
         raise RuntimeError('Modern CUDA BF16 evaluator environment required')
     if args.host=='deepcad' and not set(args.gpus)<=set(range(4)): raise RuntimeError('Deepcad restricted to GPU0-3')
@@ -425,17 +458,21 @@ def worker(args):
         if ram<32 or __import__('shutil').disk_usage(args.output).free<64*1024**3:
             time.sleep(10); continue
         launched = False
-        for gpu in args.gpus:
+        for gpu in sorted(args.gpus,key=lambda g:(counts.get(str(g),0),cards[g][0]/cards[g][1],g)):
             used,total = cards[gpu]
             own = sum(v[4]['gpu']==gpu for v in active.values())
             actual = max(counts.get(str(gpu),0),own)
-            if actual>=3 or len(active)>=args.max_host_jobs or (used/total>=0.6 and own): continue
+            if actual>=args.target_per_gpu or len(active)>=args.max_host_jobs or (used/total>=0.6 and (actual>=3 or own)): continue
             for task in manifest['tasks']:
                 key = task['key']
                 if task['dataset'].get('requires_pyarrow') and not has_pyarrow: continue
+                if task['asset'].get('kind') == 'external' and not has_external: continue
                 if (state/'done'/f'{key}.json').exists() or (state/'claims'/key).exists(): continue
-                reserve = 18432 if task['dataset']['image_size']>=384 else 4096
-                if total-used<reserve: continue
+                reserve = max(18432 if task['dataset']['image_size']>=384 else 4096,
+                              int(task['asset'].get('reserve_mib') or 0))
+                pending = sum(int(v[4].get('reserve_mib',0)) for v in active.values()
+                              if v[4]['gpu']==gpu and time.time()-v[4]['started_unix']<30)
+                if total-used-pending<reserve: continue
                 claim = state/'claims'/key
                 with (state/'admission.lock').open('a') as admission:
                     fcntl.flock(admission,fcntl.LOCK_EX)
@@ -456,6 +493,9 @@ def worker(args):
                         command=cmd,environment={key:env[key] for key in ('CUDA_VISIBLE_DEVICES',*THREADS)},
                         checkpoint=inputs,dataset=task['dataset'],batch_size=64,autocast_dtype='bf16',
                         n_last_blocks=1,use_avgpool=True,seed=0,num_workers=2,features_persisted=False,started_unix=time.time())
+                    invocation['reserve_mib'] = reserve
+                    invocation['asset_kind'] = task['asset'].get('kind','dinov3')
+                    invocation['external_source_hashes'] = manifest.get('external_source_hashes',{})
                     save(directory/'invocation_manifest.json',invocation)
                     log = (directory/'run.log').open('w')
                     log.write('COMMAND '+__import__('shlex').join(cmd)+'\n'); log.flush()
@@ -489,6 +529,9 @@ def main():
     parser.add_argument('--gpus',type=int,nargs='+',default=[0])
     parser.add_argument('--max-host-jobs',type=int,default=6)
     parser.add_argument('--max-global-jobs',type=int,default=24)
+    parser.add_argument('--target-per-gpu',type=int,choices=range(1,6),default=3)
+    parser.add_argument('--plan',default='Evaluation Rules/plans/shared_frozen_stage1_20260917.md')
+    parser.add_argument('--authorization',default='User approved staged components on 2026-09-17')
     args = parser.parse_args()
     if args.mode=='prepare': prepare(args)
     else: worker(args)
