@@ -20,7 +20,7 @@ import torch
 from PIL import Image
 
 
-DINOV3_ROOT = Path("/mnt/huawei_deepcad/dinov3")
+DINOV3_ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_MODEL_ROOT = Path("/mnt/huawei_deepcad/benchmark_model")
 sys.path.insert(0, str(DINOV3_ROOT))
 sys.path.insert(0, str(BENCHMARK_MODEL_ROOT))
