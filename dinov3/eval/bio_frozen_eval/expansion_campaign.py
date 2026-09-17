@@ -25,7 +25,8 @@ from .protocol_campaign import (ROOT, code_identity, feature_layers, validate_mo
 
 
 def implementation_identity():
-    paths = ["dinov3", "environments/hs6_protocol_v2.txt", "scripts/evaluation_environment.py"]
+    paths = ["dinov3", "environments/hs6_protocol_v2.txt", "scripts/evaluation_environment.py",
+             "scripts/audit_hest_patient_groups.py"]
     rows = subprocess.check_output(["git", "-c", f"safe.directory={ROOT}", "-C", str(ROOT),
                                     "ls-tree", "-r", "HEAD", "--", *paths], text=True)
     return digest(rows)
@@ -40,12 +41,20 @@ def environment_identity():
     return module.fingerprint()
 
 
+def ensure_published(commit):
+    git = ["git", "-c", f"safe.directory={ROOT}", "-C", str(ROOT)]
+    published = subprocess.check_output([*git, "ls-remote", "origin", "refs/heads/main"], text=True).split()[0]
+    if published != commit:
+        if subprocess.run([*git, "cat-file", "-e", published], capture_output=True).returncode:
+            subprocess.run([*git, "fetch", "origin", published], check=True)
+        if subprocess.run([*git, "merge-base", "--is-ancestor", commit, published], capture_output=True).returncode:
+            raise ValueError("Benchmark commit is not in the published authoritative GitHub history")
+    return published
+
+
 def admit(args, config):
     identity = code_identity()
-    published = subprocess.check_output(["git", "-c", f"safe.directory={ROOT}", "-C", str(ROOT),
-                                         "ls-remote", "origin", "refs/heads/main"], text=True).split()[0]
-    if published != identity["git_commit"]:
-        raise ValueError("Benchmark commit is not the published authoritative GitHub commit")
+    identity["published_authoritative_main_commit"] = ensure_published(identity["git_commit"])
     models = json.loads(Path(args.models).read_text())
     checkpoint_sha, config_sha = file_digest(args.checkpoint), file_digest(args.train_config)
     model = models["models"][args.model_id]
@@ -95,6 +104,11 @@ def read_manifest(args, config):
         if not (manifest["status"] == "PASS" and manifest["release_status"] == "PASS"
                 and manifest["payload_verified"] and args.tissue in manifest["tasks"]):
             raise ValueError("Full release/payload/target HEST validation is required")
+        grouping = manifest.get("patient_grouping", {})
+        if grouping.get("status") not in {"PASS_ALL_RELEASED_PATIENTS", "PASS_KNOWN_PATIENTS_ONE_UNRESOLVED"}:
+            raise ValueError("Official HEST patient grouping audit is required")
+        if grouping.get("failures") or (grouping.get("unknown_ids") and grouping["unknown_ids"] != ["TENX111"]):
+            raise ValueError("HEST patient grouping contains unresolved leakage")
     elif config["adapter"] == "grouped":
         from .grouped_benchmarks import validate_grouped_manifest
         if not manifest["content_audit"]["completed"]:
@@ -122,6 +136,14 @@ def verify_data(args, config, manifest):
             raise ValueError("Approved CV dataset no longer matches source pixels, annotations and folds")
         return None
     if config["adapter"] == "hest":
+        from scripts.audit_hest_patient_groups import audit_patient_groups
+
+        grouping = manifest["patient_grouping"]
+        metadata_path = Path(args.manifest).parent / "patient_metadata.csv"
+        if file_digest(metadata_path) != grouping["metadata_sha256"]:
+            raise ValueError("HEST official patient metadata changed")
+        if audit_patient_groups(manifest, metadata_path.read_bytes()) != grouping:
+            raise ValueError("HEST patient grouping no longer reproduces released fold identities")
         release_path = Path(args.manifest).parent / "release_verification.json"
         release = json.loads(release_path.read_text())
         if release["status"] != "PASS" or not release["files"]:
@@ -185,11 +207,22 @@ def make_encoder(args, config, identity, feature):
         image_size=config["preprocessing"]["image_size"],
         resize_size=config["preprocessing"]["resize_size"],
         channel_policy=config["preprocessing"].get("channel_policy", "auto"))
+    pin_tensor_normalization(encoder, config["preprocessing"])
     if len(encoder.model.backbone.blocks) != identity["model_depth"]:
         raise ValueError("Loaded model depth differs from admitted checkpoint")
     layers = feature_layers(identity["model_depth"], feature)
     encoder.model.n_last_blocks = layers
     return encoder, layers
+
+
+def pin_tensor_normalization(encoder, preprocessing):
+    if not preprocessing.get("tensor_input"):
+        return
+    mean = np.asarray(preprocessing["tensor_mean"], dtype=float)
+    std = np.asarray(preprocessing["tensor_std"], dtype=float)
+    if mean.shape != (3,) or std.shape != (3,) or not np.isfinite(mean).all() or not np.isfinite(std).all() or (std <= 0).any():
+        raise ValueError("Frozen tensor normalization requires finite three-channel statistics and positive std")
+    encoder.mc_mean, encoder.mc_std = tuple(mean), tuple(std)
 
 
 def extract_global(args, config, manifest, identity, feature, splits):

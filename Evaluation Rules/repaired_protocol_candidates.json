@@ -37,7 +37,8 @@
       "grouping": "PlateId:WellId, FOVs and all cell crops kept together",
       "split": "Released Task_two unseen-structure test wells; merge Train/Task_one, ceil10% whole wells for deterministic SHA256 validation; decoded duplicate cleanup",
       "preprocessing": {"image_size": 224, "resize_size": 256, "patch_avgpool": true,
-        "image_normalization": "Existing flattened multichannel percentile loader; three real WTC-11 channels, shared encoder channel policy auto", "autocast": "bf16", "embedding_normalization": "L2", "storage_dtype": "float16"},
+        "tensor_input": true, "tensor_mean": [0.514666, 0.488834, 0.498267], "tensor_std": [0.338707, 0.339202, 0.336091],
+        "image_normalization": "Existing flattened multichannel percentile loader; three real WTC-11 channels, auto channel policy, fixed1TB microscopy mean/std", "autocast": "bf16", "embedding_normalization": "L2", "storage_dtype": "float16"},
       "search": {"features": ["last", "4-even", "last4"], "hyperparameters": {"alpha": [0.01, 0.1, 1.0, 10.0, 100.0]}},
       "aggregation": "Pooled cell MAE in log1p-volume units; R2/Spearman secondary",
       "limitations": ["Official CHAMMI classification source, proposed regression task", "Well/FOV disjoint, not plate disjoint"]
@@ -73,7 +74,8 @@
       "grouping": "Named biological sample; average paired D6_sample1 FOV embeddings, all126 spectral planes inseparable",
       "split": "Repeated stratified sample-group3fold outer CV, seeds0/1/2; independent3fold inner CV within each outer training partition",
       "preprocessing": {"image_size": 224, "resize_size": 256, "patch_avgpool": true,
-        "channel_policy": "mean3", "image_normalization": "Released SPEND-denoised126-band stacks, shared whole-stack p1/p99 clipping, fixed spectral mean replicatedRGB; ImageNet", "autocast": "bf16", "embedding_normalization": "L2", "storage_dtype": "float16"},
+        "tensor_input": true, "tensor_mean": [0.514666, 0.488834, 0.498267], "tensor_std": [0.338707, 0.339202, 0.336091],
+        "channel_policy": "mean3", "image_normalization": "Released SPEND-denoised126-band stacks, shared whole-stack p1/p99 clipping, fixed spectral mean replicatedRGB; fixed1TB microscopy mean/std", "autocast": "bf16", "embedding_normalization": "L2", "storage_dtype": "float16"},
       "search": {"features": ["last", "4-even"], "hyperparameters": {"C": [0.01, 0.1, 1.0, 10.0, 100.0]}},
       "aggregation": "Select feature/C separately for each of9 outer folds from its3 inner folds only; freeze all9 recipes. Equal fold means then equal seed means; population seed SD is not independent-cohort uncertainty",
       "limitations": ["27 named groups/28 FOV stacks only; hidden animal/batch linkage unavailable", "Spectral-mean RGB loses chemical information, not native spectroscopy or lysosome assay reproduction", "Author SPEND denoising training provenance not assigned to our folds; CC-BY4.0 released-data observational benchmark"]
