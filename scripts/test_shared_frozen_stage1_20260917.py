@@ -78,5 +78,16 @@ class StageTests(unittest.TestCase):
             retrieval._extract(object(),object(),Path('/features'),args)
             self.assertFalse(extract.call_args.kwargs['save_features'])
 
+    def test_source_registration_avoids_repeated_nfs_hash_and_rejects_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp); source = path/'data.npz'; source.write_bytes(b'official')
+            digest = stage.sha256(source)
+            stage.verify_source(path,source,digest)
+            with patch.object(stage,'sha256',side_effect=AssertionError('repeated hash')):
+                stage.verify_source(path,source,digest)
+            source.write_bytes(b'changed')
+            with self.assertRaisesRegex(RuntimeError,'Source changed'):
+                stage.verify_source(path,source,digest)
+
 
 if __name__=='__main__': unittest.main()

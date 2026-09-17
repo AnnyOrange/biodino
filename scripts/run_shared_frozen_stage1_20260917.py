@@ -280,6 +280,25 @@ def command(task, output, benchmark):
     return args
 
 
+def verify_source(state, path, digest):
+    """Hash once per fixed source version, then reject changed size/mtime."""
+    path = Path(path)
+    key = fingerprint(str(path))
+    directory = state/'sources'; directory.mkdir(exist_ok=True)
+    record_path = directory/f'{key}.json'
+    with (directory/f'{key}.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        stat = path.stat()
+        identity = dict(path=str(path),bytes=stat.st_size,mtime_ns=stat.st_mtime_ns,sha256=digest)
+        if record_path.exists():
+            if json.loads(record_path.read_text()) != identity: raise RuntimeError('Source changed after registration')
+        else:
+            if sha256(path) != digest: raise RuntimeError('Dataset/split changed after preflight')
+            after = path.stat()
+            if (after.st_size,after.st_mtime_ns)!=(stat.st_size,stat.st_mtime_ns): raise RuntimeError('Source being modified')
+            save(record_path,identity)
+
+
 def validate_cell(task, directory, invocation):
     result = json.loads((directory/'last_result.json').read_text())
     rows = result.get('rows',[result])
@@ -339,6 +358,14 @@ def worker(args):
     for name in ('claims','done','workers','running'): (state/name).mkdir(exist_ok=True)
     host_lock = (state/'workers'/f'{args.host}.lock').open('a')
     fcntl.flock(host_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    with (state/'manifest.lock').open('a') as registration:
+        fcntl.flock(registration,fcntl.LOCK_EX)
+        registered = json.loads((args.output/'campaign_manifest.json').read_text())
+        registered.setdefault('execution_hosts',{})[args.host] = dict(
+            hostname=os.uname().nodename,pid=os.getpid(),gpu_indices=args.gpus,git_commit=commit,git_status_porcelain='',
+            python=sys.version,python_executable=sys.executable,torch=torch.__version__,sklearn=sklearn.__version__,
+            verified_input_manifests='_state/inputs/*.json',job_manifests='cells/*/invocation_manifest.json')
+        save(args.output/'campaign_manifest.json',registered)
     status_path = state/'workers'/f'{args.host}.json'
     stopping = False
     def stop(signum,frame):
@@ -400,7 +427,7 @@ def worker(args):
                 try:
                     inputs = checkpoint_record(args.output,task['asset'])
                     for path,digest in task['dataset']['source_hashes'].items():
-                        if sha256(path)!=digest: raise RuntimeError('Dataset/split changed after preflight')
+                        verify_source(state,path,digest)
                     directory = args.output/'cells'/key; directory.mkdir(parents=True,exist_ok=True)
                     cmd = command(task,directory,manifest['benchmark_root'])
                     env = dict(os.environ,CUDA_VISIBLE_DEVICES=str(gpu),**THREADS)
