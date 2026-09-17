@@ -10,7 +10,7 @@ import numpy as np
 from dinov3.eval.bio_frozen_eval.candidate_datasets import digest, validate_records
 from dinov3.eval.bio_frozen_eval.protocol_campaign import (
     choose_sweep, feature_layers, validate_frozen, validate_model,
-    validate_previous, validate_sync, write_new,
+    validate_previous, validate_software, validate_sync, write_new,
 )
 
 
@@ -107,6 +107,13 @@ class CampaignTests(unittest.TestCase):
         prior["model_family"] = "hs6-H+"
         with self.assertRaises(ValueError):
             validate_previous(prior, frozen, "5TB")
+
+    def test_frozen_numerical_environment(self):
+        frozen = {"software_versions": {"torch": "2.10.0", "numpy": "2.4.3"}}
+        validate_software(frozen, {"torch": "2.10.0", "numpy": "2.4.3"})
+        for actual in [{"torch": "2.8.0", "numpy": "2.4.3"}, {"torch": "2.10.0"}]:
+            with self.assertRaises(ValueError):
+                validate_software(frozen, actual)
 
     def test_sync_all_four_and_duplicates(self):
         rows = [{"host": host, "git_commit": "abc", "registry_sha256": "registry",
