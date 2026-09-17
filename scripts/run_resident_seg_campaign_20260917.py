@@ -21,6 +21,22 @@ THREAD_ENV = {key: "1" for key in (
     "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
     "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
 )}
+REQUIRED_GATES = (
+    "approved_plan", "checkpoint_teacher_and_config", "split_identity_counts_and_leakage",
+    "extraction_batch_invariance", "protocol_matrix", "resource_and_storage_budget",
+    "legacy_reuse_audit",
+)
+
+
+def verify_launch_gates(config, commit):
+    report_path = config.get("preflight_report")
+    if not report_path:
+        raise RuntimeError("No approved preflight report; synchronize first, do not launch")
+    report = json.loads(Path(report_path).read_text())
+    if (report.get("status") != "PASS" or report.get("git_commit") != commit
+            or not all(report.get("checks", {}).get(key) is True for key in REQUIRED_GATES)):
+        raise RuntimeError("Evaluation Rules launch gates have not all passed")
+    return report
 
 
 def now():
@@ -105,15 +121,16 @@ def run(config):
     dirty = git(root, "status", "--porcelain", "--untracked-files=no")
     if commit != config["git_commit"] or dirty:
         raise RuntimeError(f"Expected clean commit {config['git_commit']}, got {commit}, dirty={dirty!r}")
+    gate_report = verify_launch_gates(config, commit)
     for relative, expected in config["code_sha256"].items():
         if sha256(root / relative) != expected:
             raise RuntimeError(f"Code mismatch: {relative}")
     for relative, expected in config["split_sha256"].items():
         if sha256(Path(config["data_root_base"]) / relative) != expected:
             raise RuntimeError(f"Split mismatch: {relative}")
+    os.environ.update(THREAD_ENV)
     import torch
     import sklearn
-    os.environ.update(THREAD_ENV)
     tasks = []
     for job in config["jobs"]:
         payload = Path(job["checkpoint_root"]) / str(job["checkpoint_id"]) / "checkpoint.pth"
@@ -142,10 +159,11 @@ def run(config):
         "code_sha256": config["code_sha256"], "dataset_root": config["data_root_base"],
         "dataset_split_sha256": config["split_sha256"],
         "command": sys.argv, "environment_overrides": THREAD_ENV,
+        "preflight_report": config["preflight_report"], "preflight_checks": gate_report["checks"],
         "probe_batch_size": 32, "num_workers": 2, "budgets": [20, 50], "seeds": [0, 1, 2],
         "legacy_output_root": config["legacy_output_root"],
         "legacy_result_policy": "Preserved, not reused as Git-pinned formal results; audit separately.",
-        "reportability": "EXPERIMENTAL_NOT_REPORTABLE_PENDING_EXTRACTION_BATCH_AND_SAMPLE_ORDER_AUDIT",
+        "reportability": "PENDING_PER_CELL_PROTOCOL_AUDIT",
         "started_at": now(), "status": "RUNNING", "pid": os.getpid(), "tasks": tasks,
     }
     if manifest_path.exists():
