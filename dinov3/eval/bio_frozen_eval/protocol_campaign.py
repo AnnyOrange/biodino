@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+from importlib.metadata import version
 import json
 from pathlib import Path
 import socket
@@ -123,6 +124,16 @@ def validate_previous(previous, frozen, budget):
         raise ValueError(f"{budget} requires successful matching frozen-protocol {expected} evaluation")
 
 
+def software_versions():
+    return {name: version(name) for name in
+            ("torch", "torchvision", "numpy", "scipy", "scikit-learn", "Pillow", "omegaconf")}
+
+
+def validate_software(frozen, actual):
+    if frozen.get("software_versions") != actual:
+        raise ValueError("Numerical environment differs from 1TB protocol selection; standardize it first")
+
+
 def extract_bank(args, config, manifest, feature, directory, identity):
     import torch
     from .encoder import Dinov3CkptEncoder, extract_features
@@ -191,12 +202,14 @@ def run(args):
                     checkpoint=str(Path(args.checkpoint).resolve()), checkpoint_sha256=checkpoint_sha,
                     train_config_sha256=train_config_sha, registry_sha256=registry_sha,
                     model_registry_sha256=file_digest(model_registry_path),
+                    software_versions=software_versions(),
                     sync_manifest_sha256=sync_sha, seed=config["seed"], output_path=str(output.resolve()))
     if args.command == "sweep" and args.model_budget != "1TB":
         raise ValueError("Only the 1TB selection model may search protocols")
     if args.command == "evaluate":
         frozen = json.loads(Path(args.frozen).read_text())
         validate_frozen(frozen, identity["git_commit"], registry_sha, manifest, args.model_budget)
+        validate_software(frozen, identity["software_versions"])
         if frozen["dataset"] != args.dataset or frozen["model_family"] != args.model_family:
             raise ValueError("Frozen dataset/model family differs (never substitute L for S+/H+)")
         if frozen["batch_size"] != args.batch_size:
@@ -233,6 +246,7 @@ def run(args):
                       "selection_checkpoint_sha256": checkpoint_sha,
                       "selection_train_config_sha256": train_config_sha,
                       "model_registry_sha256": identity["model_registry_sha256"],
+                      "software_versions": identity["software_versions"],
                       "full_sweep_sha256": file_digest(output / "full_sweep.json"),
                       "batch_size": args.batch_size, "config": config, "selected": winner,
                       "selection_split": "val", "test_used_for_selection": False,

@@ -81,6 +81,9 @@ seed/aggregation plus source and sweep hashes. `evaluate` never searches;
 5TB requires matching 1TB result, and 20TB matching 5TB result. All budgets
 must retain the same model family and exact selected taps. A new model registry
 or code commit requires a new consistent campaign, not mixed comparisons.
+The numerical package versions used for 1TB selection are frozen and must match
+every evaluation; dependency/unit-test PASS alone does not certify standardized
+environments. hxw's older primary numerical environment remains a matrix blocker.
 
 Current checkpoints: S+ 1TB ck9224 admitted by hashes; H+ hash admission pending.
 No S+/H+ 5TB/20TB assets verified. Existing L-scale assets are not substitutions.
