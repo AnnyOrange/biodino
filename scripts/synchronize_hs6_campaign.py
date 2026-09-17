@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 THREADS = {name: "1" for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")}
 TESTS = ["test_unprotocolized_campaign", "test_cellfmcount", "test_grouped_benchmarks",
          "test_opencell_transloc", "test_bio_registration", "test_hest_benchmark",
-         "test_native_detection", "test_native_detection_campaign", "test_expansion_campaign"]
+         "test_native_detection", "test_native_detection_campaign", "test_expansion_campaign",
+         "test_vgg_count", "test_film"]
 REMOTE_CODE = r'''
 import json, pathlib, subprocess, sys
 r=json.loads(sys.argv[1]); old=pathlib.Path(r['old']); new=pathlib.Path(r['new'])
@@ -40,7 +41,10 @@ print(json.dumps({'code_root':str(new),'transport':transport,'code_clean':True})
 '''
 INVENTORY = r'''
 import importlib.metadata as m,json
-print(json.dumps({d.metadata['Name'].lower().replace('_','-'):d.version for d in m.distributions() if d.metadata.get('Name')}))
+versions={}
+for d in m.distributions():
+ if d.metadata.get('Name'): versions.setdefault(d.metadata['Name'].lower().replace('_','-'), d.version)
+print(json.dumps(versions))
 '''
 REMOTE_VERIFY = r'''
 import hashlib,json,os,pathlib,subprocess,sys
@@ -104,10 +108,14 @@ def main():
     for host in args.hosts:
         config = HOSTS[host]
         try:
-            inventory = json.loads(remote(host, config["python"], INVENTORY, timeout=30))
+            parent = Path(config["old"]).parent
+            venv = str(parent / "eval_envs/hs6_protocol_v2")
+            inventory_python = remote(host, config["python"],
+                "import json,pathlib,sys; p=json.loads(sys.argv[1]); print(p if pathlib.Path(p).is_file() else sys.executable)",
+                venv + "/bin/python", timeout=30)
+            inventory = json.loads(remote(host, inventory_python, INVENTORY, timeout=30))
             base = output / f"{host}_base_inventory.json"
             base.write_text(json.dumps(inventory, indent=2) + "\n")
-            parent = Path(config["old"]).parent
             remote_bundle = str(parent / bundle.name)
             copy(host, bundle, remote_bundle)
             request = {**config, "host": host, "commit": commit, "bundle": remote_bundle,
@@ -122,7 +130,6 @@ def main():
             archive_manifest = json.loads(archive.with_suffix(".tar.json").read_text())
             remote_archive = str(parent / archive.name)
             copy(host, archive, remote_archive)
-            venv = str(parent / "eval_envs/hs6_protocol_v2")
             install = [config["python"], str(Path(request["new"]) / "scripts/evaluation_environment.py"),
                        "--install", venv, "--environment-archive", remote_archive,
                        "--archive-sha256", archive_manifest["sha256"], "--require-cuda"]

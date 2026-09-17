@@ -15,7 +15,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "environments/hs6_protocol_v2.txt"
-MODULES = {"scikit-learn": "sklearn", "Pillow": "PIL", "opencv-python": "cv2",
+MODULES = {"scikit-learn": "sklearn", "Pillow": "PIL", "opencv-python-headless": "cv2",
            "scikit-image": "skimage", "pycocotools": "pycocotools.coco",
            "PyYAML": "yaml"}
 THREAD_ENV = {name: "1" for name in
@@ -60,7 +60,10 @@ def fingerprint(require_cuda=False):
         devices = [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())]
     cuda_packages = {name: importlib.metadata.version(name) for name in requirements()
                      if name.startswith("nvidia-") or name == "triton"}
+    import cv2
+    native_cv2 = Path(cv2.__file__).parent / "cv2.abi3.so"
     compatibility = {"python_minor": platform.python_version_tuple()[:2], "versions": versions,
+                     "opencv_native_sha256": hashlib.sha256(native_cv2.read_bytes()).hexdigest(),
                      "torch_cuda": torch.version.cuda, "cuda_packages": cuda_packages,
                      "thread_environment": {name: os.environ[name] for name in THREAD_ENV},
                      "torch_cpu_threads": torch.get_num_threads()}
