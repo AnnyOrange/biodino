@@ -88,6 +88,13 @@ DATASET_DEFAULT_IMG_SIZES: Dict[str, int] = {
 logger = logging.getLogger('feature_extractor')
 
 CHANNEL_POLICIES = ("auto", "native", "first3", "compact3", "zerofill3", "mean3", "sample3_tta")
+AUTOCAST_DTYPES = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}
+
+
+def feature_precision_tag(autocast_dtype: str, batch_size: int) -> str:
+    if autocast_dtype not in AUTOCAST_DTYPES or batch_size <= 0:
+        raise ValueError("Invalid feature dtype or batch size")
+    return f"_amp{autocast_dtype}_b{batch_size}"
 
 
 def _is_spatial_multichannel_stem(backbone: nn.Module) -> bool:
@@ -356,6 +363,7 @@ def extract_features(
     channel_policy: str = "auto",
     channel_tta_samples: int = 8,
     channel_policy_seed: int = 0,
+    autocast_dtype: str = "bf16",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Run the backbone over every sample in *dataset* and collect:
@@ -419,7 +427,9 @@ def extract_features(
         # RGB path (default): collapse to in_chans then get_intermediate_layers.
         # multichannel path (dual-route only): keep real channels + channel mask.
         # -------------------------------------------------------------------
-        with torch.autocast(device_type='cuda', enabled=True, dtype=torch.float16):
+        with torch.autocast(device_type=device.type,
+                            enabled=device.type == "cuda" and autocast_dtype != "fp32",
+                            dtype=AUTOCAST_DTYPES[autocast_dtype]):
             feats_list = _backbone_spatial_features(
                 backbone,
                 imgs,
@@ -470,6 +480,8 @@ def save_cache(
     embed_dim:  int,
     n_layers:   int,
     compressed: bool = True,
+    autocast_dtype: str = "unknown",
+    feature_batch_size: int = 0,
 ):
     """Save pre-extracted features and labels to a .npz file."""
     first_sem = sem_masks[0] if isinstance(sem_masks, list) else sem_masks
@@ -486,6 +498,9 @@ def save_cache(
         'patch_size': np.int32(patch_size),
         'embed_dim': np.int32(embed_dim),
         'n_layers': np.int32(n_layers),
+        'autocast_dtype': np.asarray(autocast_dtype),
+        'feature_batch_size': np.int32(feature_batch_size),
+        'cache_storage_dtype': np.asarray('float16'),
     }
     if isinstance(features, list):
         arrays = {
@@ -538,6 +553,7 @@ def extract_features_to_cache(
     channel_policy: str = "auto",
     channel_tta_samples: int = 8,
     channel_policy_seed: int = 0,
+    autocast_dtype: str = "bf16",
 ) -> None:
     """
     Streaming chunked cache writer.
@@ -586,7 +602,9 @@ def extract_features_to_cache(
 
                 imgs = imgs.to(device)
 
-                with torch.autocast(device_type='cuda', enabled=True, dtype=torch.float16):
+                with torch.autocast(device_type=device.type,
+                                    enabled=device.type == "cuda" and autocast_dtype != "fp32",
+                                    dtype=AUTOCAST_DTYPES[autocast_dtype]):
                     feats_list = _backbone_spatial_features(
                         backbone,
                         imgs,
@@ -630,6 +648,9 @@ def extract_features_to_cache(
                 'patch_size': np.int32(patch_size),
                 'embed_dim': np.int32(embed_dim),
                 'n_layers': np.int32(n_layers_scalar),
+                'autocast_dtype': np.asarray(autocast_dtype),
+                'feature_batch_size': np.int32(batch_size),
+                'cache_storage_dtype': np.asarray('float16'),
             }
             for key, value in metadata.items():
                 _write_npz_array(zf, key, value)
@@ -868,6 +889,7 @@ def main():
     parser.add_argument('--batch-size', type=int, default=16,
                         help='Inference batch size (default: 8)')
     parser.add_argument('--num-workers',type=int, default=4)
+    parser.add_argument('--autocast-dtype', choices=tuple(AUTOCAST_DTYPES), default='bf16')
     parser.add_argument('--no-compress-cache', action='store_true',
                         help='Save cache with np.savez instead of np.savez_compressed. '
                              'This uses more disk but avoids very slow CPU compression '
@@ -1020,7 +1042,7 @@ def main():
         args.output_dir,
         f"{args.dataset}_{args.split}_{cfg_tag}_{layers_tag}"
         f"{_resize_cache_tag(args.resize_mode)}_s{img_size}{mc_tag}{channel_tag}"
-        f"{split_protocol_tag}.npz"
+        f"{split_protocol_tag}{feature_precision_tag(args.autocast_dtype, args.batch_size)}.npz"
     )
     n_layers_scalar = (len(layers_to_extract) if isinstance(layers_to_extract, list)
                        else layers_to_extract)
@@ -1043,6 +1065,7 @@ def main():
             channel_policy=args.channel_policy,
             channel_tta_samples=args.channel_tta_samples,
             channel_policy_seed=args.channel_policy_seed,
+            autocast_dtype=args.autocast_dtype,
         )
         return
 
@@ -1059,6 +1082,7 @@ def main():
         channel_policy=args.channel_policy,
         channel_tta_samples=args.channel_tta_samples,
         channel_policy_seed=args.channel_policy_seed,
+        autocast_dtype=args.autocast_dtype,
     )
 
     save_cache(
@@ -1067,6 +1091,8 @@ def main():
         embed_dim=backbone.embed_dim,
         n_layers=n_layers_scalar,
         compressed=not args.no_compress_cache,
+        autocast_dtype=args.autocast_dtype,
+        feature_batch_size=args.batch_size,
     )
 
 

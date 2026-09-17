@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import subprocess
 from pathlib import Path
 
 
@@ -57,31 +58,66 @@ def _validate_manifest_v3(path: Path, protocol: dict) -> dict:
     return _validate_manifest_v2(path, protocol)
 
 
+def build_report(protocol: dict, benchmark_root: Path, command_manifest: Path | None) -> dict:
+    checks = {}
+    validators = {
+        "dataset_policy": lambda: _validate_dataset_policy(protocol),
+        "v3_additions": lambda: _validate_v3_additions(protocol),
+        "registry": lambda: _validate_registry(protocol),
+        "conic": lambda: _validate_conic(protocol, benchmark_root),
+        "livecell": lambda: _validate_livecell(protocol, benchmark_root),
+        "pannuke": lambda: _validate_pannuke(protocol, benchmark_root),
+    }
+    for name, validate in validators.items():
+        try:
+            checks[name] = {"status": "PASS", "evidence": validate()}
+        except Exception as error:
+            checks[name] = {"status": "FAIL", "error": f"{type(error).__name__}: {error}"}
+    if command_manifest is None:
+        checks["commands"] = {"status": "FAIL", "error": "No command manifest; launch matrix is unverified"}
+    else:
+        try:
+            checks["commands"] = {"status": "PASS", "evidence": _validate_manifest_v3(command_manifest, protocol)}
+        except Exception as error:
+            checks["commands"] = {"status": "FAIL", "error": f"{type(error).__name__}: {error}"}
+    return {
+        "status": "PASS" if all(row["status"] == "PASS" for row in checks.values()) else "FAIL",
+        "protocol_id": protocol["protocol_id"],
+        "protocol_sha256": _sha256(PROTOCOL_PATH),
+        "checks": checks,
+        "failed_checks": [name for name, row in checks.items() if row["status"] == "FAIL"],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--benchmark-root", default="/mnt/huawei_deepcad/benchmark")
     parser.add_argument("--command-manifest", default=None)
+    parser.add_argument("--expected-commit", default=None)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
     protocol = json.loads(PROTOCOL_PATH.read_text())
-    report = {
-        "status": "PASS",
-        "protocol_id": protocol["protocol_id"],
-        "protocol_sha256": _sha256(PROTOCOL_PATH),
-        "dataset_policy": _validate_dataset_policy(protocol),
-        "v3_additions": _validate_v3_additions(protocol),
-        "registry": _validate_registry(protocol),
-        "conic": _validate_conic(protocol, Path(args.benchmark_root)),
-        "livecell": _validate_livecell(protocol, Path(args.benchmark_root)),
-        "pannuke": _validate_pannuke(protocol, Path(args.benchmark_root)),
+    report = build_report(protocol, Path(args.benchmark_root),
+                          Path(args.command_manifest) if args.command_manifest else None)
+    report["git_commit"] = subprocess.check_output(["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True).strip()
+    report["git_status_porcelain"] = subprocess.check_output(["git", "-C", str(REPO), "status", "--porcelain"], text=True)
+    git_ok = bool(args.expected_commit and args.expected_commit == report["git_commit"]
+                  and not report["git_status_porcelain"].strip())
+    report["checks"]["git"] = {
+        "status": "PASS" if git_ok else "FAIL",
+        "expected_commit": args.expected_commit,
+        "error": None if git_ok else "Expected commit must be explicit and evaluation checkout must be clean",
     }
-    if args.command_manifest:
-        report["commands"] = _validate_manifest_v3(Path(args.command_manifest), protocol)
+    report["failed_checks"] = [name for name, row in report["checks"].items() if row["status"] == "FAIL"]
+    report["status"] = "FAIL" if report["failed_checks"] else "PASS"
+    report["scope"] = "Protocol/split/command checks only; checkpoint and resource launch gates are also required"
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
+    if report["status"] != "PASS":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
