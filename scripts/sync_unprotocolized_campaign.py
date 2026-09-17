@@ -81,7 +81,8 @@ def main():
     registry_sha = hashlib.sha256((ROOT / "Evaluation Rules/unprotocolized_protocols.json").read_bytes()).hexdigest()
     local = ROOT.parent / f"dinov3_unprotocolized_eval_{commit[:12]}"
     if not local.exists():
-        subprocess.run(["git", "-C", str(ROOT), "worktree", "add", "--detach", str(local), commit], check=True)
+        subprocess.run(["git", "-C", str(ROOT), "worktree", "add", "--quiet", "--detach", str(local), commit], check=True)
+    local_git = ["git", "-c", "safe.directory=" + str(local), "-C", str(local)]
     env = dict(__import__("os").environ, PYTHONPATH=str(local))
     for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
         env[key] = "1"
@@ -90,8 +91,8 @@ def main():
     import importlib.metadata
     import importlib.util
     rows = [{"host": "local", "hostname": __import__("socket").gethostname(),
-             "git_commit": checked(["git", "-C", str(local), "rev-parse", "HEAD"]),
-             "code_root": str(local), "code_clean": not bool(checked(["git", "-C", str(local), "status", "--porcelain"])),
+             "git_commit": checked([*local_git, "rev-parse", "HEAD"]),
+             "code_root": str(local), "code_clean": not bool(checked([*local_git, "status", "--porcelain"])),
              "registry_sha256": hashlib.sha256((local / "Evaluation Rules/unprotocolized_protocols.json").read_bytes()).hexdigest(),
              "environment_pass": tests.returncode == 0, "python": sys.executable,
              "versions": {name: importlib.metadata.version(name) for name in ("torch", "numpy", "scipy", "scikit-learn", "Pillow", "omegaconf", "torchvision")},

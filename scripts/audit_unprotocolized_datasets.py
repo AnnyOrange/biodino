@@ -40,7 +40,8 @@ def main():
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     entries = inventory()
-    commit = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+    commit = subprocess.check_output(["git", "-c", "safe.directory=" + str(ROOT), "-C", str(ROOT),
+                                      "rev-parse", "HEAD"], text=True).strip()
     with (output / "dataset_protocol_audit.json").open("x") as handle:
         json.dump({"status": "REVIEWED_NOT_FULL_BENCHMARK_COMPLETE", "code_commit": commit,
                    "dataset_count": len(entries), "datasets": entries}, handle, indent=2)
