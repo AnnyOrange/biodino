@@ -145,7 +145,8 @@ def retrieval_preflight(name, benchmark):
         for raw,label,identity in ds.rows:
             digest.update(f'{identity}:{label}:'.encode()); digest.update(hashlib.sha256(raw).digest())
         counts = dict(n_samples=len(ds))
-        if len(ds) != (1000 if name=='nct-crc-he-1k' else 7180): raise ValueError('Fixed retrieval count mismatch')
+        # The named 1K release used by FM baselines contains 111 x 9 = 999 rows.
+        if len(ds) != (999 if name=='nct-crc-he-1k' else 7180): raise ValueError('Fixed retrieval count mismatch')
         split_hash = digest.hexdigest()
         del ds
     else:
