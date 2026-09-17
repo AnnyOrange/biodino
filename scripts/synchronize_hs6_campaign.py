@@ -40,7 +40,7 @@ print(json.dumps({'code_root':str(new),'transport':transport,'code_clean':True})
 '''
 INVENTORY = r'''
 import importlib.metadata as m,json
-print(json.dumps({d.metadata['Name'].lower().replace('_','-'):m.version(d.metadata['Name']) for d in m.distributions()}))
+print(json.dumps({d.metadata['Name'].lower().replace('_','-'):d.version for d in m.distributions() if d.metadata.get('Name')}))
 '''
 REMOTE_VERIFY = r'''
 import hashlib,json,os,pathlib,subprocess,sys
