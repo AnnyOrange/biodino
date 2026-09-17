@@ -401,7 +401,7 @@ def extract_features(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=device.type == "cuda",
         drop_last=False,
     )
 
@@ -573,7 +573,7 @@ def extract_features_to_cache(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=device.type == "cuda",
         drop_last=False,
     )
 
