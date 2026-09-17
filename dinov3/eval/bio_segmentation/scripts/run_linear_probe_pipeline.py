@@ -651,6 +651,7 @@ def main() -> None:
              "Uses arch from --train-config; cannot be combined with --layers.",
     )
     parser.add_argument("--feature-batch-size", type=int, default=8)
+    parser.add_argument("--autocast-dtype", choices=["bf16", "fp16", "fp32"], default="bf16")
     parser.add_argument("--feature-num-workers", type=int, default=4)
     parser.add_argument(
         "--no-compress-cache",
@@ -770,6 +771,8 @@ def main() -> None:
         parser.error(f"--train-config not found: {train_config}")
     cfg_stem = train_config.stem
     run_name = args.run_name or cfg_stem
+    precision_tag = f"_amp{args.autocast_dtype}_b{args.feature_batch_size}"
+    run_name = f"{run_name}{precision_tag}"
     if args.multichannel:
         run_name = f"{run_name}_mc"   # keep mc cache + results separate from the RGB run
     channel_tag = _channel_policy_cache_tag(args.channel_policy, args.channel_tta_samples)
@@ -908,7 +911,7 @@ def main() -> None:
             cache_by_split = {
                 split: cache_dir / (
                     f"{dataset}_{split}_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}"
-                    f"{mc_tag}{channel_file_tag}{split_file_tag}.npz"
+                    f"{mc_tag}{channel_file_tag}{split_file_tag}{precision_tag}.npz"
                 )
                 for split in ("train", "val", "test")
             }
@@ -946,6 +949,8 @@ def main() -> None:
                         job.resize_mode,
                         "--batch-size",
                         str(args.feature_batch_size),
+                        "--autocast-dtype",
+                        args.autocast_dtype,
                         "--num-workers",
                         str(args.feature_num_workers),
                         "--channel-policy",
