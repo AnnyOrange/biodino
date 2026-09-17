@@ -177,6 +177,8 @@ def run_classification_probe_split(
     x_test: np.ndarray,
     y_test: np.ndarray,
     max_iter: int = 10000,
+    C: float = 1.0,
+    seed: int = 0,
 ) -> ProbeResult:
     """Linear probe with an explicit (native) train/test split.
 
@@ -189,7 +191,7 @@ def run_classification_probe_split(
     y_test = np.asarray(y_test).astype(int)
     clf = make_pipeline(
         StandardScaler(),
-        LogisticRegression(max_iter=max_iter, class_weight="balanced", n_jobs=1),
+        LogisticRegression(max_iter=max_iter, class_weight="balanced", C=C, random_state=seed, n_jobs=1),
     )
     clf.fit(x_train, y_train)
     pred = clf.predict(x_test)

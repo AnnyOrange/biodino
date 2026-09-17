@@ -1,14 +1,17 @@
 import csv
 from copy import deepcopy
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import zipfile
 
 import numpy as np
 from PIL import Image
 
 from dinov3.eval.bio_frozen_eval.cellfmcount import (
-    CELLFM_RELATIVE_ROOT, CellFMCountDataset, build_cellfm_manifest,
+    CELLFM_RELATIVE_ROOT, CellFMCountDataset, audit_cellfm_source, build_cellfm_manifest,
 )
 
 
@@ -78,7 +81,54 @@ class CellFMCountTests(unittest.TestCase):
     def test_duplicate_image_content_rejected(self):
         (self.root / "img" / "10.tiff").write_bytes((self.root / "img" / "1.tiff").read_bytes())
         with self.assertRaisesRegex(ValueError, "Duplicate image content"):
-            build_cellfm_manifest(self.benchmark_root)
+            build_cellfm_manifest(self.benchmark_root, duplicate_policy="error")
+
+    def test_equal_count_duplicates_preserve_released_test_and_remove_train(self):
+        (self.root / "img" / "10.tiff").write_bytes((self.root / "img" / "1.tiff").read_bytes())
+        manifest = build_cellfm_manifest(self.benchmark_root)
+        self.assertNotIn("1", {r["sample_id"] for r in manifest["records"]})
+        self.assertEqual(next(r for r in manifest["records"] if r["sample_id"] == "10")["split"], "test")
+        self.assertEqual(manifest["excluded_duplicates"][0]["retained_sample_id"], "10")
+
+    def test_conflicting_duplicates_quarantine_all_members(self):
+        (self.root / "img" / "10.tiff").write_bytes((self.root / "img" / "0.tiff").read_bytes())
+        manifest = build_cellfm_manifest(self.benchmark_root)
+        self.assertEqual({r["sample_id"] for r in manifest["excluded_duplicates"]}, {"0", "10"})
+        self.assertEqual({r["reason"] for r in manifest["excluded_duplicates"]},
+                         {"DUPLICATE_WITH_CONFLICTING_SOURCE_LABELS"})
+
+    def test_different_encoding_same_pixels_detected(self):
+        with Image.open(self.root / "img" / "1.tiff") as image:
+            image.save(self.root / "img" / "10.tiff", compression="tiff_lzw")
+        manifest = build_cellfm_manifest(self.benchmark_root)
+        self.assertEqual(manifest["excluded_duplicates"][0]["sample_id"], "1")
+
+    def make_source_zip(self):
+        path = self.root.parent / "raw/cellfmcount.zip"
+        path.parent.mkdir()
+        with zipfile.ZipFile(path, "w") as archive:
+            for member in self.root.rglob("*"):
+                if member.is_file():
+                    archive.write(member, "dataset/" + str(member.relative_to(self.root)))
+        return hashlib.md5(path.read_bytes()).hexdigest()
+
+    def test_source_conflict_audit_classifies_source_not_local_conversion(self):
+        (self.root / "img/10.tiff").write_bytes((self.root / "img/0.tiff").read_bytes())
+        archive_md5 = self.make_source_zip()
+        with patch("dinov3.eval.bio_frozen_eval.cellfmcount.OFFICIAL_ARCHIVE_MD5", archive_md5):
+            audit = audit_cellfm_source(self.benchmark_root)
+        self.assertEqual(audit["source_rows"], 13)
+        self.assertEqual(audit["duplicate_groups"][0]["root_cause"], "DUPLICATE_WITH_CONFLICTING_SOURCE_LABELS")
+        self.assertTrue(audit["duplicate_groups"][0]["byte_identical"])
+        self.assertTrue(audit["duplicate_groups"][0]["extracted_members_equal_official_archive"])
+        self.assertEqual([r["source_annotation_count"] for r in audit["duplicate_groups"][0]["members"]], [0, 1])
+
+    def test_source_audit_detects_extraction_corruption(self):
+        archive_md5 = self.make_source_zip()
+        (self.root / "img/10.tiff").write_bytes((self.root / "img/0.tiff").read_bytes())
+        with patch("dinov3.eval.bio_frozen_eval.cellfmcount.OFFICIAL_ARCHIVE_MD5", archive_md5):
+            with self.assertRaisesRegex(ValueError, "extracted member differs"):
+                audit_cellfm_source(self.benchmark_root)
 
     def test_group_leakage_rejected(self):
         manifest = deepcopy(build_cellfm_manifest(self.benchmark_root))

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 from pathlib import Path
 
@@ -25,12 +26,39 @@ def file_digest(path):
     return result.hexdigest()
 
 
+def pixel_digest(path):
+    """Hash decoded pixels, including shape/dtype, independently of image encoding."""
+    with Image.open(path) as image:
+        if getattr(image, "n_frames", 1) != 1:
+            raise ValueError(f"Expected single-frame image: {path}")
+        pixels = np.asarray(image)
+        result = hashlib.sha256()
+        result.update(str((pixels.shape, pixels.dtype.str)).encode("ascii"))
+        result.update(np.ascontiguousarray(pixels).tobytes())
+        return result.hexdigest()
+
+
+def image_digests(path):
+    """Read once for encoded and decoded identity; suitable for small crop files."""
+    data = Path(path).read_bytes()
+    encoded = hashlib.sha256(data).hexdigest()
+    with Image.open(io.BytesIO(data)) as image:
+        if getattr(image, "n_frames", 1) != 1:
+            raise ValueError(f"Expected single-frame image: {path}")
+        pixels = np.asarray(image)
+        decoded = hashlib.sha256()
+        decoded.update(str((pixels.shape, pixels.dtype.str)).encode("ascii"))
+        decoded.update(np.ascontiguousarray(pixels).tobytes())
+    return encoded, decoded.hexdigest()
+
+
 def validate_records(records):
     if not records:
         raise ValueError("Empty dataset manifest")
     seen = set()
     groups = {split: set() for split in ("train", "val", "test")}
     contents = {}
+    pixel_contents = {}
     for record in records:
         split, group, sample = record["split"], record["group"], record["sample_id"]
         if split not in groups or not group or sample in seen:
@@ -43,6 +71,11 @@ def validate_records(records):
         if image_sha in contents:
             raise ValueError(f"Duplicate image content: {sample} and {contents[image_sha]}")
         contents[image_sha] = sample
+        pixel_sha = record.get("image_pixel_sha256")
+        if pixel_sha is not None:
+            if pixel_sha in pixel_contents:
+                raise ValueError(f"Duplicate decoded image content: {sample} and {pixel_contents[pixel_sha]}")
+            pixel_contents[pixel_sha] = sample
     for split, split_groups in groups.items():
         if not split_groups:
             raise ValueError(f"Empty {split} split")

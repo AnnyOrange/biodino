@@ -41,7 +41,7 @@ class LinearFeatureModel(torch.nn.Module):
         channel_ids: torch.Tensor | None = None,
         channel_valid_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        with torch.autocast("cuda", enabled=True, dtype=self.autocast_dtype):
+        with torch.autocast(images.device.type, enabled=True, dtype=self.autocast_dtype):
             tokens = self.backbone.get_intermediate_layers(
                 images,
                 n=self.n_last_blocks,
