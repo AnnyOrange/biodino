@@ -21,6 +21,19 @@ def task():
 
 
 class StageTests(unittest.TestCase):
+    def test_teacher_only_and_full_training_formats_are_explicit(self):
+        self.assertEqual(stage.teacher_branch_record(dict(teacher={'backbone.weight':object()}))['teacher_key'],'teacher')
+        for prefix in ('','module.'):
+            record=stage.teacher_branch_record(dict(model={prefix+'teacher.backbone.weight':object(),prefix+'student.backbone.weight':object()}))
+            self.assertEqual(record['teacher_key'],'model.teacher.backbone')
+            self.assertEqual(record['teacher_tensor_count'],1)
+            self.assertEqual(record['consolidated_checkpoint_key'],'model')
+
+    def test_student_only_ambiguous_and_empty_weights_are_rejected(self):
+        for payload in (dict(model={'student.backbone.weight':object()}),dict(model={'backbone.weight':object()}),dict(teacher={}),dict(teacher=None),[]):
+            with self.subTest(payload=payload),self.assertRaises(RuntimeError):
+                stage.teacher_branch_record(payload)
+
     def test_commands_are_explicit_and_no_cache(self):
         cell = task()
         for kind in ('classification','regression','retrieval'):
