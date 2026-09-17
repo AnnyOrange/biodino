@@ -1,7 +1,10 @@
 """Resource policy checks; never starts GPU jobs."""
 import unittest
+import tempfile
+import json
+from pathlib import Path
 
-from run_resident_seg_campaign_20260917 import admission, extracting
+from run_resident_seg_campaign_20260917 import admission, extracting, verify_launch_gates, REQUIRED_GATES
 
 
 class AdmissionTests(unittest.TestCase):
@@ -43,6 +46,24 @@ class AdmissionTests(unittest.TestCase):
         command = "python -m dinov3.eval.bio_segmentation.feature_extractor --dataset conic --output-dir model/cache "
         self.assertTrue(extracting(self.task(), [command]))
         self.assertFalse(extracting(self.task(), [command.replace("conic", "livecell")]))
+
+    def test_missing_preflight_cannot_launch(self):
+        with self.assertRaises(RuntimeError):
+            verify_launch_gates({}, "commit")
+
+    def test_every_gate_and_commit_must_match(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "preflight.json"
+            report = {"status": "PASS", "git_commit": "commit",
+                      "checks": {key: True for key in REQUIRED_GATES}}
+            path.write_text(json.dumps(report))
+            self.assertEqual(verify_launch_gates({"preflight_report": str(path)}, "commit"), report)
+            with self.assertRaises(RuntimeError):
+                verify_launch_gates({"preflight_report": str(path)}, "different")
+            report["checks"]["extraction_batch_invariance"] = False
+            path.write_text(json.dumps(report))
+            with self.assertRaises(RuntimeError):
+                verify_launch_gates({"preflight_report": str(path)}, "commit")
 
 
 if __name__ == "__main__":
