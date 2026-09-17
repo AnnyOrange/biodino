@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import json
 import logging
 import os
 import re
@@ -33,6 +34,7 @@ SUPPORTED_DATASETS = (
 )
 CHANNEL_POLICIES = ("auto", "native", "first3", "compact3", "zerofill3", "mean3", "sample3_tta")
 CONIC_FORMAL_SPLIT = "official-baseline-fold0-nested-v1"
+STATIC_FORMAL_SPLIT = "formal-static-v1"
 PANNUKE_FORMAL_SPLITS = (
     "pannuke-fold1-train-fold2-val-fold3-test",
     "pannuke-fold2-train-fold1-val-fold3-test",
@@ -125,6 +127,35 @@ def _run_cmd(cmd: List[str], env: Dict[str, str], dry_run: bool) -> None:
     if dry_run:
         return
     subprocess.run(cmd, check=True, env=env)
+
+
+def _probe_result_complete(
+    result_path: Path,
+    *,
+    epochs: int,
+    seed: int,
+    eval_every: int,
+    expect_test: bool,
+) -> bool:
+    """Return true only for an auditable result matching the requested probe."""
+    if not result_path.is_file():
+        return False
+    try:
+        result = json.loads(result_path.read_text())
+        meta = result["_meta"]
+        expected_history = epochs // eval_every + int(epochs % eval_every != 0)
+        return (
+            int(meta["probe_epochs"]) == epochs
+            and int(meta["probe_eval_every"]) == eval_every
+            and int(meta["seed"]) == seed
+            and len(meta["validation_history"]) == expected_history
+            and 1 <= int(meta["best_epoch"]) <= epochs
+            and int(meta["test_evaluations"]) == int(expect_test)
+            and (not expect_test or "test" in result)
+            and "val" in result
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
 
 
 def _expand_ckpt_tokens(tokens: Sequence[str]) -> List[str]:
@@ -259,7 +290,10 @@ def _dataset_split_protocols(dataset: str, requested: str) -> Tuple[str, ...]:
             return PANNUKE_FORMAL_SPLITS
         if dataset == "conic":
             return (CONIC_FORMAL_SPLIT,)
-        return ("legacy",)
+        # These loaders already expose fixed public train/val/test files (or a
+        # deterministic documented split).  Keep a formal tag so new caches and
+        # manifests cannot be mistaken for reproduced historical results.
+        return (STATIC_FORMAL_SPLIT,)
     if requested in PANNUKE_FORMAL_SPLITS and dataset != "pannuke":
         raise ValueError(f"{requested} is only valid for PanNuke")
     if requested == CONIC_FORMAL_SPLIT and dataset != "conic":
@@ -587,7 +621,13 @@ def main() -> None:
     parser.add_argument(
         "--dataset-split-protocol",
         default="formal-v1",
-        choices=["formal-v1", "legacy", CONIC_FORMAL_SPLIT, *PANNUKE_FORMAL_SPLITS],
+        choices=[
+            "formal-v1",
+            "legacy",
+            STATIC_FORMAL_SPLIT,
+            CONIC_FORMAL_SPLIT,
+            *PANNUKE_FORMAL_SPLITS,
+        ],
         help="Dataset partition contract. formal-v1 expands PanNuke into all three "
              "published fold rotations and uses the source-disjoint CoNIC baseline split.",
     )
@@ -658,6 +698,13 @@ def main() -> None:
 
     # Linear probe settings
     parser.add_argument("--probe-epochs", type=int, default=50)
+    parser.add_argument(
+        "--probe-epoch-grid",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Run independent probe schedules for each epoch budget, reusing one feature cache.",
+    )
     parser.add_argument("--probe-batch-size", type=int, default=32)
     parser.add_argument("--probe-lr", type=float, default=1e-3)
     parser.add_argument("--probe-weight-decay", type=float, default=1e-4)
@@ -668,6 +715,13 @@ def main() -> None:
         type=int,
         default=0,
         help="RNG seed for the linear-probe head. Nonzero seeds use a separate seed<N> output directory.",
+    )
+    parser.add_argument(
+        "--probe-seeds",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Run all listed probe seeds, reusing one feature cache.",
     )
     parser.add_argument(
         "--probe-class-weight-mode",
@@ -699,6 +753,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.channel_tta_samples <= 0:
         parser.error("--channel-tta-samples must be positive")
+    if args.probe_eval_every <= 0:
+        parser.error("--probe-eval-every must be positive")
+    if args.probe_epoch_grid and any(epoch <= 0 for epoch in args.probe_epoch_grid):
+        parser.error("--probe-epoch-grid values must be positive")
+    if args.probe_seeds and any(seed < 0 for seed in args.probe_seeds):
+        parser.error("--probe-seeds values must be non-negative")
 
     _check_datasets(args.datasets)
 
@@ -782,6 +842,8 @@ def main() -> None:
     )
 
     if args.fast_eval:
+        if args.probe_epoch_grid or args.probe_seeds:
+            parser.error("--fast-eval cannot be combined with a probe budget/seed grid")
         args.probe_epochs = min(args.probe_epochs, 10)
         args.probe_eval_every = args.probe_epochs
         args.skip_test_eval = True
@@ -837,16 +899,26 @@ def main() -> None:
                 )
 
             cache_dir = cache_root / job.cache_run_name / dataset / str(iter_id)
-            output_dir = output_root / job.output_run_name
-            if args.probe_seed != 0:
-                output_dir = output_dir / f"seed{args.probe_seed}"
-            output_dir = output_dir / dataset / str(iter_id)
             cache_dir.mkdir(parents=True, exist_ok=True)
-            output_dir.mkdir(parents=True, exist_ok=True)
+
+            resize_tag = _resize_cache_tag(job.resize_mode)
+            mc_tag = "_mc" if args.multichannel else ""   # matches feature_extractor out_path suffix
+            channel_file_tag = _channel_policy_cache_tag(args.channel_policy, args.channel_tta_samples)
+            split_file_tag = _split_protocol_cache_tag(job.dataset_split_protocol)
+            cache_by_split = {
+                split: cache_dir / (
+                    f"{dataset}_{split}_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}"
+                    f"{mc_tag}{channel_file_tag}{split_file_tag}.npz"
+                )
+                for split in ("train", "val", "test")
+            }
 
             if not args.skip_feature_extraction:
                 splits = ("train", "val") if args.skip_test_eval else ("train", "val", "test")
                 for split in splits:
+                    if cache_by_split[split].is_file():
+                        logger.info("Reusing feature cache: %s", cache_by_split[split])
+                        continue
                     job_multilayer = job.layers is not None and len(job.layers) > 1
                     job_no_compress_cache = args.no_compress_cache or job_multilayer
                     job_chunked_cache = args.chunked_cache or job_multilayer
@@ -893,13 +965,9 @@ def main() -> None:
                         feature_cmd.append("--multichannel")
                     _run_cmd(feature_cmd, env=env, dry_run=args.dry_run)
 
-            resize_tag = _resize_cache_tag(job.resize_mode)
-            mc_tag = "_mc" if args.multichannel else ""   # matches feature_extractor out_path suffix
-            channel_file_tag = _channel_policy_cache_tag(args.channel_policy, args.channel_tta_samples)
-            split_file_tag = _split_protocol_cache_tag(job.dataset_split_protocol)
-            train_cache = cache_dir / f"{dataset}_train_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}{split_file_tag}.npz"
-            val_cache = cache_dir / f"{dataset}_val_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}{split_file_tag}.npz"
-            test_cache = cache_dir / f"{dataset}_test_{cfg_stem}_{job.layers_tag}{resize_tag}_s{job.img_size}{mc_tag}{channel_file_tag}{split_file_tag}.npz"
+            train_cache = cache_by_split["train"]
+            val_cache = cache_by_split["val"]
+            test_cache = cache_by_split["test"]
 
             if not args.dry_run:
                 required_caches = (train_cache, val_cache) if args.skip_test_eval else (train_cache, val_cache, test_cache)
@@ -910,44 +978,67 @@ def main() -> None:
                         + "\n".join(missing_cache)
                     )
 
-            probe_cmd = [
-                sys.executable,
-                "-m",
-                "dinov3.eval.bio_segmentation.linear_probe",
-                "--dataset",
-                dataset,
-                "--use-cached-features",
-                "--train-cache",
-                str(train_cache),
-                "--val-cache",
-                str(val_cache),
-                "--output-dir",
-                str(output_dir),
-                "--epochs",
-                str(args.probe_epochs),
-                "--batch-size",
-                str(args.probe_batch_size),
-                "--lr",
-                str(args.probe_lr),
-                "--weight-decay",
-                str(args.probe_weight_decay),
-                "--num-workers",
-                str(args.probe_num_workers),
-                "--eval-every",
-                str(args.probe_eval_every),
-                "--seed",
-                str(args.probe_seed),
-            ]
-            if not args.skip_test_eval:
-                probe_cmd.extend(["--test-cache", str(test_cache)])
-            else:
-                probe_cmd.append("--skip-test-eval")
-            if args.semantic_only:
-                probe_cmd.append("--semantic-only")
-            if job.probe_class_weight_mode != "none":
-                probe_cmd.extend(["--class-weight-mode", job.probe_class_weight_mode])
-                probe_cmd.extend(["--class-weight-beta", str(job.probe_class_weight_beta)])
-            _run_cmd(probe_cmd, env=env, dry_run=args.dry_run)
+            budgets = sorted(set(args.probe_epoch_grid or [args.probe_epochs]))
+            seeds = sorted(set(args.probe_seeds or [args.probe_seed]))
+            grid_layout = args.probe_epoch_grid is not None or args.probe_seeds is not None
+            for budget in budgets:
+                for seed in seeds:
+                    output_dir = output_root / job.output_run_name
+                    if grid_layout:
+                        output_dir = output_dir / f"budget{budget}" / f"seed{seed}"
+                    elif seed != 0:
+                        output_dir = output_dir / f"seed{seed}"
+                    output_dir = output_dir / dataset / str(iter_id)
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    result_path = output_dir / "results.json"
+                    if _probe_result_complete(
+                        result_path,
+                        epochs=budget,
+                        seed=seed,
+                        eval_every=args.probe_eval_every,
+                        expect_test=not args.skip_test_eval,
+                    ):
+                        logger.info("Reusing complete probe result: %s", result_path)
+                        continue
+
+                    probe_cmd = [
+                        sys.executable,
+                        "-m",
+                        "dinov3.eval.bio_segmentation.linear_probe",
+                        "--dataset",
+                        dataset,
+                        "--use-cached-features",
+                        "--train-cache",
+                        str(train_cache),
+                        "--val-cache",
+                        str(val_cache),
+                        "--output-dir",
+                        str(output_dir),
+                        "--epochs",
+                        str(budget),
+                        "--batch-size",
+                        str(args.probe_batch_size),
+                        "--lr",
+                        str(args.probe_lr),
+                        "--weight-decay",
+                        str(args.probe_weight_decay),
+                        "--num-workers",
+                        str(args.probe_num_workers),
+                        "--eval-every",
+                        str(args.probe_eval_every),
+                        "--seed",
+                        str(seed),
+                    ]
+                    if not args.skip_test_eval:
+                        probe_cmd.extend(["--test-cache", str(test_cache)])
+                    else:
+                        probe_cmd.append("--skip-test-eval")
+                    if args.semantic_only:
+                        probe_cmd.append("--semantic-only")
+                    if job.probe_class_weight_mode != "none":
+                        probe_cmd.extend(["--class-weight-mode", job.probe_class_weight_mode])
+                        probe_cmd.extend(["--class-weight-beta", str(job.probe_class_weight_beta)])
+                    _run_cmd(probe_cmd, env=env, dry_run=args.dry_run)
 
     logger.info("Pipeline done.")
 
