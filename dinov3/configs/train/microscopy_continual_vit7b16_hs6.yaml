@@ -1,0 +1,167 @@
+# ViT-7B/16 continual pretraining with the HS6 microscopy recipe.
+# Dataset-specific paths and normalization statistics are selected by
+# scripts/train_hs6_vit7b.sh for the 1TB and 5TB (30/70) variants.
+
+MODEL:
+  META_ARCHITECTURE: SSLMetaArch
+  DEVICE: cuda
+  WEIGHTS: ""
+  DTYPE: float32
+
+compute_precision:
+  param_dtype: bf16
+  reduce_dtype: fp32
+  sharding_strategy: SHARD_GRAD_OP
+  distributed_mode: fsdp
+
+dino:
+  loss_weight: 1.0
+  global_ignore_diagonal: true
+  head_n_prototypes: 65536
+  head_bottleneck_dim: 256
+  head_norm_last_layer: false
+  head_nlayers: 3
+  head_hidden_dim: 2048
+  koleo_loss_weight: 0.1
+  koleo_loss_distributed: false
+  force_weight_norm: false
+
+ibot:
+  loss_weight: 1.0
+  mask_sample_probability: 0.5
+  mask_ratio_min_max:
+    - 0.1
+    - 0.5
+  separate_head: true
+  head_n_prototypes: 65536
+  head_bottleneck_dim: 256
+  head_norm_last_layer: false
+  head_nlayers: 3
+  head_hidden_dim: 2048
+
+sigreg:
+  enabled: false
+
+channel_subset:
+  enabled: false
+
+gram:
+  use_loss: false
+  compute_stats: false
+
+train:
+  batch_size_per_gpu: 8
+  dataset_path: "packwds_robust:/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*-*.tar::pct=1,99"
+  saveckp_freq: 20
+  seed: 0
+  num_workers: 2
+  wds_deterministic_resampling: false
+  OFFICIAL_EPOCH_LENGTH: 1025
+  use_teacher_head: true
+  learn_from_teacher_tokens: false
+  centering: sinkhorn_knopp
+  checkpointing: true
+  checkpointing_full: false
+  checkpointing_blocks: 0
+  compile: false
+  cudagraphs: false
+  sharded_eval_checkpoint: true
+  cache_dataset: false
+  wds_shuffle_buffer: 50
+  prefetch_factor: 1
+  pin_memory: false
+
+student:
+  arch: vit_7b
+  patch_size: 16
+  drop_path_rate: 0.4
+  layerscale: 1.0e-05
+  pretrained_weights: ""
+  ffn_layer: swiglu64
+  ffn_ratio: 3
+  resume_from_teacher_chkpt: "/mnt/huawei_deepcad/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth"
+  qkv_bias: false
+  proj_bias: true
+  ffn_bias: true
+  norm_layer: layernormbf16
+  n_storage_tokens: 4
+  mask_k_bias: true
+  untie_cls_and_patch_norms: false
+  untie_global_and_local_cls_norm: true
+  in_chans: 3
+  enable_channelvit: false
+  stem_type: null
+  pos_embed_type: rope
+  pos_embed_rope_base: 100.0
+  pos_embed_rope_normalize_coords: separate
+  pos_embed_rope_rescale_coords: 2
+  pos_embed_rope_dtype: fp32
+  fp8_enabled: true
+  fp8_filter: blocks
+
+teacher:
+  momentum_teacher: 0.992
+  final_momentum_teacher: 1.0
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+  in_chans: 3
+  enable_channelvit: false
+  stem_type: null
+
+optim:
+  epochs: 15
+  optimizer: adamw
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  lr: 3.0e-05
+  warmup_epochs: 3
+  min_lr: 1.0e-06
+  schedule_trunc_extra: 0.0
+  clip_grad: 30.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 16
+  patch_embed_lr_mult: 0.2
+  dino_head_wd_multiplier: 1.0
+  layerwise_decay: 0.98
+  multi_tensor_optim: true
+  adamw_beta1: 0.9
+  adamw_beta2: 0.99
+
+crops:
+  global_crops_scale:
+    - 0.32
+    - 1.0
+  local_crops_number: 8
+  local_crops_scale:
+    - 0.05
+    - 0.32
+  global_crops_size: 256
+  local_crops_size: 112
+  global_local_crop_pairs_ratios: 1.0
+  localcrops_subset_of_globalcrops: false
+  share_color_jitter: false
+  paired_global_geometry: false
+  horizontal_flips: true
+  augmentation_policy: bio_safe
+  float_input: false
+  rgb_mean:
+    - 0.514666
+    - 0.488834
+    - 0.498267
+  rgb_std:
+    - 0.338707
+    - 0.339202
+    - 0.336091
+
+evaluation:
+  # A 7B teacher snapshot is very large. Enable periodic snapshots explicitly
+  # from the launcher with EVAL_PERIOD when a checkpoint curve is required.
+  eval_period_iterations: 0
+
+checkpointing:
+  period: 1025
+  max_to_keep: 2
+  keep_every: 99999999999999999
+  sharded: true

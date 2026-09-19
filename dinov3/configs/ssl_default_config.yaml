@@ -241,6 +241,11 @@ train:
   saveckp_freq: 20
   seed: 0
   num_workers: 10
+  # WebDataset/DataLoader tuning. These defaults preserve the loader's
+  # historical fallback behavior when a training config does not override them.
+  wds_shuffle_buffer: 1000
+  prefetch_factor: null
+  pin_memory: true
   # Enable only for controlled method comparisons. This fixes WDS shard/sample
   # order and isolates augmentation/masking RNG from model-side randomness.
   wds_deterministic_resampling: false
