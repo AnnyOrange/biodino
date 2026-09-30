@@ -3,7 +3,9 @@
 # full-state checkpoint at 29279 (see scripts/fork_vanilla_checkpoint_for_recovery.py).
 #   usage: bash scripts/launch_v2_recovery_fork29279_hxw.sh <arm: global|global_local> <gpus e.g. 0,1> <master_port> [max_updates]
 # Arms differ ONLY in recovery.local_weight (0 = global stream only, 1 = global + 16-patch local stream).
-# Everything else mirrors the 20260927 Adaptive continuation launch, except: recovery.mode=fixed (no adaptive gate),
+# Crops match the ORIGINAL 5TB run (no gram-teacher crops, flips on): the 0923/0927 branch launches used
+# gram_teacher_crops_size=512 + no_distortions + flips off, which shifts the input distribution (+0.3-0.6 DINO loss).
+# Otherwise mirrors the 20260927 Adaptive continuation launch, except: recovery.mode=fixed (no adaptive gate),
 # anchor = EMA teacher at the fork step (in-run anchor), DDP 2 ranks x bs64 x acc8 = global 1024 on 32GB 5090s.
 set -euo pipefail
 ARM=${1:?arm}; GPUS=${2:?gpus}; PORT=${3:?port}; MAXU=${4:-35136}
@@ -39,8 +41,8 @@ nohup $PY -m torch.distributed.run --nproc_per_node=2 --master_port=$PORT dinov3
   "student.resume_from_teacher_chkpt=$ANCHOR" \
   optim.epochs=15 optim.scaling_rule=fixed optim.lr=0.0001 optim.min_lr=1e-06 optim.warmup_epochs=3 optim.freeze_last_layer_epochs=1 optim.gradient_accumulation_steps=8 \
   teacher.warmup_teacher_temp_epochs=30 \
-  crops.global_crops_size=256 crops.local_crops_size=112 crops.gram_teacher_crops_size=512 crops.gram_teacher_no_distortions=true \
-  crops.localcrops_subset_of_globalcrops=false crops.share_color_jitter=false crops.paired_global_geometry=false crops.augmentation_policy=bio_safe crops.horizontal_flips=false crops.float_input=false \
+  crops.global_crops_size=256 crops.local_crops_size=112 crops.gram_teacher_crops_size=null crops.gram_teacher_no_distortions=false \
+  crops.localcrops_subset_of_globalcrops=false crops.share_color_jitter=false crops.paired_global_geometry=false crops.augmentation_policy=bio_safe crops.horizontal_flips=true crops.float_input=false \
   "crops.rgb_mean=[0.5126699404721016,0.5020022506395592,0.5064769301636908]" "crops.rgb_std=[0.3497517202150124,0.34941518705400204,0.34802097842537794]" \
   sigreg.enabled=false channel_subset.enabled=false \
   gram.use_loss=true gram.require_official_fixed_anchor_contract=false gram.compute_stats=false gram.loss_weight=2.0 gram.inter_image_loss_weight=0.0 \
