@@ -368,6 +368,7 @@ crops:
   paired_global_geometry: false
   horizontal_flips: true
   augmentation_policy: dinov3  # dinov3 or bio_safe
+  preserve_zero_channels: false  # Opt-in for zero-padded packed multi-channel inputs.
   gram_teacher_no_distortions: false  # If True, no distortions are applied to gram teacher crops
   float_input: false  # Set true when decoders already output float32 [0,1] tensors
   rgb_mean:
@@ -413,3 +414,14 @@ checkpointing:
 # #     peak: 0.07
 # #     end: 0.07
 # #     warmup_epochs: 30
+
+recovery:
+  enabled: false
+  mode: adaptive
+  loss_weight: 1.0
+  ridge: 0.1
+  tolerance: 0.02
+  warmup: 32
+  patches: 16
+  global_weight: 1.0
+  local_weight: 1.0  # 0 disables the 16-patch local stream (global-only arm)

@@ -355,24 +355,34 @@ def load_checkpoint(
             raise KeyError(f"'model' key not found in consolidated checkpoint: {pth_file}")
 
         ckpt_model = raw["model"]
-        model_state = model.state_dict()
-        converted_model = {}
-        for key, tensor in ckpt_model.items():
-            if key not in model_state:
-                continue
-            target_tensor = model_state[key]
-            if isinstance(target_tensor, DTensor):
-                converted_model[key] = _distribute_checkpoint_tensor(
-                    tensor,
-                    device_mesh=target_tensor.device_mesh,
-                    placements=target_tensor.placements,
-                )
-            else:
-                converted_model[key] = tensor
-
-        incompatible = model.load_state_dict(converted_model, strict=False)
+        # SSLMetaArch aliases ``model_ema`` to ``teacher``; the consolidated file
+        # stores that module under both prefixes.  DCP distributes the full tensors
+        # for the ``teacher`` FQNs only, so copying the ``model_ema`` duplicates into
+        # the same DTensor parameters fails ("mixed torch.Tensor and DTensor").
+        # Load the teacher once and only tolerate the alias keys as missing.
+        alias_prefix = None
+        if getattr(model, "model_ema", None) is not None and model.model_ema is getattr(model, "teacher", None):
+            alias_prefix = "model_ema."
+            ckpt_model = {k: v for k, v in ckpt_model.items() if not k.startswith(alias_prefix)}
+        # Saving uses DCP's canonical names, which omit DDP's ``module``
+        # component. Use the matching setter to restore wrapped modules and
+        # distribute full tensors correctly instead of silently skipping them.
+        incompatible = dcpsd.set_model_state_dict(
+            model,
+            ckpt_model,
+            options=dcpsd.StateDictOptions(
+                full_state_dict=True, strict=strict_loading and alias_prefix is None
+            ),
+        )
         missing = incompatible.missing_keys
         unexpected = incompatible.unexpected_keys
+        if alias_prefix is not None:
+            missing = [k for k in missing if not k.startswith(alias_prefix)]
+            if strict_loading and (missing or unexpected):
+                raise RuntimeError(
+                    f"Consolidated checkpoint mismatch beyond the {alias_prefix} alias: "
+                    f"missing={missing[:10]} unexpected={list(unexpected)[:10]}"
+                )
         logger.info(
             "Loaded consolidated model checkpoint with %d missing keys and %d unexpected keys",
             len(missing),
