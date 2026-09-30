@@ -387,7 +387,7 @@ evaluation:
     low_freq: benchmark_low_frequency.yaml  # Less often
 checkpointing:
   period: 3750
-  max_to_keep: 3
+  max_to_keep: 500
   keep_every: 99999999999999999  # Save a checkpoint every N iterations, regardless of max_to_keep and period
   sharded: false
 
