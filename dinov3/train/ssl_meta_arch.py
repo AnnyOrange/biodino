@@ -1308,6 +1308,14 @@ class SSLMetaArch(nn.Module):
         self.teacher = nn.ModuleDict(teacher_model_dict)
 
     def init_weights(self) -> None:
+        if self.cfg.recovery.enabled:
+            from dinov3.train.selective_recoverability import SelectiveRecoverability
+            self.recovery_loss = SelectiveRecoverability(
+                self.student.backbone.embed_dim, mode=self.cfg.recovery.mode,
+                ridge=self.cfg.recovery.ridge, tolerance=self.cfg.recovery.tolerance,
+                warmup=self.cfg.recovery.warmup, patches=self.cfg.recovery.patches,
+                global_weight=self.cfg.recovery.global_weight,
+                local_weight=self.cfg.recovery.local_weight).cuda()
         # All weights are set to `nan` to ensure we initialize everything explicitly
         self.student.backbone.init_weights()
         self.student.dino_head.init_weights()
@@ -2822,6 +2830,18 @@ class SSLMetaArch(nn.Module):
         channel_ids=None,
         channel_valid_mask=None,
     ):
+        if self.cfg.recovery.enabled:
+            # Exact same pixels, geometry and iBOT mask as the student.
+            with torch.no_grad():
+                out = self.gram_teacher.backbone(
+                    student_images.flatten(0, 1), masks=student_masks,
+                    channel_ids=student_channel_ids.flatten(0, 1) if student_channel_ids is not None else None,
+                    channel_valid_mask=student_channel_valid_mask.flatten(0, 1) if student_channel_valid_mask is not None else None,
+                    is_training=True)
+            return {"student_patches": student_global["patch_pre_head"].flatten(0, 1),
+                    "teacher_patches": out["x_norm_patchtokens"],
+                    "student_cls": student_global["cls_pre_head"],
+                    "teacher_cls": out["x_norm_clstoken"].unflatten(0, student_global["cls_pre_head"].shape[:2])}
         # Get student patch features
         student_patches = student_global["patch_pre_head"].flatten(0, 1)  # [n_crops * B, P, D]
         student_cls = student_global["cls_pre_head"]  # [n_crops, B, D]
@@ -3224,7 +3244,13 @@ class SSLMetaArch(nn.Module):
         loss_accumulator += self.ibot_loss_weight * ibot_patch_loss
 
         # Gram loss
-        if self.gram_use_loss:
+        if self.cfg.recovery.enabled:
+            recovery_loss, recovery_stats = self.recovery_loss(gram_global)
+            loss_accumulator += self.cfg.recovery.loss_weight * recovery_loss
+            loss_dict.update(recovery_stats)
+            loss_dict["recovery_loss"] = recovery_loss.detach()
+            loss_dict["recovery_weight"] = float(self.cfg.recovery.loss_weight)
+        elif self.gram_use_loss:
             gram_loss = self.gram_loss(
                 gram_global["student_patches"],
                 gram_global["teacher_patches"],
@@ -3402,6 +3428,7 @@ class SSLMetaArch(nn.Module):
             float_input=getattr(cfg.crops, "float_input", False),
             augmentation_policy=getattr(cfg.crops, "augmentation_policy", "dinov3"),
             paired_global_geometry=getattr(cfg.crops, "paired_global_geometry", False),
+            preserve_zero_channels=getattr(cfg.crops, "preserve_zero_channels", False),
         )
 
     def get_maybe_fused_params_for_submodel(self, m: nn.Module):
