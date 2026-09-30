@@ -6,7 +6,11 @@
 # Crops match the ORIGINAL 5TB run (no gram-teacher crops, flips on): the 0923/0927 branch launches used
 # gram_teacher_crops_size=512 + no_distortions + flips off, which shifts the input distribution (+0.3-0.6 DINO loss).
 # Otherwise mirrors the 20260927 Adaptive continuation launch, except: recovery.mode=fixed (no adaptive gate),
-# anchor = EMA teacher at the fork step (in-run anchor), DDP 4 ranks x bs64 x acc4 = global 1024 on 32GB 5090s.
+# anchor = EMA teacher at the fork step (in-run anchor), FSDP 4 ranks x bs64 x acc4 = global 1024 on 32GB 5090s.
+# distributed_mode MUST be fsdp (like the original run and the lyx continuation): the ddp path casts student,
+# EMA teacher and anchor to bf16 and runs AdamW/EMA on bf16 tensors (bf16 moments, EMA increments rounded away),
+# whereas FSDP keeps fp32 master weights/moments and only computes in bf16. Verified 2026-09-30 on hxw GPU 4:
+# fsdp resume of the fork = 0 missing/0 unexpected keys, fp32 checkpoint with all 1534 keys, frozen anchor bit-identical.
 set -euo pipefail
 ARM=${1:?arm}; GPUS=${2:?gpus}; PORT=${3:?port}; MAXU=${4:-35136}
 case "$ARM" in global) LW=0.0;; global_local) LW=1.0;; *) echo "arm must be global|global_local"; exit 1;; esac
@@ -16,6 +20,8 @@ FORK=$ROOT/fork; OUT=$ROOT/$ARM
 ANCHOR=$FORK/anchor/teacher_checkpoint.pth
 DATA="mixwds_robust:0.3=/data/microscopy-100k-patched/filtered_mixed_train_w*.tar||0.7=$HOME/storage/merged/4TB/wds_patched_shuffle/filtered_mixed_train*.tar::pct=1,99"
 PY=${PY:-$HOME/miniconda3/envs/dinov3/bin/python}
+DIST_MODE=${DIST_MODE:-fsdp}
+[ "$DIST_MODE" = fsdp ] || echo "WARNING: DIST_MODE=$DIST_MODE is not a faithful continuation (ddp trains in pure bf16)" >&2
 NGPU=$(echo "$GPUS" | tr ',' '\n' | wc -l)
 # Per-micro-step batch must stay at 4 x 64 = 256 like the original run and the lyx continuation:
 # the DINO/iBOT loss level (and dynamics) depend on it (256 -> 7.35, 128 -> 7.9, 64 -> 8.8 at ck29279).
@@ -30,12 +36,12 @@ cat > "$OUT/launch_manifest.json" <<JSON
 {"time":"$(date -u +%FT%TZ)","host":"$(hostname)","arm":"$ARM","gpus":"$GPUS","port":$PORT,"max_updates":$MAXU,
  "fork_source":"original 5TB no-GRAM full state ck29279 (sha256 4f67ef63...)","optimizer":"continuous (AdamW step 29280)",
  "anchor":"EMA teacher @29279 (in-run)","recovery":{"mode":"fixed","local_weight":$LW,"global_weight":1.0,"loss_weight":1.0},
- "layout":"ddp $NGPU ranks x bs64 x acc$ACC = 1024","git_head":"$(cat $REPO/GIT_HEAD 2>/dev/null || echo unknown)"}
+ "layout":"$DIST_MODE $NGPU ranks x bs64 x acc$ACC = 1024","param_dtype":"bf16 compute, fp32 masters under fsdp","git_head":"$(cat $REPO/GIT_HEAD 2>/dev/null || echo unknown)"}
 JSON
 CUDA_VISIBLE_DEVICES=$GPUS PYTHONPATH=$REPO OMP_NUM_THREADS=4 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 nohup $PY -m torch.distributed.run --nproc_per_node=$NGPU --master_port=$PORT dinov3/train/train.py \
   --config-file dinov3/configs/train/microscopy_continual_vitl16.yaml --output-dir "$OUT" --seed 0 \
-  compute_precision.distributed_mode=ddp compute_precision.param_dtype=bf16 \
+  compute_precision.distributed_mode=$DIST_MODE compute_precision.param_dtype=bf16 \
   "train.dataset_path=$DATA" train.batch_size_per_gpu=64 train.num_workers=4 train.seed=0 train.OFFICIAL_EPOCH_LENGTH=4098 \
   train.start_iteration_override=null train.max_updates=$MAXU train.cache_dataset=false train.compile=false \
   train.wds_shuffle_buffer=50 train.wds_deterministic_resampling=true train.prefetch_factor=2 train.pin_memory=true \
