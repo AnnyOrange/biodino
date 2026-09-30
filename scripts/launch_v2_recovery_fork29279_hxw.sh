@@ -2,6 +2,7 @@
 # Launch one Adaptive-v2 arm on 5090-hxw-xzj, forked WITHOUT optimizer restart from the original 5TB no-GRAM
 # full-state checkpoint at 29279 (see scripts/fork_vanilla_checkpoint_for_recovery.py).
 #   usage: bash scripts/launch_v2_recovery_fork29279_hxw.sh <arm: global|global_local> <gpus e.g. 0,1,2,3> <master_port> [max_updates]
+#   env: REPO ROOT PY DIST_MODE(fsdp) TARS_1TB TARS_5TB (lyx-xr: TARS_1TB=/data/xuzijing/microscopy-100k-patched TARS_5TB=/data/xuzijing/5TB)
 # Arms differ ONLY in recovery.local_weight (0 = global stream only, 1 = global + 16-patch local stream).
 # Crops match the ORIGINAL 5TB run (no gram-teacher crops, flips on): the 0923/0927 branch launches used
 # gram_teacher_crops_size=512 + no_distortions + flips off, which shifts the input distribution (+0.3-0.6 DINO loss).
@@ -18,7 +19,12 @@ REPO=${REPO:-$HOME/biodino}
 ROOT=${ROOT:-$REPO/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930}
 FORK=$ROOT/fork; OUT=$ROOT/$ARM
 ANCHOR=$FORK/anchor/teacher_checkpoint.pth
-DATA="mixwds_robust:0.3=/data/microscopy-100k-patched/filtered_mixed_train_w*.tar||0.7=$HOME/storage/merged/4TB/wds_patched_shuffle/filtered_mixed_train*.tar::pct=1,99"
+# 5TB mix (1TB 30% + 5TB 70%); override the shard roots on another host (lyx-xr: /data/xuzijing/microscopy-100k-patched, /data/xuzijing/5TB).
+TARS_1TB=${TARS_1TB:-/data/microscopy-100k-patched}
+TARS_5TB=${TARS_5TB:-$HOME/storage/merged/4TB/wds_patched_shuffle}
+DATA="mixwds_robust:0.3=$TARS_1TB/filtered_mixed_train_w*.tar||0.7=$TARS_5TB/filtered_mixed_train*.tar::pct=1,99"
+[ "$(ls $TARS_1TB/filtered_mixed_train_w*.tar 2>/dev/null | wc -l)" -eq 326 ] || { echo "expected 326 1TB shards under $TARS_1TB"; exit 1; }
+[ "$(ls $TARS_5TB/filtered_mixed_train*.tar 2>/dev/null | wc -l)" -eq 1251 ] || { echo "expected 1251 5TB shards under $TARS_5TB"; exit 1; }
 PY=${PY:-$HOME/miniconda3/envs/dinov3/bin/python}
 DIST_MODE=${DIST_MODE:-fsdp}
 [ "$DIST_MODE" = fsdp ] || echo "WARNING: DIST_MODE=$DIST_MODE is not a faithful continuation (ddp trains in pure bf16)" >&2
