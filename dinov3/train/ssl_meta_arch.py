@@ -1215,7 +1215,10 @@ class SSLMetaArch(nn.Module):
             logger.info(f"OPTIONS -- GRAM -- remove_neg: {cfg.gram.remove_neg}")
             logger.info(f"OPTIONS -- GRAM -- remove_only_teacher_neg: {cfg.gram.remove_only_teacher_neg}")
 
-            if cfg.crops.gram_teacher_crops_size is None and self.has_gram_teacher:
+            # The recovery anchor re-encodes the student's own global crops, so it
+            # needs no separate gram-teacher crops (which also alter the global
+            # crop pipeline: 512 base + resample and no flips).
+            if cfg.crops.gram_teacher_crops_size is None and self.has_gram_teacher and not cfg.recovery.enabled:
                 raise ValueError("cfg.crops.gram_teacher_crops_size must be set to use gram loss")
             if cfg.crops.gram_teacher_crops_size is not None and self.gram_ema_teacher:
                 raise ValueError("cfg.crops.gram_teacher_crops_size shoud be None when gram.ema_teacher=True")
