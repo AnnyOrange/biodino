@@ -2001,10 +2001,7 @@ class SSLMetaArch(nn.Module):
                 channel_valid_mask=student_global_channel_valid_mask,
             )
 
-        if self.has_gram_teacher:
-            assert "collated_gram_teacher_crops" in data, (
-                "no gram teacher crops in the data, have you set cfg.crops.gram_teacher_crops_size?"
-            )
+        if self.has_gram_teacher and "collated_gram_teacher_crops" in data:
             gram_teacher_crops = data["collated_gram_teacher_crops"].cuda(non_blocking=True)
             gram_teacher_channel_ids = data.get("collated_gram_teacher_channel_ids")
             gram_teacher_channel_valid_mask = data.get("collated_gram_teacher_channel_valid_mask")
@@ -2013,6 +2010,11 @@ class SSLMetaArch(nn.Module):
             if gram_teacher_channel_valid_mask is not None:
                 gram_teacher_channel_valid_mask = gram_teacher_channel_valid_mask.cuda(non_blocking=True)
         else:
+            # Recovery anchors re-encode the student's own global crops and need no
+            # gram-teacher crops; the plain Gram loss still requires them.
+            assert not self.has_gram_teacher or self.cfg.recovery.enabled, (
+                "no gram teacher crops in the data, have you set cfg.crops.gram_teacher_crops_size?"
+            )
             gram_teacher_crops = None
             gram_teacher_channel_ids = None
             gram_teacher_channel_valid_mask = None
