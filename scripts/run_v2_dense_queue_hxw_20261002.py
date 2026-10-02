@@ -63,6 +63,22 @@ def valid(task):
         return False
 
 
+def foreign_running(task):
+    """True when a child from an earlier driver instance is still running this cell (driver restarts must not duplicate it)."""
+    arm, point, fam, ds = task
+    if fam == "segmentation":
+        # runner argv: <runner.py> --campaign C --point P --dataset D --gpu G [--fold F] [--resume-existing]
+        pattern = f"{SEG_RUNNER.name} --campaign v2_{arm} --point {point} --dataset {('pannuke' if ds in PANNUKE else ds)} --gpu [0-9]+"
+        if ds in PANNUKE:
+            pattern += f" --fold {PANNUKE[ds]}"
+        else:
+            pattern += "( --resume-existing)?$"
+    else:
+        pattern = f"center_probe .*--output-dir {det_cell(arm, point, ds)} "
+    # NOTE: pgrep must get the pattern after "--" (patterns starting with "-" are otherwise parsed as options)
+    return subprocess.run(["pgrep", "-f", "--", pattern], capture_output=True, text=True).returncode == 0
+
+
 def tasks(arms):
     for point in POINTS:
         for arm in arms:
@@ -160,8 +176,11 @@ def main():
             del active[key]
         pending = [t for t in tasks(a.arms) if not valid(t)
                    and attempts.get(f"{t[0]}__{t[1]}__{t[2]}__{t[3].replace('/', '_')}", 0) < 2
-                   and f"{t[0]}__{t[1]}__{t[2]}__{t[3].replace('/', '_')}" not in active]
+                   and f"{t[0]}__{t[1]}__{t[2]}__{t[3].replace('/', '_')}" not in active
+                   and not foreign_running(t)]
         if not pending and not active:
+            if any(foreign_running(t) for t in tasks(a.arms) if not valid(t)):
+                time.sleep(30); continue
             print("ALL DONE", flush=True); atomic(state, {"state": "done", "utc": dt.datetime.now(dt.timezone.utc).isoformat()})
             return
         free = gpu_free_mib()
