@@ -1318,7 +1318,11 @@ class SSLMetaArch(nn.Module):
                 ridge=self.cfg.recovery.ridge, tolerance=self.cfg.recovery.tolerance,
                 warmup=self.cfg.recovery.warmup, patches=self.cfg.recovery.patches,
                 global_weight=self.cfg.recovery.global_weight,
-                local_weight=self.cfg.recovery.local_weight).cuda()
+                local_weight=self.cfg.recovery.local_weight,
+                global_tokens=str(getattr(self.cfg.recovery, "global_tokens", "cls_patchmean"))).cuda()
+            logger.info("OPTIONS -- RECOVERY -- global_tokens: %s, anchor_momentum: %s",
+                        getattr(self.cfg.recovery, "global_tokens", "cls_patchmean"),
+                        getattr(self.cfg.recovery, "anchor_momentum", 0.0))
         # All weights are set to `nan` to ensure we initialize everything explicitly
         self.student.backbone.init_weights()
         self.student.dino_head.init_weights()
@@ -3397,10 +3401,11 @@ class SSLMetaArch(nn.Module):
             torch._foreach_mul_(teacher_param_list, m)
             torch._foreach_add_(teacher_param_list, student_param_list, alpha=1 - m)
 
-    def update_gram(self, m=0):
+    def update_gram(self, m=0, log=True):
         if not self.has_gram_teacher:
             return
-        logger.info("Updating gram teacher with teacher weights.")
+        if log:
+            logger.info("Updating gram teacher with teacher weights.")
         if self.gram_params_lists is None:
             teacher_param_list = []
             gramteacher_param_list = []

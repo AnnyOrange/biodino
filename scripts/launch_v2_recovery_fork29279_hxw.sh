@@ -14,7 +14,17 @@
 # fsdp resume of the fork = 0 missing/0 unexpected keys, fp32 checkpoint with all 1534 keys, frozen anchor bit-identical.
 set -euo pipefail
 ARM=${1:?arm}; GPUS=${2:?gpus}; PORT=${3:?port}; MAXU=${4:-35136}
-case "$ARM" in global) LW=0.0;; global_local) LW=1.0;; *) echo "arm must be global|global_local"; exit 1;; esac
+# Round-2 arms (2026-10-03), all global-stream only: global_cls (anchor CLS only, patch tokens free),
+# global_w03 (recovery.loss_weight 0.3), global_slow (anchor = EMA(teacher), momentum 0.9995 ~ 2000-update horizon).
+GLOBAL_TOKENS=cls_patchmean; RW=1.0; AM=0.0
+case "$ARM" in
+  global) LW=0.0;; global_local) LW=1.0;;
+  global_cls) LW=0.0; GLOBAL_TOKENS=cls;;
+  global_w03) LW=0.0; RW=0.3;;
+  global_slow) LW=0.0; AM=0.9995;;
+  *) echo "arm must be global|global_local|global_cls|global_w03|global_slow"; exit 1;;
+esac
+GLOBAL_TOKENS=${GLOBAL_TOKENS_OVERRIDE:-$GLOBAL_TOKENS}; RW=${RW_OVERRIDE:-$RW}; AM=${AM_OVERRIDE:-$AM}
 REPO=${REPO:-$HOME/biodino}
 ROOT=${ROOT:-$REPO/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930}
 FORK=$ROOT/fork; OUT=$ROOT/$ARM
@@ -41,7 +51,7 @@ cd "$REPO"
 cat > "$OUT/launch_manifest.json" <<JSON
 {"time":"$(date -u +%FT%TZ)","host":"$(hostname)","arm":"$ARM","gpus":"$GPUS","port":$PORT,"max_updates":$MAXU,
  "fork_source":"original 5TB no-GRAM full state ck29279 (sha256 4f67ef63...)","optimizer":"continuous (AdamW step 29280)",
- "anchor":"EMA teacher @29279 (in-run)","recovery":{"mode":"fixed","local_weight":$LW,"global_weight":1.0,"loss_weight":1.0},
+ "anchor":"EMA teacher @29279 (in-run)","recovery":{"mode":"fixed","local_weight":$LW,"global_weight":1.0,"loss_weight":$RW,"global_tokens":"$GLOBAL_TOKENS","anchor_momentum":$AM},
  "layout":"$DIST_MODE $NGPU ranks x bs64 x acc$ACC = 1024","param_dtype":"bf16 compute, fp32 masters under fsdp","git_head":"$(cat $REPO/GIT_HEAD 2>/dev/null || echo unknown)"}
 JSON
 CUDA_VISIBLE_DEVICES=$GPUS PYTHONPATH=$REPO OMP_NUM_THREADS=4 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
@@ -65,7 +75,8 @@ nohup $PY -m torch.distributed.run --nproc_per_node=$NGPU --master_port=$PORT di
   gram.global_relation_loss_weight=0.0 gram.global_relation_ckpt=null gram.ema_teacher=false "gram.ckpt=$ANCHOR" gram.it_load_ema_teacher=-1 \
   gram.rep_update=true gram.update_frequency=10000 gram.it_first_update=1010000 gram.max_updates=3 gram.tokens_used=all gram.normalized=true gram.img_level=true \
   gram.remove_neg=false gram.remove_only_teacher_neg=false gram.loss_weight_schedule=null gram.global_teacher_resize_method=bicubic gram.global_teacher_resize_antialias=false \
-  recovery.enabled=true recovery.mode=fixed recovery.loss_weight=1.0 recovery.global_weight=1.0 recovery.local_weight=$LW \
-  evaluation.eval_period_iterations=488 checkpointing.period=488 checkpointing.max_to_keep=100 checkpointing.keep_every=99999999999999999 checkpointing.sharded=false \
+  recovery.enabled=true recovery.mode=fixed recovery.loss_weight=$RW recovery.global_weight=1.0 recovery.local_weight=$LW \
+  recovery.global_tokens=$GLOBAL_TOKENS recovery.anchor_momentum=$AM \
+  evaluation.eval_period_iterations=488 checkpointing.period=488 checkpointing.max_to_keep=100000 checkpointing.keep_every=99999999999999999 checkpointing.sharded=false \
   > "$OUT/console.log" 2>&1 &
 echo "launched $ARM on GPUs $GPUS (pid $!) -> $OUT/console.log"
