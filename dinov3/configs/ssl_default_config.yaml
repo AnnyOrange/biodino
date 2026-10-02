@@ -425,3 +425,5 @@ recovery:
   patches: 16
   global_weight: 1.0
   local_weight: 1.0  # 0 disables the 16-patch local stream (global-only arm)
+  global_tokens: cls_patchmean  # cls_patchmean | cls | patchmean: per-image summaries anchored by the global stream
+  anchor_momentum: 0.0  # >0: anchor = EMA of the teacher with this momentum (slow anchor); 0 = frozen anchor

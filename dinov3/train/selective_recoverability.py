@@ -84,9 +84,17 @@ class RecoveryStream(nn.Module):
 
 
 class SelectiveRecoverability(nn.Module):
+    GLOBAL_TOKENS = ("cls_patchmean", "cls", "patchmean")
+
     def __init__(self, dim, mode="adaptive", ridge=0.1, tolerance=0.02,
-                 warmup=32, patches=16, global_weight=1.0, local_weight=1.0):
+                 warmup=32, patches=16, global_weight=1.0, local_weight=1.0,
+                 global_tokens="cls_patchmean"):
         super().__init__()
+        if global_tokens not in self.GLOBAL_TOKENS:
+            raise ValueError(f"recovery.global_tokens must be one of {self.GLOBAL_TOKENS}, got {global_tokens!r}")
+        # Which per-image summaries the global stream anchors: CLS and/or the patch mean.
+        # ``cls`` leaves the patch tokens unconstrained (dense-task plasticity ablation).
+        self.global_tokens = global_tokens
         # Both streams are always constructed so checkpoints keep the same keys
         # across arms; ``local_weight == 0`` skips the patch stream entirely.
         self.local = RecoveryStream(dim, mode, ridge, tolerance, warmup=warmup)
@@ -97,8 +105,13 @@ class SelectiveRecoverability(nn.Module):
         sp, ap = gram["student_patches"], gram["teacher_patches"]
         # First global crop only; a given image cannot appear in both fit/monitor.
         b = gram["student_cls"].shape[1]
-        s = torch.stack((gram["student_cls"][0], sp[:b].mean(1)), dim=1)
-        a = torch.stack((gram["teacher_cls"][0], ap[:b].mean(1)), dim=1)
+        s_tokens, a_tokens = [], []
+        if "cls" in self.global_tokens:
+            s_tokens.append(gram["student_cls"][0]); a_tokens.append(gram["teacher_cls"][0])
+        if "patchmean" in self.global_tokens:
+            s_tokens.append(sp[:b].mean(1)); a_tokens.append(ap[:b].mean(1))
+        s = torch.stack(s_tokens, dim=1)
+        a = torch.stack(a_tokens, dim=1)
         global_loss, gm = self.global_stream(s, a)
         stats = {f"recovery_global_{k}": v for k,v in gm.items()}
         stats.update(recovery_global_loss=global_loss.detach())
@@ -109,5 +122,6 @@ class SelectiveRecoverability(nn.Module):
             stats.update({f"recovery_local_{k}": v for k,v in lm.items()})
             stats.update(recovery_local_loss=local.detach())
             total = total + self.local_weight * local
-        stats.update(recovery_local_weight=float(self.local_weight), recovery_global_weight=float(self.global_weight))
+        stats.update(recovery_local_weight=float(self.local_weight), recovery_global_weight=float(self.global_weight),
+                     recovery_global_tokens=float(len(s_tokens)))
         return total, stats

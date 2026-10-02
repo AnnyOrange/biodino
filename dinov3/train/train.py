@@ -812,6 +812,17 @@ def do_train(cfg, model, resume=False):
     optimizer.zero_grad(set_to_none=True)
     accum_loss_for_log = None
     accum_metrics = None
+    finite_once = str(cfg.train.dataset_path).startswith("packwds_once_robust:")
+    consumed_keys = set() if finite_once else None
+    audit_file = None
+    if finite_once:
+        if cfg.train.num_workers != 1:
+            raise ValueError("Finite one-pass WDS requires exactly one data worker per rank")
+        rank = distributed.get_rank()
+        audit_file = open(
+            os.path.join(cfg.train.output_dir, f"consumed_sample_keys_rank{rank:02d}.jsonl"),
+            "w", encoding="utf-8",
+        )
 
     for data in metric_logger.log_every(
         data_loader,
@@ -824,6 +835,16 @@ def do_train(cfg, model, resume=False):
             break
 
         it = iteration
+        if audit_file is not None:
+            keys = data.get("sample_keys") or []
+            if len(keys) != cfg.train.batch_size_per_gpu:
+                raise ValueError(f"Finite WDS audit expected {cfg.train.batch_size_per_gpu} keys, got {len(keys)}")
+            if len(set(keys)) != len(keys) or any(key in consumed_keys for key in keys):
+                raise ValueError(f"Finite WDS repeated an image on rank {rank}")
+            consumed_keys.update(keys)
+            audit_file.write(json.dumps(keys, separators=(",", ":")) + "\n")
+            if micro_step % 1000 == 0:
+                audit_file.flush()
         batch_sample_key_digest = _batch_sample_key_digest(data)
         data["global_batch_size"] = real_global_batch_size
 
@@ -939,6 +960,10 @@ def do_train(cfg, model, resume=False):
 
         optimizer.step()
         model.update_ema(mom)
+        if cfg.recovery.enabled and float(getattr(cfg.recovery, "anchor_momentum", 0.0)) > 0:
+            # Slow anchor: the recovery target tracks the EMA teacher with a long horizon
+            # (1/(1-m) updates) instead of staying frozen at the fork step.
+            model.update_gram(m=float(cfg.recovery.anchor_momentum), log=False)
 
         if (
             cfg.gram.use_loss
@@ -1000,6 +1025,13 @@ def do_train(cfg, model, resume=False):
 
         iteration = iteration + 1
         optimizer.zero_grad(set_to_none=True)
+    if audit_file is not None:
+        audit_file.close()
+        expected = max_iter * accum_steps * cfg.train.batch_size_per_gpu
+        if len(consumed_keys) != expected:
+            raise ValueError(f"Finite WDS consumed {len(consumed_keys)} unique images on rank {rank}, expected {expected}")
+        with open(os.path.join(cfg.train.output_dir, f"consumed_sample_keys_rank{rank:02d}.json"), "w") as handle:
+            json.dump({"rank": rank, "micro_steps": micro_step, "unique_images": len(consumed_keys)}, handle)
     metric_logger.synchronize_between_processes()
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
