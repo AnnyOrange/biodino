@@ -22,12 +22,15 @@ case "$ARM" in
   global_cls) LW=0.0; GLOBAL_TOKENS=cls;;
   global_w03) LW=0.0; RW=0.3;;
   global_slow) LW=0.0; AM=0.9995;;
-  *) echo "arm must be global|global_local|global_cls|global_w03|global_slow"; exit 1;;
+  # Round 3 (2026-10-04): CLS-only + slow anchor (the scalable combination) at two horizons.
+  global_cls_slow) LW=0.0; GLOBAL_TOKENS=cls; AM=0.9995;;
+  global_cls_slow2) LW=0.0; GLOBAL_TOKENS=cls; AM=0.9998;;
+  *) echo "arm must be global|global_local|global_cls|global_w03|global_slow|global_cls_slow|global_cls_slow2"; exit 1;;
 esac
 GLOBAL_TOKENS=${GLOBAL_TOKENS_OVERRIDE:-$GLOBAL_TOKENS}; RW=${RW_OVERRIDE:-$RW}; AM=${AM_OVERRIDE:-$AM}
 REPO=${REPO:-$HOME/biodino}
 ROOT=${ROOT:-$REPO/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930}
-FORK=$ROOT/fork; OUT=$ROOT/$ARM
+FORK=${FORK:-$ROOT/fork}; OUT=$ROOT/$ARM   # FORK override: e.g. a fork built with --anchor-teacher (early anchor)
 ANCHOR=$FORK/anchor/teacher_checkpoint.pth
 # 5TB mix (1TB 30% + 5TB 70%); override the shard roots on another host (lyx-xr: /data/xuzijing/microscopy-100k-patched, /data/xuzijing/5TB).
 TARS_1TB=${TARS_1TB:-/data/microscopy-100k-patched}
