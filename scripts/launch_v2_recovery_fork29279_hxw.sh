@@ -29,6 +29,7 @@ case "$ARM" in
   # and with the slow anchor (w03 lost most of the gain, w1 gains ~+0.65pp cls -> does w3 gain more without a dense tax?).
   global_cls_w3) LW=0.0; GLOBAL_TOKENS=cls; RW=3.0;;
   global_cls_slow_w3) LW=0.0; GLOBAL_TOKENS=cls; RW=3.0; AM=0.9995;;
+  global_cls_slow2_w3) LW=0.0; GLOBAL_TOKENS=cls; RW=3.0; AM=0.9998;;
   # Early anchor: run with FORK=$ROOT/fork_early12687 (anchor = original teacher@12687 export, frozen), CLS-only stream.
   global_cls_early) LW=0.0; GLOBAL_TOKENS=cls; [ "$(basename "${FORK:-}")" = fork_early12687 ] || { echo "global_cls_early needs FORK=\$ROOT/fork_early12687"; exit 1; };;
   *) echo "arm must be global|global_local|global_cls|global_w03|global_slow|global_cls_slow|global_cls_slow2|global_cls_early"; exit 1;;
