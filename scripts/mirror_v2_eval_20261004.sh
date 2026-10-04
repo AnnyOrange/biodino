@@ -6,7 +6,7 @@
 set -uo pipefail
 M=/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/hs6_l5_v2_recovery_eval_20260930
 ARMS=("$@"); [[ ${#ARMS[@]} -gt 0 ]] || ARMS=(global global_local global_cls global_slow global_w03 global_cls_slow global_cls_slow2 global_cls_early)
-FIND='find results/point_*/*/bio_* results/point_*/*/command_manifest.json v4/detection_b8/point_*/*/*.json v3/cells/*/validation_report.json v3/cells/*/results adapters/checkpoint_curve.tsv -type f -print0 2>/dev/null'
+FIND='find results/point_*/*/bio_* results/point_*/*/command_manifest.json v4/detection_b8/point_*/*/*.json v3/cells/*/validation_report.json v3/cells/*/results adapters/checkpoint_curve.tsv -type f -not -path "*/features/*" -print0 2>/dev/null'
 for host_root in "5090-hxw-xzj:/data/hs6_l5_v2_recovery_eval_20260930" "5090-lyx-xr:/data/xuzijing/hs6_l5_v2_recovery_eval_20260930"; do
   host=${host_root%%:*}; root=${host_root#*:}
   for arm in "${ARMS[@]}"; do
