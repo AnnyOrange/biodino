@@ -23,16 +23,18 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path("/mnt/huawei_deepcad/dinov3")
-UNION = REPO / "outputs/00_reports/deepcad_method_20260927/adaptive_original_union_20260929/SELECTED_CELLS.csv"
-MIRROR = REPO / "outputs/02_eval_runs/hs6_l5_v2_recovery_eval_20260930"
+UNION = Path(os.environ.get("V2_UNION", REPO / "outputs/00_reports/deepcad_method_20260927/adaptive_original_union_20260929/SELECTED_CELLS.csv"))
+MIRROR = Path(os.environ.get("V2_MIRROR", REPO / "outputs/02_eval_runs/hs6_l5_v2_recovery_eval_20260930"))   # eval root (local mirror or a host's root)
 OUT = REPO / "outputs/00_reports/deepcad_method_20260927/v2_results_20261002"
 FORK, REF_LAST, WINDOW, MIN_COV = 29279, 41479, 5, 55
-ARMS = ("global", "global_local")
+import os
+ARMS = tuple(os.environ.get("V2_ARMS", "global,global_local").split(","))   # e.g. V2_ARMS=global,global_cls,global_slow,global_w03
+OUT = Path(os.environ.get("V2_OUT", str(OUT)))
 POINTS = [29767 + 488 * i for i in range(12)]
 PANNUKE_FOLDS = ("pannuke-fold1-train-fold2-val-fold3-test", "pannuke-fold2-train-fold1-val-fold3-test",
                  "pannuke-fold3-train-fold2-val-fold1-test")
 
-spec = importlib.util.spec_from_file_location("cr", REPO / "scripts/capability_regret_20260923.py")
+spec = importlib.util.spec_from_file_location("cr", os.environ.get("V2_CR_MODULE", REPO / "scripts/capability_regret_20260923.py"))
 cr = importlib.util.module_from_spec(spec); spec.loader.exec_module(cr)
 
 FAM = {"detection_proxy": "detection"}
@@ -47,13 +49,17 @@ def ukey(r):
 
 # ---------------- baseline (union no-GRAM) ----------------
 base = collections.defaultdict(dict)   # key -> ck -> value
+gram = collections.defaultdict(dict)   # official 5TB Gram branch (anchor teacher@12687, restart at 12688, ckpts 13175..30255)
 seen_scope = {}
 for r in csv.DictReader(UNION.open()):
-    if r["method"] != "no-GRAM": continue
+    if r["method"] not in ("no-GRAM", "GRAM"): continue
     if r["family"] == "segmentation" and r["budget"] != "20": continue
     k, ck = ukey(r), int(r["checkpoint"])
+    if r["method"] == "GRAM":
+        gram[k].setdefault(ck, float(r["value"])); continue
     if (k, ck) in seen_scope and seen_scope[(k, ck)] == "matched": continue
     base[k][ck] = float(r["value"]); seen_scope[(k, ck)] = r["scope"]
+GRAM_CKS = sorted({c for s in gram.values() for c in s})
 
 # ---------------- v2 arms ----------------
 def load_rows(p):
@@ -139,7 +145,20 @@ for ck in POINTS:
                          "delta_sigma": d / sig if sig and sig > 0 else float("nan"),
                          "set": ("retention" if k in retention else "plasticity" if k in plasticity else "n/a"),
                          "class": ref[k]["capability_class"] if k in ref else "n/a"})
+rows_gram = []
+for ck in POINTS:
+    for a in ARMS:
+        for k in sorted(gram):
+            if ck not in gram[k] or ck not in arms[a].get(k, {}): continue
+            d = arms[a][k][ck] - gram[k][ck]; sig = ref[k]["sigma"] if k in ref else float("nan")
+            rows_gram.append({"checkpoint": ck, "arm": a, "key": k, "family": k.split(":")[0], "dataset": k.split(":")[1],
+                              "GRAM": gram[k][ck], "v2": arms[a][k][ck], "noGRAM": base[k].get(ck, float("nan")), "delta": d, "delta_pp": 100 * d,
+                              "delta_sigma": d / sig if sig and sig > 0 else float("nan"),
+                              "set": ("retention" if k in retention else "plasticity" if k in plasticity else "n/a")})
 OUT.mkdir(parents=True, exist_ok=True)
+if rows_gram:
+    with (OUT / "per_point_deltas_vs_gram.csv").open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows_gram[0].keys())); w.writeheader(); w.writerows(rows_gram)
 with (OUT / "per_point_deltas.csv").open("w", newline="") as fh:
     w = csv.DictWriter(fh, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
 
@@ -163,6 +182,19 @@ for a in ARMS:
         summary["per_arm_family_allpoints"][f"{a}:{f}"] = summarize([r for r in rows if r["arm"] == a and r["family"] == f])
     for s in ("retention", "plasticity"):
         summary["per_arm_set_allpoints"][f"{a}:{s}"] = summarize([r for r in rows if r["arm"] == a and r["set"] == s])
+
+summary["vs_gram"] = {"points": sorted({r["checkpoint"] for r in rows_gram}), "per_arm_family": {}, "per_arm_point": {}}
+for a in ARMS:
+    for f in families:
+        summary["vs_gram"]["per_arm_family"][f"{a}:{f}"] = summarize([r for r in rows_gram if r["arm"] == a and r["family"] == f])
+    for ck in sorted({r["checkpoint"] for r in rows_gram}):
+        summary["vs_gram"]["per_arm_point"][f"{a}@{ck}"] = summarize([r for r in rows_gram if r["arm"] == a and r["checkpoint"] == ck])
+# no-GRAM vs GRAM themselves at GRAM's points (how far the official Gram branch sits from the continuous run)
+summary["vs_gram"]["noGRAM_minus_GRAM_per_family"] = {}
+for f in families:
+    sel = [{"delta_pp": 100 * (base[k][ck] - gram[k][ck]), "delta_sigma": (base[k][ck] - gram[k][ck]) / ref[k]["sigma"] if k in ref and ref[k]["sigma"] > 0 else float("nan")}
+           for k in gram for ck in gram[k] if ck in base.get(k, {}) and k.split(":")[0] == f and ck >= 29279]
+    summary["vs_gram"]["noGRAM_minus_GRAM_per_family"][f] = summarize(sel)
 
 # ---------------- regret curves on common keys ----------------
 curve = []
@@ -207,20 +239,38 @@ if last is not None:
             rec[a] = arms[a][k][last]; rec[f"r_{a}"] = nr(arms[a], k, last)
             rec[f"d_{a}_sigma"] = (arms[a][k][last] - base[k][last]) / ref[k]["sigma"]
         percap.append(rec)
-    percap.sort(key=lambda d: d["d_global_local_sigma"])
+    percap.sort(key=lambda d: d[f"d_{ARMS[-1]}_sigma"])
 summary["endpoint"] = {"checkpoint": last, "rows": percap}
 summary["reference"] = {"span": [487, REF_LAST], "n": len(ref), "retention": len(retention), "plasticity": len(plasticity),
                         "skipped": skipped, "class_counts": dict(collections.Counter(ref[k]["capability_class"] for k in ref))}
 summary["coverage"] = {a: dict(coverage[a]) for a in ARMS}
 summary["curve"] = curve
 summary["curve_robust"] = {"sigma_floor": SIGMA_FLOOR, "n_keys": len(robust_keys), "rows": curve_robust}
+curve_gram = []
+for ck in GRAM_CKS:
+    keys = [k for k in robust_keys if ck in gram[k]]
+    if len(keys) < 10: continue
+    rec = {"checkpoint": ck, "n_keys": len(keys), "GRAM_MNR": float(np.mean([nr(gram, k, ck) for k in keys])),
+           "GRAM_medNR": float(np.median([nr(gram, k, ck) for k in keys]))}
+    for s_, ks in (("ret", retention), ("pla", plasticity)):
+        v = [nr(gram, k, ck) for k in keys if k in ks]; rec[f"GRAM_MNR_{s_}"] = float(np.mean(v)) if v else float("nan")
+    if ck in {c["checkpoint"] for c in curve_robust} or all(ck in base[k] for k in keys):
+        kb = [k for k in keys if ck in base[k]]
+        rec["noGRAM_MNR_samekeys"] = float(np.mean([nr(base, k, ck) for k in kb])) if kb else float("nan")
+    for a in ARMS:
+        ka = [k for k in keys if ck in arms[a].get(k, {})]
+        if len(ka) >= 10: rec[f"{a}_MNR_samekeys"] = float(np.mean([nr(arms[a], k, ck) for k in ka])); rec[f"{a}_n"] = len(ka)
+    curve_gram.append(rec)
+summary["curve_robust_gram"] = {"rows": curve_gram}
+(OUT / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
 (OUT / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
 
 # ---------------- figure ----------------
 try:
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-    cols = {"noGRAM": "#555555", "global": "#1f77b4", "global_local": "#d62728"}
+    palette = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b"]
+    cols = {"noGRAM": "#555555", **{a: palette[i % len(palette)] for i, a in enumerate(ARMS)}}
     for ax, what, title in ((axes[0, 0], "MNR", "MNR (all common keys)"), (axes[0, 1], "MNR_ret", "MNR retention (tau<=29279)"),
                             (axes[1, 0], "MNR_pla", "MNR plasticity (tau>29279)")):
         for name in cols:
@@ -264,21 +314,53 @@ for ck in POINTS:
         s = summary["per_arm_point"].get(f"{a}@{ck}")
         if s: L.append(f"| {ck} | {a} | {s['n']} | {s['mean_pp']:+.2f} | {s['wins']}/{s['losses']} | {s['mean_sigma']:+.2f} |")
 L.append("\n## Capability regret (common keys at each point; lower is better)\n")
-L.append("| ck | n (ret/pla) | MNR noGRAM | MNR global | MNR global_local | ret noGRAM | ret global | ret gl | pla noGRAM | pla global | pla gl |\n|---|---|---|---|---|---|---|---|---|---|---|")
+names = ("noGRAM",) + tuple(ARMS)
+L.append("| ck | n (ret/pla) | " + " | ".join(f"MNR {n}" for n in names) + " | " + " | ".join(f"ret {n}" for n in names) + " | " + " | ".join(f"pla {n}" for n in names) + " |")
+L.append("|---|---|" + "---|" * (3 * len(names)))
 for c in curve:
-    L.append(f"| {c['checkpoint']} | {c['n_keys']} ({c['n_ret']}/{c['n_pla']}) | {c['noGRAM_MNR']:.3f} | {c['global_MNR']:.3f} | {c['global_local_MNR']:.3f} | "
-             f"{c['noGRAM_MNR_ret']:.3f} | {c['global_MNR_ret']:.3f} | {c['global_local_MNR_ret']:.3f} | {c['noGRAM_MNR_pla']:.3f} | {c['global_MNR_pla']:.3f} | {c['global_local_MNR_pla']:.3f} |")
+    L.append(f"| {c['checkpoint']} | {c['n_keys']} ({c['n_ret']}/{c['n_pla']}) | " + " | ".join(f"{c[f'{n}_MNR']:.3f}" for n in names) + " | "
+             + " | ".join(f"{c[f'{n}_MNR_ret']:.3f}" for n in names) + " | " + " | ".join(f"{c[f'{n}_MNR_pla']:.3f}" for n in names) + " |")
 L.append(f"\n## Capability regret, robust key set (reference sigma >= {SIGMA_FLOOR:.3f}; {len(robust_keys)} keys; pre-fork rows give the no-GRAM context)\n")
-L.append("| ck | n (ret/pla) | MNR noGRAM | MNR global | MNR global_local | medNR noGRAM | medNR global | medNR gl | ret noGRAM/global/gl | pla noGRAM/global/gl |\n|---|---|---|---|---|---|---|---|---|---|")
+L.append("| ck | n (ret/pla) | " + " | ".join(f"MNR {n}" for n in names) + " | " + " | ".join(f"medNR {n}" for n in names) + " | " + " | ".join(f"ret {n}" for n in names) + " | " + " | ".join(f"pla {n}" for n in names) + " |")
+L.append("|---|---|" + "---|" * (4 * len(names)))
 for c in curve_robust:
     g = lambda name, f: (f"{c[f'{name}_{f}']:.3f}" if f"{name}_{f}" in c and math.isfinite(c[f"{name}_{f}"]) else "–")
-    L.append(f"| {c['checkpoint']} | {c['n_keys']} ({c['n_ret']}/{c['n_pla']}) | {g('noGRAM','MNR')} | {g('global','MNR')} | {g('global_local','MNR')} | {g('noGRAM','medNR')} | {g('global','medNR')} | {g('global_local','medNR')} | "
-             f"{g('noGRAM','MNR_ret')}/{g('global','MNR_ret')}/{g('global_local','MNR_ret')} | {g('noGRAM','MNR_pla')}/{g('global','MNR_pla')}/{g('global_local','MNR_pla')} |")
+    L.append(f"| {c['checkpoint']} | {c['n_keys']} ({c['n_ret']}/{c['n_pla']}) | " + " | ".join(g(n, "MNR") for n in names) + " | " + " | ".join(g(n, "medNR") for n in names)
+             + " | " + " | ".join(g(n, "MNR_ret") for n in names) + " | " + " | ".join(g(n, "MNR_pla") for n in names) + " |")
 if percap:
-    L.append(f"\n## Endpoint {last}: per capability (sorted by global_local delta in sigma units)\n")
-    L.append("| key | set | class | noGRAM | global | Δ/σ | global_local | Δ/σ |\n|---|---|---|---|---|---|---|---|")
+    pass
+# ---- GRAM (official 5TB Gram branch) section ----
+vg = summary.get("vs_gram", {})
+if vg.get("points"):
+    L.append(f"\n## Versus the official 5TB Gram branch (anchor teacher@12687, restart at 12688; union checkpoints {GRAM_CKS[0]}..{GRAM_CKS[-1]})\n")
+    L.append(f"Same-step deltas arm minus GRAM at the overlapping points {vg['points']} (GRAM has no checkpoints after {GRAM_CKS[-1]}); "
+             "mean pp / wins-losses per family. The last block gives no-GRAM minus GRAM at >=29279 for scale.\n")
+    L.append("| arm | " + " | ".join(families) + " |"); L.append("|---|" + "---|" * len(families))
+    for a in ARMS:
+        cells = []
+        for f in families:
+            x = vg["per_arm_family"].get(f"{a}:{f}")
+            cells.append("—" if not x else f"{x['mean_pp']:+.2f} ({x['wins']}/{x['losses']})")
+        L.append(f"| {a} | " + " | ".join(cells) + " |")
+    cells = []
+    for f in families:
+        x = vg["noGRAM_minus_GRAM_per_family"].get(f)
+        cells.append("—" if not x else f"{x['mean_pp']:+.2f} ({x['wins']}/{x['losses']})")
+    L.append(f"| no-GRAM (continuous) | " + " | ".join(cells) + " |")
+    cg = summary.get("curve_robust_gram", {}).get("rows", [])
+    if cg:
+        L.append("\nGRAM robust regret trajectory (same reference and sigma floor; lower is better):\n")
+        L.append("| ck | n | GRAM MNR | GRAM ret | GRAM pla | no-GRAM MNR (same keys) | " + " | ".join(f"{a} MNR" for a in ARMS) + " |")
+        L.append("|---|---|---|---|---|---|" + "---|" * len(ARMS))
+        for r in cg:
+            L.append(f"| {r['checkpoint']} | {r['n_keys']} | {r['GRAM_MNR']:.2f} | {r['GRAM_MNR_ret']:.2f} | {r['GRAM_MNR_pla']:.2f} | "
+                     f"{r.get('noGRAM_MNR_samekeys', float('nan')):.2f} | " + " | ".join(f"{r[f'{a}_MNR_samekeys']:.2f}" if f"{a}_MNR_samekeys" in r else "—" for a in ARMS) + " |")
+if last is not None:
+    L.append(f"\n## Endpoint {last}: per capability (sorted by {ARMS[-1]} delta in sigma units)\n")
+    L.append("| key | set | class | noGRAM | " + " | ".join(f"{a} | Δ/σ" for a in ARMS) + " |")
+    L.append("|---|---|---|---|" + "---|---|" * len(ARMS))
     for r in percap:
-        L.append(f"| {r['key']} | {r['set'][:3]} | {r['class']} | {r['noGRAM']:.4f} | {r['global']:.4f} | {r['d_global_sigma']:+.2f} | {r['global_local']:.4f} | {r['d_global_local_sigma']:+.2f} |")
+        L.append(f"| {r['key']} | {r['set'][:3]} | {r['class']} | {r['noGRAM']:.4f} | " + " | ".join(f"{r[a]:.4f} | {r[f'd_{a}_sigma']:+.2f}" for a in ARMS) + " |")
 L.append("\nNotes: `segmentation:monuseg:mDice` is the 30/7/14 (0929 amendment) split from the hxw site campaign; the official 24/6/14 v3 cell is reported separately as "
          "`segmentation:monuseg-official24:mDice` and is not in the union reference. rxrx3-core (retrieval/clustering) is not evaluated for v2 yet. "
          "Streams are not sample-paired with the baseline (loader RNG not in the checkpoint).")
@@ -295,5 +377,5 @@ for c in curve_robust:
     g = lambda name, f: (f"{c[f'{name}_{f}']:.3f}" if f"{name}_{f}" in c else "–")
     print(f"robust ck {c['checkpoint']} n={c['n_keys']} MNR {g('noGRAM','MNR')}/{g('global','MNR')}/{g('global_local','MNR')} medNR {g('noGRAM','medNR')}/{g('global','medNR')}/{g('global_local','medNR')} ret {g('noGRAM','MNR_ret')}/{g('global','MNR_ret')}/{g('global_local','MNR_ret')} pla {g('noGRAM','MNR_pla')}/{g('global','MNR_pla')}/{g('global_local','MNR_pla')}")
 for c in curve:
-    print(f"ck {c['checkpoint']} n={c['n_keys']} MNR noGRAM {c['noGRAM_MNR']:.3f} global {c['global_MNR']:.3f} gl {c['global_local_MNR']:.3f} | ret {c['noGRAM_MNR_ret']:.3f}/{c['global_MNR_ret']:.3f}/{c['global_local_MNR_ret']:.3f} | pla {c['noGRAM_MNR_pla']:.3f}/{c['global_MNR_pla']:.3f}/{c['global_local_MNR_pla']:.3f}")
+    print(f"ck {c['checkpoint']} n={c['n_keys']} MNR " + "/".join(f"{c[f'{n}_MNR']:.3f}" for n in names) + " | ret " + "/".join(f"{c[f'{n}_MNR_ret']:.3f}" for n in names) + " | pla " + "/".join(f"{c[f'{n}_MNR_pla']:.3f}" for n in names))
 print("wrote", OUT)
