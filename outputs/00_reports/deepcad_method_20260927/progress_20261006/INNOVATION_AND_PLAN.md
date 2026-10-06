@@ -46,3 +46,20 @@
 - 已将hxw的446份小型JSON评测结果补入lyx汇总输入；没有传输checkpoint或数据集。
 - 同覆盖结果显示 fixed CLS w3 的分类收益不低，但检索损失更大；不能仅凭不同覆盖的汇总均值断言w3整体较差。详见 MATCHED_COVERAGE.md。
 - 5TB 新臂训练、密集补测和20TB评测仍在运行。GPU显存以 GPU_STATUS.json 的实测时间为准；“75%目标”不等于每时每刻都已达到。加载、任务交接、CPU拟合阶段会波动。
+
+- 重复结果审计：ck30255 的 global_cls_slow/global_cls_slow2 有15个跨机重复指标不完全一致（最大绝对差约0.223pp），差异来源尚未查明；保留原lyx记录，未按较高分选择。明细见 hxw_json_sync_20261006.json。
+- 已增加周期性结果汇总：共享盘20TB每10分钟刷新；lyx全臂汇总每30分钟刷新，新臂首次导出后自动纳入。此前阻塞于磁盘I/O的旧汇总完成后才启动下一份，避免重复汇总竞争。
+
+## deepcad 内存事件与恢复（03:20 UTC）
+
+本轮调度漏查了 deepcad 的用户 cgroup 上限，仅检查整机可用RAM，导致评测并发增加后触及400 GiB的用户内存上限。内核记录 `CONSTRAINT_MEMCG`，杀死训练 DataLoader worker 455406，训练随之退出。这是本轮调度问题。
+
+已停止该机评测，保留并重新排队48个未完成任务，并从含优化器的完整 ck53191 恢复原训练配置。退出前完成53588次更新，因此需重做396次未保存更新；没有丢失已保存checkpoint。恢复日志确认加载成功且已继续优化器更新。
+
+新入口 `scripts/run_v2_deepcad_guarded_20261006.py` 同时检查整机RAM和400 GiB cgroup上限，至少保留64 GiB的用户内存余量；评测PSS与尚未完成模型加载的预留合计限制在80 GiB，最多24个评测任务。保留GPU显存75%目标，但不会为了占用率再次挤掉训练。各卡占用仍会随加载、CPU拟合、任务结束变化，目前不能声称每卡持续超过70%。
+
+记录：
+- 训练恢复日志：`outputs/auto_train_logs/hs6_l_20tb_v2_recovery_cls_slow2_resume_20261006.log`
+- 用户内存与预留实测：`outputs/02_eval_runs/v2_20tb_paired_20261006/_state/workers/deepcad_memory_guard.json`
+- 重新排队审计：`outputs/02_eval_runs/v2_20tb_paired_20261006/_state/cgroup_recovery_20261006/`
+- 现有官方MoNuSeg 30/7/14评测追加34个resident checkpoint任务，已登记82个任务（48个原有结果）；新增0.3权重臂后续导出会自动登记。
