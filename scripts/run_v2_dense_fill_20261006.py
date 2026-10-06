@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fill lyx resident 5TB dense evaluations toward 75% VRAM, with five slots/GPU.
+"""Fill lyx resident 5TB dense evaluations toward 75% VRAM, with up to twelve slots/GPU.
 Reuse the recorded evaluator and protocols; extend arm registration only.
 """
 import argparse
@@ -37,12 +37,12 @@ def main():
         return
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--gpus', type=int, nargs='+', default=list(range(6)))
-    p.add_argument('--per-gpu', type=int, default=5)
+    p.add_argument('--per-gpu', type=int, default=12)
     p.add_argument('--memory-target', type=float, default=.75)
     p.add_argument('--min-ram-gib', type=float, default=80)
     a = p.parse_args()
-    if not 1 <= a.per_gpu <= 5:
-        p.error('Use one to five slots per GPU')
+    if not 1 <= a.per_gpu <= 12:
+        p.error('Use one to twelve slots per GPU')
     base = load(BASE, 'resident_dense')
     runner = Path(__file__).resolve()
     log_root = E / 'logs/dense_fill_20261006'
@@ -65,6 +65,11 @@ def main():
             pattern += re.escape(' --fold ' + base.PANNUKE[ds])
         return re.search(pattern, processes) is not None
     base.SEG_RUNNER = runner
+    def reserve(task):
+        # Low-resolution B8 detection / 256px segmentation leave room beside training.
+        if task[2] == 'detection' or task[3] in ('conic', 'tissuenet') or task[3].startswith('pannuke/'):
+            return 6000
+        return 18000 if task[3] == 'monuseg' else 8500
     active, attempts, cooldown = {}, {}, {}
     while True:
         processes = base.subprocess.check_output(['ps', '-eo', 'args'], text=True)
@@ -99,11 +104,10 @@ def main():
             used, total = cards[gpu]
             if used / total >= a.memory_target or len(running) >= a.per_gpu or cooldown.get(gpu, 0) > time.time():
                 continue
-            if any(time.time() - j['started'] < 60 for j in running):
-                continue
+            loading_vram = sum(reserve(j['task']) for j in running if time.time() - j['started'] < 60)
             loading_ram = sum(base.ram_gib(j['task']) for j in active.values() if time.time() - j['started'] < 120)
             for task in pending:
-                if total - used < base.vram_mib(task) + 2048:
+                if total - used - loading_vram < reserve(task) + 2048:
                     continue
                 if base.mem_available_gib() - loading_ram - base.ram_gib(task) < a.min_ram_gib:
                     continue

@@ -110,7 +110,12 @@ for a in INPUT_ARMS:
     folds = arms[a].pop("_pannuke_folds", {})
     for ck, vals in folds.items():
         if len(vals) == 3: arms[a]["segmentation:pannuke:mDice"][ck] = statistics.mean(vals)
-    for cell in glob.glob(str(MIRROR / f"monuseg30_campaign_v2/cells/v2_{a}_ck*__segmentation__monuseg__*")):
+    monuseg_root = Path(os.environ.get("V2_MONUSEG_ROOT", MIRROR / "monuseg30_campaign_v2"))
+    for cell in glob.glob(str(monuseg_root / f"cells/v2_{a}_ck*__segmentation__monuseg__*")):
+        report = Path(cell) / "validation_report.json"
+        if not report.exists(): continue
+        validation = json.loads(report.read_text())
+        if validation.get("status") != "VALID_COMPLETE" or validation.get("expected_counts") != {"train": 30, "val": 7, "test": 14}: continue
         ck = int(Path(cell).name.split("__")[0].split("_ck")[1])
         m, n = seg_mean(f"{cell}/results/**/results.json")
         if m is not None and n == 3: arms[a]["segmentation:monuseg:mDice"][ck] = m
