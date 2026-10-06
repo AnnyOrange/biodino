@@ -25,6 +25,8 @@ case "$ARM" in
   # Round 3 (2026-10-04): CLS-only + slow anchor (the scalable combination) at two horizons.
   global_cls_slow) LW=0.0; GLOBAL_TOKENS=cls; AM=0.9995;;
   global_cls_slow2) LW=0.0; GLOBAL_TOKENS=cls; AM=0.9998;;
+  # Round 5: isolate loss strength with CLS-only and the same 5000-update anchor horizon.
+  global_cls_slow2_w03) LW=0.0; GLOBAL_TOKENS=cls; AM=0.9998; RW=0.3;;
   # Round 4 (2026-10-05): trade-off curve upward on the best configuration (CLS-only): loss weight 3 with the frozen anchor
   # and with the slow anchor (w03 lost most of the gain, w1 gains ~+0.65pp cls -> does w3 gain more without a dense tax?).
   global_cls_w3) LW=0.0; GLOBAL_TOKENS=cls; RW=3.0;;

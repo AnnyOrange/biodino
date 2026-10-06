@@ -75,9 +75,10 @@ def seg_mean(cell_glob):
     return (statistics.mean(vals), len(vals)) if vals else (None, 0)
 
 
-arms = {a: collections.defaultdict(dict) for a in ARMS}
-coverage = {a: collections.Counter() for a in ARMS}
-for a in ARMS:
+INPUT_ARMS = tuple(dict.fromkeys((*ARMS, "gram_ext")))
+arms = {a: collections.defaultdict(dict) for a in INPUT_ARMS}
+coverage = {a: collections.Counter() for a in INPUT_ARMS}
+for a in INPUT_ARMS:
     root = MIRROR / a
     for p in glob.glob(str(root / "results/point_*/*/bio_*/*/*/last_result.json")):
         parts = Path(p).parts; ck = int(parts[-2]); ds = parts[-3]; fam = parts[-4][4:]
@@ -96,7 +97,8 @@ for a in ARMS:
         arms[a][f"detection:{r['dataset']}:test_patch_f1"][int(r["checkpoint"])] = v
     for cell in glob.glob(str(root / "v3/cells/point_*__*")):
         name = Path(cell).name; ck = int(name.split("__")[0][6:]); ds = name.split("__")[1]
-        if not (Path(cell) / "validation_report.json").exists(): continue
+        report = Path(cell) / "validation_report.json"
+        if not report.exists() or json.loads(report.read_text()).get("status") != "VALID_COMPLETE": continue
         m, n = seg_mean(f"{cell}/results/**/results.json")
         if m is None: continue
         if ds == "pannuke":
@@ -114,6 +116,15 @@ for a in ARMS:
         if m is not None and n == 3: arms[a]["segmentation:monuseg:mDice"][ck] = m
     for k in arms[a]:
         coverage[a][k.split(":")[0]] += len(arms[a][k])
+
+# Extend the official GRAM comparator with its resident, same-protocol continuation.
+for key, series in arms.pop("gram_ext").items():
+    for ck, value in series.items():
+        if ck in gram[key] and not math.isclose(gram[key][ck], value, rel_tol=0, abs_tol=1e-8):
+            raise ValueError(f"Conflicting official GRAM result: {key}@{ck}")
+        gram[key][ck] = value
+coverage.pop("gram_ext")
+GRAM_CKS = sorted({ck for series in gram.values() for ck in series})
 
 # ---------------- reference from the full no-GRAM run ----------------
 ref, skipped = {}, []
