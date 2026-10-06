@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import time
@@ -47,24 +48,26 @@ def main():
     log_root = E / 'logs/dense_fill_20261006'
     log_root.mkdir(parents=True, exist_ok=True)
     state = log_root / 'status.json'
-    manifest = log_root / 'scheduler_manifest.json'
+    manifest = log_root / ('scheduler_manifest_' + digest(runner)[:12] + '.json')
     hashes = {str(path): digest(path) for path in (BASE, SEG, runner)}
     if manifest.exists() and json.loads(manifest.read_text())['source_sha256'] != hashes:
         raise RuntimeError('Scheduler source changed since launch')
     base.atomic(manifest, dict(source_sha256=hashes, arms=ARMS, arguments=vars(a),
         protocol='existing union-v4 dense components; batch/splits/layers unchanged'))
-    original_foreign = base.foreign_running
+    processes = ''
     def foreign(task):
-        for path in (SEG, runner):
-            base.SEG_RUNNER = path
-            if original_foreign(task):
-                base.SEG_RUNNER = runner
-                return True
-        base.SEG_RUNNER = runner
-        return False
+        arm, point, family, ds = task
+        if family == 'detection':
+            return ('--output-dir ' + str(base.det_cell(arm, point, ds)) + ' ') in processes
+        dataset = 'pannuke' if ds in base.PANNUKE else ds
+        pattern = re.escape(f'--campaign v2_{arm} --point {point} --dataset {dataset} --gpu ') + r'\d+'
+        if ds in base.PANNUKE:
+            pattern += re.escape(' --fold ' + base.PANNUKE[ds])
+        return re.search(pattern, processes) is not None
     base.SEG_RUNNER = runner
     active, attempts, cooldown = {}, {}, {}
     while True:
+        processes = base.subprocess.check_output(['ps', '-eo', 'args'], text=True)
         for key, job in list(active.items()):
             rc = job['child'].poll()
             if rc is None:
