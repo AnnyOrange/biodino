@@ -148,6 +148,7 @@ def worker(args):
         stopping = True
     signal.signal(signal.SIGTERM,stop); signal.signal(signal.SIGINT,stop)
     active = {}
+    deferred_until = {}
     last_snapshot = 0
     while not stopping:
         if manifest.get('online_checkpoints'):
@@ -206,6 +207,7 @@ def worker(args):
             if actual >= args.target_per_gpu or len(active) >= args.max_host_jobs or used / total >= args.memory_target: continue
             for task in manifest['tasks']:
                 key = task['key']
+                if deferred_until.get(task['asset']['path'], 0) > time.time(): continue
                 if task['dataset'].get('requires_pyarrow') and not has_pyarrow: continue
                 if task['asset'].get('kind') == 'external' and not has_external: continue
                 if (state/'done'/f'{key}.json').exists() or (state/'claims'/key).exists(): continue
@@ -257,7 +259,15 @@ def worker(args):
                     print('START',args.host,gpu,process.pid,key,flush=True)
                     launched = True
                 except Exception as error:
-                    save(state/'PAUSED.json',dict(task=key,host=args.host,error=str(error),time=time.time()))
+                    if str(error) in ('Checkpoint is still being written', 'Model assets still being written'):
+                        # Only first registration can report this transient condition.
+                        # A changed, already registered fingerprint remains a hard error.
+                        deferred_until[task['asset']['path']] = time.time() + 300
+                        save(state/'deferred'/f'{key}.json',dict(task=key,host=args.host,error=str(error),time=time.time()))
+                        (claim/'owner.json').unlink(missing_ok=True)
+                        claim.rmdir()
+                    else:
+                        save(state/'PAUSED.json',dict(task=key,host=args.host,error=str(error),time=time.time()))
                     (state/'running'/f'{key}.json').unlink(missing_ok=True)
                 break
             if launched: break

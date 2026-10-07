@@ -20,7 +20,7 @@ if a.site == 'lyx':
     extra=dict(V2_MIRROR=str(root),V2_UNION=str(root/'bin/SELECTED_CELLS.csv'),
         V2_CR_MODULE=str(root/'bin/capability_regret_20260923.py'),V2_OUT=str(output),
         V2_MONUSEG_ROOT='/data/xuzijing/monuseg_t30v7_remote_20260930/campaign_v3',
-        V2_ARMS='global,global_local,global_cls,global_slow,global_w03,global_cls_slow,global_cls_slow2,global_cls_w3,global_cls_slow2_w3,global_cls_early,global_cls_slow2_w03')
+        V2_ARMS='global,global_local,global_cls,global_slow,global_w03,global_cls_slow,global_cls_slow2,global_cls_w3,global_cls_slow2_w3,global_cls_early,global_cls_slow2_w03,global_cls_w03')
 else:
     root=Path('/mnt/huawei_deepcad/dinov3')
     output=root/'outputs/00_reports/deepcad_method_20260927/progress_20261006/20tb'

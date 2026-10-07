@@ -15,7 +15,8 @@ import time
 E = Path('/data/xuzijing/hs6_l5_v2_recovery_eval_20260930')
 BASE = E / 'bin/run_v2_dense_queue_lyx_20261004.py'
 SEG = E / 'bin/run_v2_v4_segmentation_lyx_dynamic_20261004.py'
-ARMS = ('global_cls_slow', 'global_cls_slow2', 'global_cls_w3', 'global_cls_slow2_w3', 'global_cls_slow2_w03', 'gram_ext')
+ARMS = ('global', 'global_local', 'global_cls', 'global_cls_w03', 'global_slow', 'global_w03', 'global_cls_early',
+        'global_cls_slow', 'global_cls_slow2', 'global_cls_w3', 'global_cls_slow2_w3', 'global_cls_slow2_w03', 'gram_ext')
 
 def load(path, name):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -40,6 +41,7 @@ def main():
     p.add_argument('--per-gpu', type=int, default=12)
     p.add_argument('--memory-target', type=float, default=.75)
     p.add_argument('--min-ram-gib', type=float, default=80)
+    p.add_argument('--max-host-jobs', type=int, default=12)
     a = p.parse_args()
     if not 1 <= a.per_gpu <= 12:
         p.error('Use one to twelve slots per GPU')
@@ -88,6 +90,8 @@ def main():
         pending = []
         for task in base.tasks(ARMS):
             arm, point, family, ds = task
+            if family == 'segmentation' and ds == 'monuseg':
+                continue  # 30/7/14 amendment has its own fingerprinted queue.
             key = f"{arm}__{point}__{family}__{ds.replace('/', '_')}"
             if key in active or attempts.get(key, 0) >= 2:
                 continue
@@ -98,11 +102,18 @@ def main():
         rows = base.subprocess.check_output(['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'], text=True)
         cards = [tuple(map(int, line.split(','))) for line in rows.splitlines()]
         counts = {}
+        resident_counts = {}
+        for line in processes.splitlines():
+            if '--campaign v2_' in line:
+                match = re.search(r' --gpu (\d+)(?: |$)', line)
+                if match:
+                    g = int(match.group(1))
+                    resident_counts[g] = resident_counts.get(g, 0) + 1
         for gpu in a.gpus:
             running = [j for j in active.values() if j['gpu'] == gpu]
-            counts[gpu] = len(running)
+            counts[gpu] = max(len(running), resident_counts.get(gpu, 0))
             used, total = cards[gpu]
-            if used / total >= a.memory_target or len(running) >= a.per_gpu or cooldown.get(gpu, 0) > time.time():
+            if sum(resident_counts.values()) >= a.max_host_jobs or used / total >= a.memory_target or counts[gpu] >= a.per_gpu or cooldown.get(gpu, 0) > time.time():
                 continue
             loading_vram = sum(reserve(j['task']) for j in running if time.time() - j['started'] < 60)
             loading_ram = sum(base.ram_gib(j['task']) for j in active.values() if time.time() - j['started'] < 120)

@@ -23,7 +23,7 @@ with (OUT / '_state/round5_online.lock').open('a') as singleton:
             manifest = json.loads(path.read_text())
             known = {a['path'] for a in manifest['checkpoint_assets']}
             new = []
-            for arm in ('global_cls_w3','global_cls_slow2_w3','global_cls_slow2_w03','gram_ext'):
+            for arm in ('global_cls_w3','global_cls_slow2_w3','global_cls_slow2_w03','global_cls_w03','gram_ext'):
                 for p in (RUNS / arm / 'eval').glob('training_*/teacher_checkpoint.pth'):
                     ck = int(p.parent.name.split('_')[-1])
                     if ck not in range(29767,35136,488) or str(p) in known or time.time()-p.stat().st_mtime < 180:

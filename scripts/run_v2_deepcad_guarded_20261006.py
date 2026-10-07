@@ -24,6 +24,11 @@ def budget():
         return _cache[1]
     limit = int((CGROUP / 'memory.limit_in_bytes').read_text()) / GIB
     used = int((CGROUP / 'memory.usage_in_bytes').read_text()) / GIB
+    stats = dict((k, int(v)) for k, v in (line.split() for line in (CGROUP / 'memory.stat').read_text().splitlines()))
+    # Clean inactive file pages are reclaimable; anonymous training buffers,
+    # active cache, dirty pages and writeback remain charged against the budget.
+    reclaimable = max(0, stats.get('total_inactive_file', 0) - stats.get('total_dirty', 0)
+                      - stats.get('total_writeback', 0)) / GIB
     ram = int(next(l.split()[1] for l in Path('/proc/meminfo').read_text().splitlines() if l.startswith('MemAvailable:'))) / 1024**2
     app = subprocess.check_output(['nvidia-smi','--query-compute-apps=pid,used_gpu_memory','--format=csv,noheader,nounits'],text=True)
     ready = {int(p):float(m) for line in app.splitlines() if len((parts:=line.split(','))) == 2 for p,m in [parts] if m.strip().isdigit() and float(m)>1024}
@@ -45,7 +50,8 @@ def budget():
     # Keep an absolute eval budget for the training shuffle buffers still warming up.
     future = 8 * unready + 2 * (len(parents)-unready)
     status = dict(time=time.time(),cgroup_limit_gib=limit,cgroup_used_gib=used,
-                  effective_headroom_gib=min(ram,limit-used),eval_pss_gib=pss,
+                  reclaimable_clean_inactive_file_gib=reclaimable,
+                  effective_headroom_gib=min(ram,limit-used+reclaimable),eval_pss_gib=pss,
                   unready=unready,active_parent_processes=len(parents),future_eval_gib=future,
                   eval_budget_gib=80,min_cgroup_headroom_gib=64)
     status['admit'] = status['effective_headroom_gib'] >= 64 + 8*unready and pss + future + 8 <= 80
