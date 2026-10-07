@@ -1,0 +1,237 @@
+{
+  "time_utc": "2026-10-07T16:11:35Z",
+  "hosts": {
+    "local": [
+      {
+        "gpu": 0,
+        "used_mib": 25889,
+        "total_mib": 32607,
+        "percent": 79.4,
+        "util": 100
+      },
+      {
+        "gpu": 1,
+        "used_mib": 28490,
+        "total_mib": 32607,
+        "percent": 87.37,
+        "util": 99
+      },
+      {
+        "gpu": 2,
+        "used_mib": 25881,
+        "total_mib": 32607,
+        "percent": 79.37,
+        "util": 100
+      },
+      {
+        "gpu": 3,
+        "used_mib": 31097,
+        "total_mib": 32607,
+        "percent": 95.37,
+        "util": 99
+      },
+      {
+        "gpu": 4,
+        "used_mib": 28490,
+        "total_mib": 32607,
+        "percent": 87.37,
+        "util": 99
+      },
+      {
+        "gpu": 5,
+        "used_mib": 28490,
+        "total_mib": 32607,
+        "percent": 87.37,
+        "util": 99
+      },
+      {
+        "gpu": 6,
+        "used_mib": 25672,
+        "total_mib": 32607,
+        "percent": 78.73,
+        "util": 98
+      },
+      {
+        "gpu": 7,
+        "used_mib": 27790,
+        "total_mib": 32607,
+        "percent": 85.23,
+        "util": 100
+      }
+    ],
+    "deepcad": [
+      {
+        "gpu": 0,
+        "used_mib": 19553,
+        "total_mib": 40960,
+        "percent": 47.74,
+        "util": 100
+      },
+      {
+        "gpu": 1,
+        "used_mib": 34133,
+        "total_mib": 40960,
+        "percent": 83.33,
+        "util": 100
+      },
+      {
+        "gpu": 2,
+        "used_mib": 25189,
+        "total_mib": 40960,
+        "percent": 61.5,
+        "util": 100
+      },
+      {
+        "gpu": 3,
+        "used_mib": 25189,
+        "total_mib": 40960,
+        "percent": 61.5,
+        "util": 100
+      },
+      {
+        "gpu": 4,
+        "used_mib": 21739,
+        "total_mib": 40960,
+        "percent": 53.07,
+        "util": 100
+      },
+      {
+        "gpu": 5,
+        "used_mib": 32125,
+        "total_mib": 40960,
+        "percent": 78.43,
+        "util": 100
+      },
+      {
+        "gpu": 6,
+        "used_mib": 32107,
+        "total_mib": 40960,
+        "percent": 78.39,
+        "util": 100
+      },
+      {
+        "gpu": 7,
+        "used_mib": 18271,
+        "total_mib": 40960,
+        "percent": 44.61,
+        "util": 100
+      }
+    ],
+    "3090-qi": [
+      {
+        "gpu": 0,
+        "used_mib": 20548,
+        "total_mib": 24576,
+        "percent": 83.61,
+        "util": 100
+      },
+      {
+        "gpu": 1,
+        "used_mib": 22885,
+        "total_mib": 24576,
+        "percent": 93.12,
+        "util": 100
+      },
+      {
+        "gpu": 2,
+        "used_mib": 20552,
+        "total_mib": 24576,
+        "percent": 83.63,
+        "util": 100
+      },
+      {
+        "gpu": 3,
+        "used_mib": 20548,
+        "total_mib": 24576,
+        "percent": 83.61,
+        "util": 100
+      },
+      {
+        "gpu": 4,
+        "used_mib": 19915,
+        "total_mib": 24576,
+        "percent": 81.03,
+        "util": 100
+      },
+      {
+        "gpu": 5,
+        "used_mib": 20550,
+        "total_mib": 24576,
+        "percent": 83.62,
+        "util": 100
+      },
+      {
+        "gpu": 6,
+        "used_mib": 19971,
+        "total_mib": 24576,
+        "percent": 81.26,
+        "util": 100
+      },
+      {
+        "gpu": 7,
+        "used_mib": 22302,
+        "total_mib": 24576,
+        "percent": 90.75,
+        "util": 100
+      }
+    ],
+    "5090-lyx-xr": [
+      {
+        "gpu": 0,
+        "used_mib": 21270,
+        "total_mib": 32607,
+        "percent": 65.23,
+        "util": 100
+      },
+      {
+        "gpu": 1,
+        "used_mib": 21268,
+        "total_mib": 32607,
+        "percent": 65.23,
+        "util": 75
+      },
+      {
+        "gpu": 2,
+        "used_mib": 21266,
+        "total_mib": 32607,
+        "percent": 65.22,
+        "util": 100
+      },
+      {
+        "gpu": 3,
+        "used_mib": 21266,
+        "total_mib": 32607,
+        "percent": 65.22,
+        "util": 100
+      },
+      {
+        "gpu": 4,
+        "used_mib": 6483,
+        "total_mib": 32607,
+        "percent": 19.88,
+        "util": 0
+      },
+      {
+        "gpu": 5,
+        "used_mib": 3736,
+        "total_mib": 32607,
+        "percent": 11.46,
+        "util": 10
+      },
+      {
+        "gpu": 6,
+        "used_mib": 882,
+        "total_mib": 32607,
+        "percent": 2.7,
+        "util": 0
+      },
+      {
+        "gpu": 7,
+        "used_mib": 882,
+        "total_mib": 32607,
+        "percent": 2.7,
+        "util": 100
+      }
+    ]
+  }
+}

@@ -20,6 +20,7 @@ GLOBAL_TOKENS=cls_patchmean; RW=1.0; AM=0.0
 case "$ARM" in
   global) LW=0.0;; global_local) LW=1.0;;
   global_cls) LW=0.0; GLOBAL_TOKENS=cls;;
+  global_cls_w03) LW=0.0; GLOBAL_TOKENS=cls; RW=0.3;;
   global_w03) LW=0.0; RW=0.3;;
   global_slow) LW=0.0; AM=0.9995;;
   # Round 3 (2026-10-04): CLS-only + slow anchor (the scalable combination) at two horizons.

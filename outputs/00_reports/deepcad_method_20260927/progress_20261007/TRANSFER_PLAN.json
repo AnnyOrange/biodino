@@ -1,0 +1,952 @@
+{
+  "status": "PREPARED_AWAITING_TRANSFER_AUTHORIZATION",
+  "rows": [
+    {
+      "arm": "global_slow",
+      "step": 33671,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_33671/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_33671/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 32207,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_32207/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_32207/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 34159,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_34159/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_34159/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 29767,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 31719,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_31719/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_31719/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 33183,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_33183/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_33183/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 30743,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 34647,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_34647/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_34647/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 31231,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_31231/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_31231/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 32695,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_32695/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_32695/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 30255,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_slow",
+      "step": 35135,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_slow/eval/training_35135/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_slow/training_35135/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 33671,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_33671/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_33671/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 32207,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_32207/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_32207/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 34159,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_34159/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_34159/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 29767,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 31719,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_31719/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_31719/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 33183,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_33183/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_33183/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 30743,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 34647,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_34647/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_34647/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 31231,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_31231/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_31231/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 32695,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_32695/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_32695/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 30255,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2",
+      "step": 35135,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2/eval/training_35135/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2/training_35135/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 33671,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_33671/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_33671/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 32207,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_32207/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_32207/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 34159,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_34159/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_34159/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 29767,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 31719,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_31719/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_31719/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 33183,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_33183/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_33183/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 30743,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 34647,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_34647/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_34647/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 31231,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_31231/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_31231/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 32695,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_32695/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_32695/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_w3",
+      "step": 30255,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_w3/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w03",
+      "step": 29767,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w03/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w03/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w03",
+      "step": 30743,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w03/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w03/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w03",
+      "step": 30255,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w03/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w03/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 33671,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_33671/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_33671/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 32207,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_32207/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_32207/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 34159,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_34159/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_34159/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 29767,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 31719,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_31719/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_31719/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 33183,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_33183/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_33183/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 30743,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 34647,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_34647/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_34647/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 31231,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_31231/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_31231/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 32695,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_32695/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_32695/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 30255,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls",
+      "step": 35135,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls/eval/training_35135/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls/training_35135/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 33671,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_33671/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_33671/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 32207,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_32207/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_32207/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 34159,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_34159/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_34159/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 29767,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 31719,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_31719/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_31719/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 33183,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_33183/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_33183/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 30743,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 34647,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_34647/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_34647/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 31231,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_31231/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_31231/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 32695,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_32695/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_32695/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 30255,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow",
+      "step": 35135,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow/eval/training_35135/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow/training_35135/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 33671,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_33671/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_33671/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 32207,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_32207/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_32207/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 34159,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_34159/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_34159/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 29767,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 31719,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_31719/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_31719/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 33183,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_33183/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_33183/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 30743,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 34647,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_34647/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_34647/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 31231,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_31231/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_31231/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 32695,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_32695/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_32695/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_slow2_w3",
+      "step": 30255,
+      "path": "/data/xuzijing/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_slow2_w3/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-lyx-xr",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_slow2_w3/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 31719,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_31719/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_31719/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 30255,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 33671,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_33671/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_33671/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 33183,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_33183/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_33183/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 31231,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_31231/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_31231/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 30743,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 34647,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_34647/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_34647/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 34159,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_34159/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_34159/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 29767,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 35135,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_35135/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_35135/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 32207,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_32207/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_32207/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global",
+      "step": 32695,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global/eval/training_32695/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global/training_32695/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 31719,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_31719/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_31719/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 30255,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 33671,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_33671/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_33671/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 33183,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_33183/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_33183/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 31231,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_31231/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_31231/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 30743,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 34647,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_34647/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_34647/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 34159,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_34159/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_34159/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 29767,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 35135,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_35135/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_35135/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 32207,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_32207/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_32207/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_local",
+      "step": 32695,
+      "path": "/data/hs6_l5_v2_recovery_eval_20260930/global_local/eval/training_32695/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_local/training_32695/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 31719,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_31719/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_31719/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 30255,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 33671,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_33671/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_33671/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 33183,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_33183/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_33183/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 31231,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_31231/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_31231/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 30743,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 34647,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_34647/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_34647/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 34159,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_34159/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_34159/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 29767,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 35135,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_35135/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_35135/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 32207,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_32207/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_32207/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_w03",
+      "step": 32695,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_w03/eval/training_32695/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_w03/training_32695/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_early",
+      "step": 31719,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_early/eval/training_31719/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_early/training_31719/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_early",
+      "step": 30255,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_early/eval/training_30255/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_early/training_30255/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_early",
+      "step": 33671,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_early/eval/training_33671/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_early/training_33671/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_early",
+      "step": 33183,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_early/eval/training_33183/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_early/training_33183/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_early",
+      "step": 31231,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_early/eval/training_31231/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_early/training_31231/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_early",
+      "step": 30743,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_early/eval/training_30743/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_early/training_30743/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_early",
+      "step": 29767,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_early/eval/training_29767/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_early/training_29767/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_early",
+      "step": 32207,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_early/eval/training_32207/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_early/training_32207/teacher_checkpoint.pth"
+    },
+    {
+      "arm": "global_cls_early",
+      "step": 32695,
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_early/eval/training_32695/teacher_checkpoint.pth",
+      "bytes": 1401909871,
+      "host": "5090-hxw-xzj",
+      "target": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/v2_5tb_teachers_20261007/global_cls_early/training_32695/teacher_checkpoint.pth"
+    }
+  ],
+  "total_bytes": 165425364778,
+  "target_free_bytes": 7369695166464,
+  "purpose": "Run missing 5TB RxRx3, native CTC and OOD on shared-data hosts; existing 5TB tests stay resident. No optimizer checkpoints copied."
+}
