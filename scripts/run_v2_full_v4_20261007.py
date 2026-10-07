@@ -126,7 +126,9 @@ def inventory():
                     evidence=';'.join(map(str,paths))
                 rows.append(dict(arm=arm,family=family,dataset=ds,state=status,evidence=evidence,provisional=family=='classification' and ds=='lc25000'))
     assert len(rows)==56*len(ref['checkpoint_assets'])
-    save(ROOT/'FULL_V4_INVENTORY.json',dict(updated_unix=time.time(),expected_cells_per_checkpoint=56,cells=rows,
+    # Version the expanded inventory: earlier in-flight workers still refresh
+    # their original 20TB-only inventory until those processes are retired.
+    save(ROOT/'FULL_V4_INVENTORY_20261007.json',dict(updated_unix=time.time(),expected_cells_per_checkpoint=56,cells=rows,
         missing=sum(r['state']=='MISSING_NOT_SCHEDULED' for r in rows),strict_aggregate_allowed=False))
 
 def worker(args):
