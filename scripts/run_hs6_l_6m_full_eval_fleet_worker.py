@@ -172,6 +172,11 @@ def parse_args() -> argparse.Namespace:
         help="Comma- or space-separated dataset names to remove from every lane.",
     )
     parser.add_argument(
+        "--exclude-lane-datasets",
+        default="",
+        help="Comma- or space-separated lane:dataset pairs to remove only from one lane.",
+    )
+    parser.add_argument(
         "--include-lanes",
         default="",
         help="Comma- or space-separated lane names to run; empty keeps every lane.",
@@ -205,6 +210,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Override each lane's concurrent benchmark children on this GPU.",
+    )
+    parser.add_argument(
+        "--detection-batch-size",
+        type=int,
+        default=4,
+        help="Detection observation batch size; legacy campaigns keep the default of 4.",
     )
     parser.add_argument(
         "--allow-busy-gpu",
@@ -390,7 +401,7 @@ def base_env(args: argparse.Namespace, checkpoint_id: int, jobs: int) -> dict[st
             "SEG_PROBE_BATCH_SIZE": "16",
             "SEG_PROBE_NUM_WORKERS": "2",
             "DET_EPOCHS": "5",
-            "DET_BATCH_SIZE": "4",
+            "DET_BATCH_SIZE": str(args.detection_batch_size),
             "DETECTION_CHANNEL_POLICY": "auto",
             "OOD_DEVICE": f"cuda:{args.gpu}",
             "OOD_BATCH_SIZE": os.environ.get(
@@ -423,6 +434,8 @@ def run_lane(
     env = base_env(args, checkpoint_id, jobs)
     env.update({"TASKS": lane.tasks, lane.datasets_env: lane.datasets})
     env.update(dict(lane.extra_env))
+    if lane.name == "detection":
+        env["DET_BATCH_SIZE"] = str(args.detection_batch_size)
     command = [
         "bash",
         str(args.repo / "scripts/run_bio_benchmark_all.sh"),
@@ -494,6 +507,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise SystemExit(f"missing required path(s): {missing}")
     if args.claim_heartbeat_seconds <= 0:
         raise SystemExit("claim heartbeat interval must be positive")
+    if args.detection_batch_size <= 0:
+        raise SystemExit("detection batch size must be positive")
     if args.claim_stale_seconds <= 2 * args.claim_heartbeat_seconds:
         raise SystemExit("claim stale interval must exceed two heartbeat intervals")
 
@@ -510,6 +525,13 @@ def main() -> int:
         args.official_epoch_length * args.epochs // args.full_eval_period
     )
     excluded_datasets = set(args.exclude_datasets.replace(",", " ").split())
+    excluded_lane_datasets: dict[str, set[str]] = {}
+    for item in args.exclude_lane_datasets.replace(",", " ").split():
+        try:
+            lane_name, dataset = item.split(":", 1)
+        except ValueError as error:
+            raise SystemExit(f"invalid lane-specific exclusion: {item}") from error
+        excluded_lane_datasets.setdefault(lane_name, set()).add(dataset)
     included_lanes = set(args.include_lanes.replace(",", " ").split())
     unknown_lanes = included_lanes - {lane.name for lane in LANES}
     if unknown_lanes:
@@ -520,7 +542,10 @@ def main() -> int:
             tasks=lane.tasks,
             datasets_env=lane.datasets_env,
             datasets=" ".join(
-                dataset for dataset in lane.datasets.split() if dataset not in excluded_datasets
+                dataset
+                for dataset in lane.datasets.split()
+                if dataset not in excluded_datasets
+                and dataset not in excluded_lane_datasets.get(lane.name, set())
             ),
             jobs=lane.jobs,
             extra_env=lane.extra_env,

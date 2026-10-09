@@ -47,6 +47,21 @@ def git(*args):
     return subprocess.check_output(['git','-C',str(ROOT),*args], text=True).strip()
 
 
+def verify_campaign_source(manifest):
+    snapshot = manifest.get('source_snapshot')
+    if snapshot is None:
+        if git('rev-parse', 'HEAD') != manifest['git_commit'] or git('status', '--porcelain'):
+            raise RuntimeError('Wrong or dirty checkout')
+        return
+    if snapshot.get('authorization') != 'USER_AUTHORIZED_LOCAL_COPY_20260918':
+        raise RuntimeError('Unapproved copied source')
+    for relative, digest in snapshot['files'].items():
+        if sha256(ROOT / relative) != digest:
+            raise RuntimeError('Copied source changed: ' + relative)
+    if fingerprint(snapshot['files']) != snapshot['sha256']:
+        raise RuntimeError('Copied source fingerprint is inconsistent')
+
+
 def identities(dataset, split):
     import numpy as np
     if hasattr(dataset, 'samples'):
@@ -401,18 +416,32 @@ def worker(args):
     if family!='mixed':
         manifest['tasks']=[task for task in manifest['tasks'] if
             (task['dataset']['task']=='segmentation')==(family=='segmentation')]
-    commit = git('rev-parse','HEAD')
-    if commit!=manifest['git_commit'] or git('status','--porcelain'): raise RuntimeError('Wrong or dirty checkout')
+    components = getattr(args, 'components', None)
+    if components:
+        manifest['tasks'] = [task for task in manifest['tasks'] if task['dataset'].get('component') in components]
+    verify_campaign_source(manifest)
+    commit = manifest['git_commit']
     import torch
     import sklearn
     import importlib.util
+    expected_environment = manifest.get('numerical_environment')
+    if expected_environment:
+        import importlib.metadata
+        actual_environment = {name: importlib.metadata.version(name) for name in expected_environment}
+        if actual_environment != expected_environment:
+            raise RuntimeError('Numerical dependency fingerprint does not match: ' + str(actual_environment))
+        if importlib.metadata.version('torch').split('+')[0] != torch.__version__.split('+')[0]:
+            raise RuntimeError('Torch runtime/metadata mismatch; repair isolated environment before testing')
     has_pyarrow = importlib.util.find_spec('pyarrow') is not None
     has_external = all(importlib.util.find_spec(name) is not None for name in ('transformers','timm','safetensors'))
     optional_modules = {'bioclip':('open_clip',), 'conch':('einops',),
                         'cytoself':('h5py',), 'cytoimagenet':('keras','h5py')}
     if int(torch.__version__.split('.')[0])<2 or not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
         raise RuntimeError('Modern CUDA BF16 evaluator environment required')
-    if args.host=='deepcad' and not set(args.gpus)<=set(range(4)): raise RuntimeError('Deepcad restricted to GPU0-3')
+    if args.host == 'deepcad':
+        allowed = manifest.get('deepcad_authorized_gpu_indices', list(range(4)))
+        if len(allowed) > manifest.get('deepcad_authorized_max_gpus', 4) or not set(args.gpus) <= set(allowed):
+            raise RuntimeError('Deepcad placement exceeds recorded authorization')
     state = args.output/'_state'; state.mkdir(exist_ok=True)
     for name in ('claims','done','workers','running','failed_resource'): (state/name).mkdir(exist_ok=True)
     host_lock = (state/'workers'/f'{args.host}.lock').open('a')
@@ -434,6 +463,14 @@ def worker(args):
     active = {}
     last_snapshot = 0
     while not stopping:
+        if manifest.get('online_checkpoints'):
+            updated = json.loads((args.output/'campaign_manifest.json').read_text())
+            if updated['source_snapshot'] != manifest['source_snapshot']:
+                raise RuntimeError('Cannot change source of an online campaign')
+            manifest['tasks'] = updated['tasks']
+            if family != 'mixed':
+                manifest['tasks'] = [task for task in manifest['tasks'] if
+                    (task['dataset']['task'] == 'segmentation') == (family == 'segmentation')]
         for key,(process,log,task,claim,invocation) in list(active.items()):
             code = process.poll()
             if code is None: continue
@@ -451,6 +488,8 @@ def worker(args):
                              task=key,host=args.host,gpu=invocation['gpu'],time=time.time())
                 save(directory/'validation_report.json',failure)
                 if resource_failure:
+                    save(state/'failed_resource'/f'{key}.json',failure)
+                elif code and manifest.get('isolate_runtime_failures'):
                     save(state/'failed_resource'/f'{key}.json',failure)
                 else:save(state/'PAUSED.json',failure)
             del active[key]
@@ -475,12 +514,15 @@ def worker(args):
             used,total = cards[gpu]
             own = sum(v[4]['gpu']==gpu for v in active.values())
             actual = max(counts.get(str(gpu),0),own)
-            if actual>=args.target_per_gpu or len(active)>=args.max_host_jobs or (used/total>=0.6 and (actual>=3 or own)): continue
+            unmeasured = any(v[4]['gpu']==gpu and time.time()-v[4]['started_unix']<60 for v in active.values())
+            if actual>=args.target_per_gpu or len(active)>=args.max_host_jobs or (used/total>=0.6 and (actual>=3 or unmeasured)): continue
             for task in manifest['tasks']:
                 key = task['key']
                 if task['dataset'].get('requires_pyarrow') and not has_pyarrow: continue
                 if task['asset'].get('kind') == 'external' and not has_external: continue
                 if (state/'done'/f'{key}.json').exists() or (state/'claims'/key).exists(): continue
+                guard = getattr(args, 'admission_guard', None)
+                if guard is not None and not guard(gpu, actual, task): continue
                 if task['asset'].get('kind')=='external' and any(importlib.util.find_spec(module) is None
                         for module in optional_modules.get(task['asset']['model_id'],())):continue
                 dense=task['dataset']['task']=='segmentation'
@@ -493,8 +535,9 @@ def worker(args):
                               if v[4]['gpu']==gpu and time.time()-v[4]['started_unix']<30)
                 if total-used-pending<reserve: continue
                 claim = state/'claims'/key
-                with (state/'admission.lock').open('a') as admission:
+                with Path(getattr(args, 'shared_admission_lock', state/'admission.lock')).open('a') as admission:
                     fcntl.flock(admission,fcntl.LOCK_EX)
+                    if guard is not None and not guard(gpu, actual, task): continue
                     if len(list((state/'running').glob('*.json'))) >= args.max_global_jobs: break
                     try: claim.mkdir()
                     except FileExistsError: continue
@@ -518,6 +561,9 @@ def worker(args):
                     save(directory/'invocation_manifest.json',invocation)
                     log = (directory/'run.log').open('w')
                     log.write('COMMAND '+__import__('shlex').join(cmd)+'\n'); log.flush()
+                    invocation['source_snapshot_sha256'] = manifest.get('source_snapshot', {}).get('sha256')
+                    invocation['numerical_environment'] = expected_environment
+                    save(directory/'invocation_manifest.json',invocation)
                     process = subprocess.Popen(cmd,env=env,cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
                     active[key] = (process,log,task,claim,invocation)
                     print('START',args.host,gpu,process.pid,key,flush=True)
@@ -527,7 +573,9 @@ def worker(args):
                     (state/'running'/f'{key}.json').unlink(missing_ok=True)
                 break
             if launched: break
-        if not active and all((state/'done'/f"{t['key']}.json").exists() for t in manifest['tasks']): break
+        if not manifest.get('online_checkpoints') and not active and all(
+                (state/'done'/f"{t['key']}.json").exists() or (state/'failed_resource'/f"{t['key']}.json").exists()
+                for t in manifest['tasks']): break
         time.sleep(3)
     if stopping:
         for process,log,*_ in active.values():

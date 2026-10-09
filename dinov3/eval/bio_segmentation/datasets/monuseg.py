@@ -254,6 +254,14 @@ def get_monuseg_paths(
     """
     import glob as _glob
 
+    if os.environ.get('DINOV3_MONUSEG_LEGACY', '0') != '1':
+        import json
+        from pathlib import Path
+        from .monuseg_official import official_paths
+        registry = Path(__file__).resolve().parents[4] / 'Evaluation Rules' / 'protocol_v3.json'
+        lock = json.loads(registry.read_text()).get('dense_splits', {}).get('monuseg', {})
+        return official_paths(data_root, split, lock.get('manifest_sha256', ''))
+
     # val uses a subset of train data
     need_train = split in ('train', 'val')
     raw_split  = 'train' if need_train else 'test'

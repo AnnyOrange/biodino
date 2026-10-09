@@ -1,0 +1,19 @@
+{
+  "name": "hxw-route2-r0r9-ck7319",
+  "snapshot": "/home/xzj/monuseg_t30v7_remote_20260930/snapshot",
+  "benchmark": "/home/xzj/monuseg_t30v7_remote_20260930/benchmark",
+  "output": "/home/xzj/monuseg_t30v7_remote_20260930/route2_r0r9_ck7319_v4_monu37",
+  "gpus": [4],
+  "reference": "/home/xzj/monuseg_t30v7_remote_20260930/reference_membership.json",
+  "assets": [
+    {
+      "arm": "route2_r0r9",
+      "checkpoint_id": "7319",
+      "path": "/home/xzj/route2_20tb_20261006/output/ckpt/7319/checkpoint.pth",
+      "config": "/home/xzj/route2_20tb_20261006/output/config.yaml",
+      "kind": "dinov3",
+      "model_id": "",
+      "reserve_mib": 4096
+    }
+  ]
+}

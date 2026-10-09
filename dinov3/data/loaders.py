@@ -3,6 +3,7 @@
 # This software may be used and distributed in accordance with
 # the terms of the DINOv3 License Agreement.
 
+import gc
 import logging
 import random
 from enum import Enum
@@ -17,6 +18,12 @@ from .samplers import EpochSampler, InfiniteSampler, ShardedInfiniteSampler
 from .wds_pipeline import is_webdataset
 
 logger = logging.getLogger("dinov3")
+
+
+def _enable_data_worker_gc(worker_id: int) -> None:
+    # Forked workers inherit the trainer's disabled cyclic garbage collector.
+    # Their streaming decoders need collection independently of the trainer.
+    gc.enable()
 
 
 class DeterministicDataStream:
@@ -161,6 +168,7 @@ def make_dataset(
     wds_shuffle_buffer: int = 1000,
     wds_resample_seed: int = 0,
     wds_deterministic_resampling: bool = False,
+    wds_finite_skip_samples: int = 0,
 ):
     """
     Creates a dataset with the specified parameters.
@@ -209,6 +217,14 @@ def make_dataset(
     """
     logger.info(f'using dataset: "{dataset_str}"')
 
+    if dataset_str.startswith("sourcebalancedmix:"):
+        from .source_balanced import make_source_balanced_mix
+
+        return make_source_balanced_mix(
+            dataset_str[len("sourcebalancedmix:") :], transform, target_channels,
+            wds_shuffle_buffer, wds_resample_seed, wds_deterministic_resampling,
+        )
+
     if dataset_str.startswith("mixwds_robust:"):
         return _make_weighted_packed_robust_webdataset(
             dataset_str[len("mixwds_robust:") :],
@@ -237,6 +253,29 @@ def make_dataset(
             shuffle_buffer=wds_shuffle_buffer,
             resample_seed=wds_resample_seed,
             deterministic_resampling=wds_deterministic_resampling,
+        )
+
+    if dataset_str.startswith("packwds_once_robust:"):
+        return _make_packed_robust_webdataset(
+            dataset_str[len("packwds_once_robust:") :],
+            transform,
+            target_channels=target_channels,
+            shuffle_buffer=wds_shuffle_buffer,
+            resample_seed=wds_resample_seed,
+            deterministic_resampling=True,
+            finite_once=True,
+            finite_skip_samples=wds_finite_skip_samples,
+        )
+
+    if dataset_str.startswith("raw100tb_once_robust:"):
+        from .raw_100tb_stream import Raw100TBStream
+
+        return Raw100TBStream(
+            dataset_str[len("raw100tb_once_robust:"):], transform,
+            target_channels=target_channels or 3,
+            seed=wds_resample_seed,
+            shuffle_buffer=wds_shuffle_buffer,
+            skip_samples=wds_finite_skip_samples,
         )
 
     if dataset_str.startswith("packwds_robust:"):
@@ -691,6 +730,8 @@ def _make_packed_robust_webdataset(
     shuffle_buffer: int = 1000,
     resample_seed: int = 0,
     deterministic_resampling: bool = False,
+    finite_once: bool = False,
+    finite_skip_samples: int = 0,
 ):
     """Create a pipeline for packed shards with robust per-channel normalization
     (``packwds_robust:`` prefix).
@@ -738,6 +779,8 @@ def _make_packed_robust_webdataset(
         target_channels=effective_channels,
         resample_seed=resample_seed,
         deterministic_resampling=deterministic_resampling,
+        finite_once=finite_once,
+        skip_samples=finite_skip_samples,
     )
     pipeline = build_packed_robust_wds_pipeline(
         config, transform=transform, p_low=p_low, p_high=p_high
@@ -991,6 +1034,9 @@ def _make_webdataset_loader(
     """
     logger.info("using WebDataset (IterableDataset) data loader")
     logger.info("sampler: none (WebDataset handles shuffling internally)")
+
+    if worker_init_fn is None:
+        worker_init_fn = _enable_data_worker_gc
 
     loader_kwargs = dict(
         sampler=None,  # WebDataset 不使用 Sampler

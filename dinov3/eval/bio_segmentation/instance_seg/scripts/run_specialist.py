@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import os
@@ -29,6 +30,7 @@ from tqdm import tqdm
 
 from dinov3.eval.bio_segmentation.feature_extractor import _build_dataset
 from dinov3.eval.bio_segmentation.metrics import accumulate_instance_metrics
+from dinov3.eval.bio_segmentation.metrics.instance import compute_object_ap
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("bio_seg.instance_seg.specialist")
@@ -83,6 +85,7 @@ def run(args):
 
     preds: List[np.ndarray] = []
     gts: List[np.ndarray] = []
+    per_image = []
     n = len(ds) if args.max_images is None else min(args.max_images, len(ds))
     for i in tqdm(range(n), desc=f"{args.model}:{args.dataset}"):
         sample = ds[i]
@@ -90,11 +93,24 @@ def run(args):
         img_uint8 = (img.permute(1, 2, 0).numpy().clip(0, 1) * 255).astype(np.uint8)
         pred = _eval_one(kind, model, img_uint8, args.diameter, channels, omni=args.omni)
         preds.append(pred)
-        gts.append(inst.numpy().astype(np.int32))
+        gt = inst.numpy().astype(np.int32)
+        gts.append(gt)
+        ap50 = float(compute_object_ap(pred, gt)["CellposeStyleAP50"])
+        per_image.append({
+            "dataset": args.dataset,
+            "split": args.split,
+            "image_index": i,
+            "Cellpose_AP@0.5": ap50,
+            "error_rate": 1.0 - ap50,
+        })
 
     metrics = accumulate_instance_metrics(preds, gts)  # binary: AJI/AP/bPQ
+    metrics["Cellpose_AP@0.5"] = float(metrics["CellposeStyleAP50"])
+    metrics["error_rate"] = 1.0 - metrics["Cellpose_AP@0.5"]
     results = {
         args.split: metrics,
+        "error_rate_definition": "1 - Cellpose_AP@0.5",
+        "per_image": per_image,
         "_meta": {
             "specialist": args.model,
             "dataset": args.dataset,
@@ -107,8 +123,16 @@ def run(args):
     out_json = os.path.join(args.output_dir, "results.json")
     with open(out_json, "w") as f:
         json.dump(results, f, indent=2)
+    out_csv = os.path.join(args.output_dir, "per_image_ap50_error_rate.csv")
+    with open(out_csv, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(per_image[0]) if per_image else [
+            "dataset", "split", "image_index", "Cellpose_AP@0.5", "error_rate",
+        ])
+        writer.writeheader()
+        writer.writerows(per_image)
     logger.info("[%s/%s] %s", args.model, args.dataset, {k: round(v, 4) for k, v in metrics.items()})
     logger.info("Results saved → %s", out_json)
+    logger.info("Per-image AP@0.5/error rate saved → %s", out_csv)
     return results
 
 

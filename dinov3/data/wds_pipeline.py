@@ -14,7 +14,11 @@ construction time.
 """
 
 import logging
+import json
+import os
 import random
+import itertools
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional, Union
 
@@ -41,6 +45,8 @@ class WdsConfig:
     target_channels: Optional[int] = None
     resample_seed: int = 0
     deterministic_resampling: bool = False
+    finite_once: bool = False
+    skip_samples: int = 0
 
 
 class WeightedIterableDataset(torch.utils.data.IterableDataset):
@@ -121,6 +127,35 @@ def _make_shard_source(wds, config: WdsConfig):
     We prefer ResampledShards so the stream never exhausts after one pass
     through the finite shard list.
     """
+    if config.finite_once:
+        if not hasattr(wds, "SimpleShardList"):
+            raise RuntimeError("webdataset.SimpleShardList is required for finite one-pass training")
+        rank, world_size = 0, 1
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            rank = torch.distributed.get_rank()
+            world_size = torch.distributed.get_world_size()
+        shards = list(config.shard_urls)
+        assignment_path = os.environ.get("DQ_FINITE_SHARD_ASSIGNMENT")
+        if assignment_path:
+            assignment = json.loads(Path(assignment_path).read_text())
+            groups = assignment["rank_shards"]
+            if assignment.get("status") != "PASS" or len(groups) != world_size or \
+                    sorted(path for group in groups for path in group) != sorted(shards):
+                raise ValueError("Finite WDS shard assignment does not match the source inventory")
+            assigned = list(groups[rank])
+            if assignment["rank_sample_counts"][rank] < assignment["target_per_rank"]:
+                raise ValueError(f"Rank {rank} has too few assigned images")
+            random.Random(config.resample_seed).shuffle(assigned)
+        else:
+            random.Random(config.resample_seed).shuffle(shards)
+            assigned = shards[rank::world_size]
+        if not assigned:
+            raise ValueError(f"No finite WDS shards assigned to rank {rank}/{world_size}")
+        logger.info(
+            "Finite one-pass WDS: rank=%d/%d assigned=%d/%d shards seed=%d",
+            rank, world_size, len(assigned), len(shards), config.resample_seed,
+        )
+        return wds.SimpleShardList(assigned)
     if hasattr(wds, "ResampledShards"):
         return wds.ResampledShards(
             config.shard_urls,
@@ -246,9 +281,12 @@ def build_packed_robust_wds_pipeline(
         _make_shard_source(wds, config),
         wds.tarfile_to_samples(),
         _make_sample_shuffle(wds, config),
-        wds.map(decode_sample),
-        wds.select(lambda x: x is not None),
     ]
+    stages.extend([wds.map(decode_sample), wds.select(lambda x: x is not None)])
+    if config.finite_once and config.skip_samples:
+        if config.skip_samples < 0:
+            raise ValueError("Finite WDS skip_samples must be nonnegative")
+        stages.append(lambda samples: itertools.islice(samples, config.skip_samples, None))
 
     if transform is not None:
         def apply_transform(sample: dict) -> tuple:

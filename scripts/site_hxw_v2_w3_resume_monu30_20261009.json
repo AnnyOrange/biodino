@@ -1,0 +1,19 @@
+{
+  "name": "hxw-v2-w3-resume-20261009",
+  "snapshot": "/data/v2_monu30_resume_20261009/snapshot",
+  "benchmark": "/data/benchmark",
+  "output": "/data/v2_monu30_resume_20261009",
+  "gpus": [0, 1, 2, 3],
+  "reference": "/data/v2_monu30_resume_20261009/reference_membership.json",
+  "assets": [
+    {
+      "arm": "v2_global_cls_w3",
+      "checkpoint_id": "35623",
+      "path": "/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3/eval/training_35623/teacher_checkpoint.pth",
+      "config": "/data/hs6_l_5tb_nogram_eval_20260921/source/config.yaml",
+      "kind": "dinov3",
+      "model_id": "",
+      "reserve_mib": 4096
+    }
+  ]
+}
