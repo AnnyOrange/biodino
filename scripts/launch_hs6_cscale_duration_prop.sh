@@ -169,6 +169,21 @@ cmd=(
   checkpointing.sharded=false
 )
 
+# Optional full-replica DDP override; keep existing FSDP behavior by default.
+if [[ -n "${HS6_DISTRIBUTED_MODE:-}" ]]; then
+  case "$HS6_DISTRIBUTED_MODE" in
+    ddp|fsdp) cmd+=("compute_precision.distributed_mode=$HS6_DISTRIBUTED_MODE") ;;
+    *) echo "ERROR: invalid HS6_DISTRIBUTED_MODE=$HS6_DISTRIBUTED_MODE" >&2; exit 2 ;;
+  esac
+fi
+if [[ -n "${HS6_MAX_UPDATES:-}" ]]; then
+  [[ "$HS6_MAX_UPDATES" =~ ^[1-9][0-9]*$ ]] || {
+    echo "ERROR: HS6_MAX_UPDATES must be a positive integer" >&2
+    exit 2
+  }
+  cmd+=("train.max_updates=$HS6_MAX_UPDATES")
+fi
+
 log "init=$WEIGHTS"
 log "dataset=$DATASET_PATH"
 log "output=$OUTPUT_DIR"

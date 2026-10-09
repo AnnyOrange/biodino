@@ -17,8 +17,8 @@ import numpy as np
 from ppt_friendly_svg import configure_matplotlib, sanitize_svg_file
 
 ROOT = Path(__file__).resolve().parents[1]
-K10_DATA = ROOT / "plot/fig2/data/bloodmnist_cscale_k10_prop15_20260908.csv"
-FULL_DATA = ROOT / "plot/fig2/data/bloodmnist_cscale_full_linear_20260908.csv"
+K10_DATA = ROOT / "plot/fig2/data/bloodmnist_cscale_k10_prop15_20260915.csv"
+FULL_DATA = ROOT / "plot/fig2/data/bloodmnist_cscale_full_linear_20260915.csv"
 DSCALE_RAW = (
     ROOT / "outputs/auto_eval_logs/hs6_kshot_feat_20260901/kshot.csv",
     ROOT / "plot/fig2/kshot/kshot_merged.csv",
@@ -65,10 +65,7 @@ def load_k10_points() -> list[dict]:
         )
     if len(points) != 16:
         raise ValueError(f"Expected 16 endpoint means, got {len(points)}")
-    # The available H+ e15 result is a late, strongly degraded point from the
-    # older e15 run.  Keep it in the source table for provenance, but omit it
-    # from this focused figure while the matched prop15 e8 audit is pending.
-    return [p for p in points if not (p["model"] == "H+" and p["endpoint"] == "e15")]
+    return points
 
 
 def load_full_points() -> list[dict]:
@@ -86,7 +83,7 @@ def load_full_points() -> list[dict]:
             )
     if len(points) != 16:
         raise ValueError(f"Expected 16 full-linear endpoints, got {len(points)}")
-    return [p for p in points if not (p["model"] == "H+" and p["endpoint"] == "e15")]
+    return points
 
 
 def load_dscale_points() -> list[dict]:
@@ -318,7 +315,7 @@ def draw(full_points: list[dict], k10_points: list[dict], dscale_points: list[di
     fig.text(
         0.045,
         0.855,
-        f"1M unique-D; e1→e2→e4→e15; H+ e15 omitted; frozen full linear + 3-seed 10-shot; {scale_note}.",
+        f"1M unique-D; e1→e2→e4→e8; tuned L e4 and H+ e8; frozen full linear + 3-seed 10-shot; {scale_note}.",
         fontsize=7.4,
         color="#5B656C",
         ha="left",

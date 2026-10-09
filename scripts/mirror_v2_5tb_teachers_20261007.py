@@ -13,6 +13,8 @@ def main():
  p=argparse.ArgumentParser();p.add_argument('--execute-approved-plan',action='store_true');a=p.parse_args()
  plan=json.loads(PLAN.read_text())
  if not a.execute_approved_plan:print(json.dumps({k:v for k,v in plan.items() if k!='rows'},indent=2));return
+ if plan.get('status')=='CANCELLED_BY_USER_DO_NOT_TRANSFER':
+  raise SystemExit('Transfer cancelled by user on 2026-10-08: evaluate teachers on their resident hosts.')
  dest=ROOT/'outputs/02_eval_inputs/v2_5tb_teachers_20261007';dest.mkdir(parents=True,exist_ok=True)
  log=dest/'transfer_journal.jsonl'
  for row in plan['rows']:

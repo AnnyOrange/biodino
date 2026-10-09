@@ -19,6 +19,14 @@
 
 ## 2. 启动前硬性 preflight
 
+2026-09-18 approved independent-component execution: a READY cell may run
+while unrelated full-suite entries are explicitly BLOCKED/NOT TESTED, provided
+the complete expected inventory is recorded and full_v3_aggregate_allowed=false.
+Source-copy SHA256 admission may replace clean-Git admission under the explicit
+Rule03 execution exception. No missing provenance, bad split or pending
+implementation is waived for the cell itself. Full-suite completion/aggregation
+continues to require EVERY formal entry, including RxRx3 and native CTC.
+
 任何一项失败，launcher 必须退出非零：
 
 1. Git commit 不匹配或 evaluator 工作树包含未登记修改；

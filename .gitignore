@@ -13,6 +13,7 @@ outputs/
 
 # Ignore shell scripts
 *.sh
+!scripts/watch_hs6_l_6m_online_full_eval.sh
 
 # Ignore swap files
 *.swp
@@ -43,6 +44,11 @@ dinov3/data/repackage/pipeline.md
 logs
 nan_logs/
 outputs
+!/outputs/
+/outputs/*
+!/outputs/00_reports/
+/outputs/00_reports/*
+!/outputs/00_reports/splus_hparam_summary.csv
 plot
 pymp-*/
 shared_envs/

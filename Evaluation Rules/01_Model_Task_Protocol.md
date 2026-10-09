@@ -48,7 +48,7 @@
 | multilabel | **64** | dataset-best | 同上 | `StandardScaler + OneVsRest balanced LogisticRegression` | macro AUC；同时保留 micro AUC/F1/AP |
 | regression | **64** | best/fallback；count 全图不 crop | 同上 | `StandardScaler + Ridge(alpha=1.0)`；BBBC013 例外见数据规则 | R2；同时保留 MAE/Spearman |
 | retrieval/clustering | **64** | resize 256 + center crop 224 | 同上，L2 normalized | cosine retrieval；MiniBatchKMeans + Hungarian alignment，seed 0 | Recall@1 和 NMI |
-| segmentation | **32** | dataset-specific，见下表 | dataset-specific last1/even4 patch tokens | frozen encoder + linear probe，50 epochs，probe batch 32，eval every 50，seed 0 | test mDice；同时保留 mIoU/AJI/AP/bPQ |
+| segmentation | **32** | dataset-specific，见下表 | primary last1/native-final; secondary dataset-best | independent E20/E50; B32; validation every epoch; seeds0/1/2; best val-mIoU, earliest tie; test once | test mDice；同时保留 mIoU/AJI/AP/bPQ |
 | detection proxy | **8** | 224 stretch | final block patch map | frozen center-to-patch linear head，AdamW，5 epochs，seed 0 | v3 无正式 detection aggregate；BBBC038 仅 observation，保存 test patch F1 |
 | OOD | **64** | resize 256 + crop 224 | final CLS + patch mean | fixed ID/OOD protocol，seed 0 | AUROC（与 ID 均值分开） |
 | cell tracking | **8** | CTC native 2-D/3-D geometry | final patch map / dense features | frozen encoder + fixed instance head + deterministic linker；sequence/domain-heldout，seed 0 | TRA、SEG；同时保存 detection AP、instance mDice |
@@ -101,6 +101,11 @@ RxRx3-core 是 retrieval/clustering 的固定多通道例外：所有模型先�
 - 聚合时每个模型包含完全相同的数据集集合；缺项不能静默跳过。
 
 ## 8. External FM dense addendum
+
+2026-09-18 resolved amendment: the approved2026-09-15 probe-budget plan
+supersedes every legacy50-epoch/eval-every50 statement below. New runs use
+E20 AND E50 independent cosine horizons, every-epoch validation, seeds0/1/2,
+primary native-final/last1. All models have the same selection opportunity.
 
 v3 正式 external-FM segmentation comparison 必须覆盖 Tier A 的 6 个数据集。其中特殊 dense 规则为：PanNuke 使用相同的三折协议；CoNIC 使用 `official-baseline-fold0-nested-v1` source-grouped split 和 `sqrt_inverse` class weight；两者均为 256 stretch。LIVECell 必须使用固定 hash 的 official COCO train/val/test。所有数据集均使用 feature batch 32、probe batch 32、50 epochs、eval every 50、seed 0。固定位置网格的 ViT 在 256 输入上显式插值 spatial positional embedding，禁止悄悄退回 model-native 224 crop。
 

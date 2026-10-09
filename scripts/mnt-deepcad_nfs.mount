@@ -1,0 +1,14 @@
+[Unit]
+Description=Existing 20TB corpus shared storage for approved resume
+Wants=network-online.target
+After=network-online.target
+
+[Mount]
+What=172.16.0.64:/deepcad
+Where=/mnt/deepcad_nfs
+Type=nfs
+Options=vers=3,rw,hard,nolock,proto=tcp,rsize=1048576,wsize=1048576,_netdev
+TimeoutSec=300
+
+[Install]
+WantedBy=multi-user.target

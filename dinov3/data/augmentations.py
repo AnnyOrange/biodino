@@ -105,6 +105,7 @@ class BioSafeIntensityJitter(nn.Module):
         gamma: tuple[float, float] = (0.85, 1.20),
         offset: float = 0.03,
         p: float = 0.8,
+        preserve_zero_channels: bool = False,
     ):
         super().__init__()
         self.brightness = brightness
@@ -112,10 +113,12 @@ class BioSafeIntensityJitter(nn.Module):
         self.gamma = gamma
         self.offset = offset
         self.p = p
+        self.preserve_zero_channels = preserve_zero_channels
 
     def forward(self, img: Tensor) -> Tensor:
         if random.random() > self.p:
             return img
+        empty = ~(img != 0).flatten(-2).any(dim=-1) if self.preserve_zero_channels else None
         was_uint8 = not img.is_floating_point()
         if was_uint8:
             img = img.to(torch.float32) / 255.0
@@ -137,6 +140,8 @@ class BioSafeIntensityJitter(nn.Module):
             img = img.clamp(0.0, 1.0).pow(gammas)
 
         img = img.clamp(0.0, 1.0)
+        if empty is not None:
+            img = img.masked_fill(empty[:, None, None], 0)
         if was_uint8:
             img = (img * 255.0).to(torch.uint8)
         return img
@@ -145,20 +150,25 @@ class BioSafeIntensityJitter(nn.Module):
 class ChannelAgnosticGaussianNoise(nn.Module):
     """Add mild sensor-like noise without changing channel semantics."""
 
-    def __init__(self, sigma_min: float = 0.005, sigma_max: float = 0.025, p: float = 0.25):
+    def __init__(self, sigma_min: float = 0.005, sigma_max: float = 0.025, p: float = 0.25,
+                 preserve_zero_channels: bool = False):
         super().__init__()
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.p = p
+        self.preserve_zero_channels = preserve_zero_channels
 
     def forward(self, img: Tensor) -> Tensor:
         if random.random() > self.p:
             return img
+        empty = ~(img != 0).flatten(-2).any(dim=-1) if self.preserve_zero_channels else None
         was_uint8 = not img.is_floating_point()
         if was_uint8:
             img = img.to(torch.float32) / 255.0
         sigma = random.uniform(self.sigma_min, self.sigma_max)
         img = (img + torch.randn_like(img) * sigma).clamp(0.0, 1.0)
+        if empty is not None:
+            img = img.masked_fill(empty[:, None, None], 0)
         if was_uint8:
             img = (img * 255.0).to(torch.uint8)
         return img
@@ -228,6 +238,7 @@ class DataAugmentationDINO(object):
         float_input=False,
         augmentation_policy="dinov3",
         paired_global_geometry=False,
+        preserve_zero_channels=False,
     ):
         self.global_crops_scale = global_crops_scale
         self.local_crops_scale = local_crops_scale
@@ -247,6 +258,7 @@ class DataAugmentationDINO(object):
         # This is opt-in and primarily supports diagnostics that compare
         # representations under photometric, rather than spatial, perturbations.
         self.paired_global_geometry = bool(paired_global_geometry)
+        self.preserve_zero_channels = bool(preserve_zero_channels)
         self._logged_channel_stats_adapt = False
         self._active_channel_ids = None
 
@@ -328,8 +340,10 @@ class DataAugmentationDINO(object):
                         gamma=(0.85, 1.20),
                         offset=0.03,
                         p=0.8,
+                        preserve_zero_channels=self.preserve_zero_channels,
                     ),
-                    ChannelAgnosticGaussianNoise(sigma_min=0.005, sigma_max=0.025, p=0.25),
+                    ChannelAgnosticGaussianNoise(sigma_min=0.005, sigma_max=0.025, p=0.25,
+                                                 preserve_zero_channels=self.preserve_zero_channels),
                     ChannelDropout(drop_prob=0.15, p=0.10),
                 ]
             )

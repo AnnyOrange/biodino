@@ -31,13 +31,18 @@ def native(value):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--ndim", type=int, choices=(2, 3), default=2)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="ctc-native-smoke-") as temp:
         root = Path(temp); gt = root / "01_GT"; res = root / "01_RES"
         (gt / "TRA").mkdir(parents=True); (gt / "SEG").mkdir(); res.mkdir()
         for frame, shift in enumerate((0, 1)):
-            mask = np.zeros((32, 32), dtype=np.uint16)
-            mask[8 + shift:16 + shift, 10:18] = 1
+            shape = (4, 32, 32) if args.ndim == 3 else (32, 32)
+            mask = np.zeros(shape, dtype=np.uint16)
+            if args.ndim == 3:
+                mask[1:3, 8 + shift:16 + shift, 10:18] = 1
+            else:
+                mask[8 + shift:16 + shift, 10:18] = 1
             tifffile.imwrite(gt / "TRA" / f"man_track{frame:03d}.tif", mask)
             tifffile.imwrite(gt / "SEG" / f"man_seg{frame:03d}.tif", mask)
             tifffile.imwrite(res / f"mask{frame:03d}.tif", mask)
@@ -46,7 +51,7 @@ def main() -> None:
         metrics = native(evaluate_sequence(str(res), str(gt), metrics=["Valid", "DET", "SEG", "TRA"], threads=1))
     passed = metrics.get("Valid") == 1 and all(abs(float(metrics[key]) - 1.0) < 1e-12 for key in ("DET", "SEG", "TRA"))
     report = {"status": "PASS" if passed else "FAIL", "evaluator_commit": COMMIT,
-              "test": "two-frame oracle CTC-format sequence", "metrics": metrics}
+              "test": f"two-frame {args.ndim}-D oracle CTC-format sequence", "metrics": metrics}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(json.dumps(report, indent=2, sort_keys=True))

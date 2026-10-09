@@ -16,7 +16,13 @@
   },
   "probe": {
     "segmentation_epochs": 50,
-    "segmentation_eval_every": 50,
+    "segmentation_eval_every": 1,
+    "segmentation_budgets": [20, 50],
+    "segmentation_seeds": [0, 1, 2],
+    "segmentation_primary_readout": "last1/native-final-dense-map",
+    "segmentation_secondary_readout": "dataset-best; unsupported even4 explicitly falls back to last",
+    "segmentation_selection": "best validation mIoU; earliest epoch on ties; test exactly once",
+    "segmentation_budget_amendment": "plans/hs0_hs6_fm_segmentation_probe_budget_fairness_20260915.md",
     "detection_epochs": 5,
     "seed": 0
   },
@@ -89,6 +95,12 @@
     }
   },
   "dense_splits": {
+    "monuseg": {
+      "protocol": "monuseg2018-official30-seed42-val6-test14-v1",
+      "manifest_sha256": "3b74788565a6fe729fe1835c6c6542d2eedbca8c20f10e45e8b3353dc3ff032f",
+      "formal_status": "READY_IDENTITY_LOCKED_20260923",
+      "counts": {"train": 24, "val": 6, "test": 14}
+    },
     "conic": "official-baseline-fold0-nested-v1",
     "livecell": {
       "protocol": "official-coco-train-val-test",

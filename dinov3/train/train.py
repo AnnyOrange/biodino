@@ -574,13 +574,18 @@ def build_data_loader_from_cfg(
     batch_size = dataloader_batch_size_per_gpu
     num_workers = cfg.train.num_workers
     dataset_path = cfg.train.dataset_path
+    finite_once = str(dataset_path).startswith(("packwds_once_robust:", "raw100tb_once_robust:"))
+    stream_start_iter = 0 if finite_once else start_iter
     dataset = make_dataset(
         dataset_str=dataset_path,
         transform=model.build_data_augmentation_dino(cfg),
         target_transform=lambda _: (),
         target_channels=cfg.student.in_chans,
         wds_shuffle_buffer=getattr(cfg.train, "wds_shuffle_buffer", 1000),
-        wds_resample_seed=cfg.train.seed + start_iter + 1,
+        wds_resample_seed=cfg.train.seed + stream_start_iter + 1,
+        wds_finite_skip_samples=(
+            start_iter * accum_steps * dataloader_batch_size_per_gpu if finite_once else 0
+        ),
         wds_deterministic_resampling=bool(
             getattr(cfg.train, "wds_deterministic_resampling", False)
         ),
@@ -605,9 +610,11 @@ def build_data_loader_from_cfg(
         batch_size=batch_size,
         num_workers=num_workers,
         shuffle=True,
-        seed=cfg.train.seed + start_iter + 1,
+        seed=cfg.train.seed + stream_start_iter + 1,
         sampler_type=sampler_type,
-        sampler_advance=start_iter * accum_steps * dataloader_batch_size_per_gpu,
+        sampler_advance=(
+            0 if finite_once else start_iter * accum_steps * dataloader_batch_size_per_gpu
+        ),
         drop_last=True,
         pin_memory=getattr(cfg.train, "pin_memory", True),
         prefetch_factor=getattr(cfg.train, "prefetch_factor", None),
@@ -812,17 +819,29 @@ def do_train(cfg, model, resume=False):
     optimizer.zero_grad(set_to_none=True)
     accum_loss_for_log = None
     accum_metrics = None
-    finite_once = str(cfg.train.dataset_path).startswith("packwds_once_robust:")
+    finite_once = str(cfg.train.dataset_path).startswith(("packwds_once_robust:", "raw100tb_once_robust:"))
     consumed_keys = set() if finite_once else None
     audit_file = None
     if finite_once:
         if cfg.train.num_workers != 1:
             raise ValueError("Finite one-pass WDS requires exactly one data worker per rank")
         rank = distributed.get_rank()
-        audit_file = open(
-            os.path.join(cfg.train.output_dir, f"consumed_sample_keys_rank{rank:02d}.jsonl"),
-            "w", encoding="utf-8",
-        )
+        audit_path = Path(cfg.train.output_dir, f"consumed_sample_keys_rank{rank:02d}.jsonl")
+        if start_iter:
+            expected_batches = start_iter * accum_steps
+            temp_path = audit_path.with_suffix(".resume_tmp")
+            with audit_path.open("r", encoding="utf-8") as source, temp_path.open("w", encoding="utf-8") as dest:
+                for batch_index in range(expected_batches):
+                    line = source.readline()
+                    if not line:
+                        raise ValueError(f"Rank {rank} audit ends before checkpoint at batch {batch_index}")
+                    keys = json.loads(line)
+                    if len(keys) != cfg.train.batch_size_per_gpu or any(key in consumed_keys for key in keys):
+                        raise ValueError(f"Rank {rank} audit has repeated or malformed keys at batch {batch_index}")
+                    consumed_keys.update(keys)
+                    dest.write(line)
+            os.replace(temp_path, audit_path)
+        audit_file = audit_path.open("a" if start_iter else "w", encoding="utf-8")
 
     for data in metric_logger.log_every(
         data_loader,
@@ -1008,6 +1027,9 @@ def do_train(cfg, model, resume=False):
             torch.cuda.synchronize()
 
         if (iteration + 1) % cfg.checkpointing.period == 0:
+            if audit_file is not None:
+                audit_file.flush()
+                os.fsync(audit_file.fileno())
             torch.cuda.synchronize()
             save_checkpoint(
                 ckpt_dir / str(iteration),

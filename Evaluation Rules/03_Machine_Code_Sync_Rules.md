@@ -35,6 +35,15 @@
 
 ## 4. GitHub 与代码同步
 
+2026-09-18 user-authorized execution exception: the local development source
+may be copied directly into independent immutable evaluation snapshots. Record
+base Git SHA, local dirty inventory and SHA256 of ALL snapshot source/Rules
+files; verify the exact fingerprint on every host BEFORE testing. Full Rules
+(including README/plans), numerical environment and teacher/split validation
+are still required. Old results are not grandfathered by the new copy. Original
+training directories/environments remain unchanged. For this campaign the user
+authorizes all eight cards of hxw/lyx/H100, subject to memory/other-job safety.
+
 GitHub `origin` 是代码真源；正式 campaign 只认一个固定 commit SHA。
 
 1. 评测规则或 evaluator 修改完成后，在本机检查 diff、跑 smoke/static validator、commit 并 push。

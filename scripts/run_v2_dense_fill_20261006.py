@@ -29,11 +29,17 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def points(arm):
+    root = E / arm / 'adapters'
+    return {int(path.name) for path in root.iterdir() if path.name.isdigit()
+            and (path / 'checkpoint.pth').is_file()} if root.is_dir() else set()
+
+
 def main():
     if '--campaign' in sys.argv:
         module = load(SEG, 'resident_segment')
         for arm in ARMS:
-            module.CAMPAIGNS['v2_' + arm] = (E / arm, {29767 + 488 * i for i in range(12)})
+            module.CAMPAIGNS['v2_' + arm] = (E / arm, points(arm))
         module.main()
         return
     p = argparse.ArgumentParser(description=__doc__)
@@ -74,6 +80,7 @@ def main():
         return 18000 if task[3] == 'monuseg' else 8500
     active, attempts, cooldown = {}, {}, {}
     while True:
+        base.POINTS = sorted(set(base.POINTS) | points('global_cls'), reverse=True)
         processes = base.subprocess.check_output(['ps', '-eo', 'args'], text=True)
         for key, job in list(active.items()):
             rc = job['child'].poll()

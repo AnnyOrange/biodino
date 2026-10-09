@@ -101,7 +101,7 @@ CTC 以原生 `cell_tracking` 任务正式纳入 Tier B，覆盖本地 20 个官
 |---|---|---|
 | LIVECell | official COCO train / val / test | **Tier A 正式纳入**；必须原样使用官方 split 与固定 annotation hash，不自行重切 |
 | TissueNet | official train / val / test NPZ | 合法 |
-| MoNuSeg | official train 中固定 seed42 的 20% 做 val；official test 做 test | 合法；`monuseg_val_indices.npy` 必须固定 |
+| MoNuSeg | official2018 train30, seed42 train24/val6; official test14 | BLOCKED until official sample-ID/source manifest admission; old37-pool/7-val index is LEGACY ONLY |
 | Cellpose | public train pool 的确定性前 80%/后 20% 为 train/val；official test 为 test | 可用；必须固定排序与是否包含 `train_cyto2` |
 | BBBC038 | 有 mask 的 stage1_train 做 seed42 70/15/15；官方 test 无 GT 不使用 | **OBSERVATIONAL**；可观察但不进入 aggregate / 主排名，必须固定 `bbbc038_splits.npz` |
 | Multimodal_CellSeg | train/val CSV；`test_source_heldout.csv` 只含 held-out Tuning source | 合法 source-heldout；WSI/超大图过滤规则必须固定 |
@@ -114,7 +114,8 @@ CTC 以原生 `cell_tracking` 任务正式纳入 Tier B，覆盖本地 20 个官
 - CoNIC legacy random index（3984/498/499）仅用于识别旧结果。v2/v3 正式 grouped 协议标识为 `official-baseline-fold0-nested-v1`；本地得到 3469 train / 494 val / 1018 development holdout，index 与 source 均两两不相交。新 formal segmentation campaign 必须调度它并重跑。
 - LIVECell 官方 COCO JSON 固定为 3253/570/1564 条 image records，对应 3188/569/1512 个 unique filenames；官方文件本身含重复 image records，且 train/val 有 30 个同名文件。v2/v3 按用户决定原样采用官方 split，通过三个 annotation SHA256 锁定（当前见 `protocol_v3.json`），不得静默去重或另行随机切分；报告样本量时同时记录 records 与 unique filenames。
 - PanNuke 本地 fold 大小固定为 F1=2656、F2=2523、F3=2722；三个正式协议标识分别为 `pannuke-fold1-train-fold2-val-fold3-test`、`pannuke-fold2-train-fold1-val-fold3-test`、`pannuke-fold3-train-fold2-val-fold1-test`。
-- MoNuSeg val index SHA256：`932a09d0e936bd2ee83438145f6e6955dac224b747f2536ae06d31c764ff5c91`（7 个 val）。
+- MoNuSeg 37-pool val index SHA256：`932a09d0e936bd2ee83438145f6e6955dac224b747f2536ae06d31c764ff5c91`（7 个 val）。经典30图的身份锁已经准入 v3；37图是另一个需独立标记的 v4 跨模型比较口径，不可把两种分数混算。
+- 2026-09-29 v4 跨模型比较补充：用户选定上述 37 张池的固定 30 train / 7 val，配独立 test14；按 `09_Union_v4_Protocol.md` 第5节和新身份 manifest 报告。此补充只定义新的 v4 比较结果，不追改旧 v3/经典30张池的身份或结果。
 - Multimodal split：876 train、176 val、101 source-heldout test；test source 为 `Tuning`，与 train/val source 集合分开。三个 CSV 的 SHA256 必须由 campaign manifest 完整记录。
 
 ## 7. Split 正确性的启动前自动检查

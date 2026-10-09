@@ -1,5 +1,5 @@
 {
-  "status": "PREPARED_AWAITING_TRANSFER_AUTHORIZATION",
+  "status": "CANCELLED_BY_USER_DO_NOT_TRANSFER",
   "rows": [
     {
       "arm": "global_slow",
@@ -948,5 +948,7 @@
   ],
   "total_bytes": 165425364778,
   "target_free_bytes": 7369695166464,
-  "purpose": "Run missing 5TB RxRx3, native CTC and OOD on shared-data hosts; existing 5TB tests stay resident. No optimizer checkpoints copied."
+  "purpose": "Run missing 5TB RxRx3, native CTC and OOD on shared-data hosts; existing 5TB tests stay resident. No optimizer checkpoints copied.",
+  "cancelled_utc": "2026-10-08",
+  "instruction": "Keep all teacher weights on their original hosts; evaluate in place."
 }

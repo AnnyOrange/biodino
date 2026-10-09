@@ -106,5 +106,5 @@ export SEG_PROBE_NUM_WORKERS=2
 export OOD_NUM_WORKERS=2
 export DRY_RUN=0
 
-exec bash docs/scaling_law/bio_sweet_spot/scripts/25_watch_b_online_full_eval.sh \
+exec bash scripts/watch_hs6_l_6m_online_full_eval.sh \
   "$TRAIN_DIR" "$OUTPUT_DIR" hs6-L-6m-full

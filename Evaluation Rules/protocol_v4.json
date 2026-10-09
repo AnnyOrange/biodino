@@ -1,0 +1,190 @@
+{
+  "protocol_id": "bio-eval-union-v4",
+  "defined_utc": "2026-09-21",
+  "supersedes_for_new_union_campaigns": "bio-eval-formal-v3",
+  "source_protocols": ["historical-25-4-6-8-3", "bio-eval-formal-v3"],
+  "scope": "Non-segmentation task-dataset union; segmentation is v3-only. Deduplicate by task and dataset, retain the v3 recipe for shared cells.",
+  "model": {
+    "branch": "teacher",
+    "vit_large_layers": [4, 11, 17, 23],
+    "global_feature": "l2(final_cls concatenated with final_patch_mean)"
+  },
+  "batch_sizes": {
+    "frozen": 64,
+    "segmentation_feature": 32,
+    "segmentation_probe": 32,
+    "detection_proxy": 8,
+    "cell_tracking": 8
+  },
+  "probe": {
+    "seed": 0,
+    "segmentation_budgets": [20, 50],
+    "segmentation_seeds": [0, 1, 2],
+    "segmentation_eval_every": 1,
+    "segmentation_primary_readout": "last1/native-final-dense-map",
+    "segmentation_secondary_readout": "dataset-best; unsupported even4 explicitly falls back to last",
+    "segmentation_selection": "best validation mIoU; earliest epoch on ties; test exactly once",
+    "segmentation_budget_amendment": "plans/hs0_hs6_fm_segmentation_probe_budget_fairness_20260915.md",
+    "detection_proxy_epochs": 5,
+    "detection_proxy_recipe": "224 stretch; final patch map; BF16; B8; workers2; seed0; frozen center-to-patch linear head; AdamW lr1e-3/wd1e-4; five epochs; test patch F1"
+  },
+  "tier_a": {
+    "classification": [
+      "bloodmnist", "pathmnist", "tissuemnist", "breastmnist",
+      "organamnist", "organcmnist", "organsmnist", "dermamnist",
+      "octmnist", "pneumoniamnist", "retinamnist", "chestmnist",
+      "bbbc048-cellcycle", "cyclops-protein-loc", "midog25-atypical"
+    ],
+    "regression": ["bbbc005"],
+    "retrieval": ["nct-crc-he-1k", "crc-val-he-7k"],
+    "segmentation": ["cellpose", "conic", "livecell", "monuseg", "pannuke", "tissuenet"],
+    "detection": [],
+    "cell_tracking": []
+  },
+  "tier_b": {
+    "classification": [
+      "pcam", "nct-crc-he", "chammi-allen-task1", "chammi-allen-task2",
+      "chammi-cp-task1", "chammi-cp-task2", "chammi-cp-task3",
+      "chammi-hpa-task1", "chammi-hpa-task2"
+    ],
+    "regression": ["bbbc013"],
+    "retrieval": ["hpa-subcellular", "rxrx1-cross", "rxrx3-core"],
+    "segmentation": ["multimodal_cellseg"],
+    "detection": [],
+    "cell_tracking": ["ctc"],
+    "ood": ["xray", "cryo"]
+  },
+  "union_extension": {
+    "classification": ["lc25000"],
+    "regression": ["conic-cell-count", "livecell-cell-count"],
+    "retrieval": ["lc25000", "nct-crc-he-100"],
+    "clustering": ["lc25000", "nct-crc-he-100"],
+    "detection_proxy": ["bbbc038", "conic", "livecell"]
+  },
+  "retrieval_clustering_shared_datasets": "tier_a.retrieval + tier_b.retrieval + union_extension.retrieval; clustering uses the same 7 dataset identities",
+  "union_extension_splits": {
+    "classification/lc25000": "LOCKED_LEGACY_STRATIFIED_80_20_ONLY; full 25000-image directory is not a valid train/test pair; source/group-disjoint status remains unverified",
+    "regression/conic-cell-count": "CoNIC-10fold-v1 prepared source-image-grouped train/test",
+    "regression/livecell-cell-count": "official LIVECell COCO train/test",
+    "retrieval/lc25000": "within-set leave-one-out on the complete 25000-image five-class inventory; self-match excluded",
+    "retrieval/nct-crc-he-100": "fixed parquet within-set leave-one-out; self-match excluded; verify usable N and 9 classes",
+    "clustering/lc25000": "same complete fixed-image inventory as retrieval/lc25000",
+    "clustering/nct-crc-he-100": "same fixed parquet inventory as retrieval/nct-crc-he-100",
+    "detection_proxy/bbbc038": "fixed labelled BBBC038 split; no unlabelled official test GT",
+    "detection_proxy/conic": "source-image-grouped CoNIC split",
+    "detection_proxy/livecell": "official COCO LIVECell split"
+  },
+  "expected_unique_dataset_counts": {
+    "classification": 25,
+    "regression": 4,
+    "retrieval": 7,
+    "clustering": 7,
+    "segmentation": 7,
+    "detection_proxy": 3,
+    "cell_tracking": 1,
+    "ood": 2
+  },
+  "reporting": {
+    "separate_columns": ["v3-tier-a", "v3-tier-b", "v4-union-extension", "v4-detection-proxy", "v3-segmentation-observation"],
+    "v3_aggregates_unchanged": true,
+    "union_aggregate_requires_complete_matched_valid_cells": true,
+    "detection_proxy_is_not_native_detection": true,
+    "missing_or_blocked_cells_never_count_as_zero": true
+  },
+  "admission_gates": {
+    "classification/lc25000": "PROVISIONAL_LEGACY_ONLY: 2026-09-21 union companion froze a 20000/5000 stratified random manifest with SHA256, but source/group disjointness is not established; audit its suitability before claiming a fully validated v4 classification aggregate",
+    "retrieval/nct-crc-he-100": "LOW_N: audit usable count, class support, exact parquet hash and self-match exclusion; report low-N uncertainty separately",
+    "clustering/nct-crc-he-100": "LOW_N: same audited sample manifest as retrieval; report independently",
+    "detection_proxy/bbbc038": "Require matched B8 frozen center-to-patch protocol and fixed labelled split; never call this native object detection",
+    "detection_proxy/conic": "Require matched B8 frozen center-to-patch protocol and source-disjoint dataset split",
+    "detection_proxy/livecell": "Require matched B8 frozen center-to-patch protocol and official COCO source split",
+    "segmentation/monuseg": "READY_IDENTITY_LOCKED_20260923: exact official Drive blobs validated; classic train30 subset split seed42 into train24/val6; official test14 untouched",
+    "cell_tracking/ctc": "APPROVED_PENDING_FIXED_HEAD_AND_LINKER; never replace with count proxy"
+  },
+  "retrieval_splits": {
+    "rxrx3-core": {
+      "protocol": "crispr-query-guide-plate-disjoint-all-eligible-genes-v1",
+      "input_mapping": "compact3_pairmean_after_per_channel_p01_p99",
+      "query_gallery": "one deterministic query and gallery well per eligible gene; plates disjoint within gene",
+      "exclude": ["same-well pairs", "same-plate pairs within gene", "genes observed on fewer than two plates"],
+      "manifest_sha256": "94d570cb66d71de20e9ded203d8727623fe85a807d8b5b9cdbe0de3fce1318f5",
+      "formal_status": "READY_FIXED_MANIFEST"
+    }
+  },
+  "cell_tracking_splits": {
+    "ctc": {
+      "protocol": "ctc-labelled-training-sequence-domain-heldout-v1",
+      "scope": "all 20 official labelled training datasets, including 2-D and 3-D",
+      "split": "fixed sequence-and-domain held-out folds generated only from labelled training data",
+      "manifest_sha256": "7a0f5bc2579f6ae22a2b8f2b16103530cd678466a4b2bbd1f617692b8e3cac27",
+      "metrics": ["TRA", "SEG", "detection_AP", "instance_mDice"],
+      "primary_metrics": ["TRA", "SEG"],
+      "evaluator": "official py-ctcmetrics commit 59481c48a62d4376fe34bed3e3606b4ec4d60972; fixed prediction contract in Evaluation Rules/06_CTC_Native_Protocol.md",
+      "formal_status": "APPROVED_PENDING_FIXED_HEAD_AND_LINKER"
+    }
+  },
+  "dense_splits": {
+    "monuseg": {
+      "protocol": "monuseg2018-official30-seed42-val6-test14-v1",
+      "manifest_sha256": "3b74788565a6fe729fe1835c6c6542d2eedbca8c20f10e45e8b3353dc3ff032f",
+      "formal_status": "READY_IDENTITY_LOCKED_20260923",
+      "counts": {"train": 24, "val": 6, "test": 14}
+    },
+    "conic": "official-baseline-fold0-nested-v1",
+    "livecell": {
+      "protocol": "official-coco-train-val-test",
+      "image_records": {"train": 3253, "val": 570, "test": 1564},
+      "unique_image_files": {"train": 3188, "val": 569, "test": 1512},
+      "train_val_shared_filenames": 30,
+      "annotation_sha256": {
+        "train": "6788902479bc0ffd2838fb7160a778078f464ea6034ed76bb5a0e40263cb9e78",
+        "val": "eb72a68f5065d9ade1805b496eecdcd14ca275e5f1bc6aae7e07279bddadfdc7",
+        "test": "9eb5805ca031cebcd70bab4a4aa0c89d98646c206d333803a8d5b10ea7fe9960"
+      }
+    },
+    "pannuke": [
+      "pannuke-fold1-train-fold2-val-fold3-test",
+      "pannuke-fold2-train-fold1-val-fold3-test",
+      "pannuke-fold3-train-fold2-val-fold1-test"
+    ]
+  },
+  "comparison_amendment_20260929": {
+    "monuseg": {
+      "protocol": "monuseg37-locked-val7-test14-v4-amendment-20260929",
+      "manifest": "outputs/02_eval_inputs/monuseg37_v4_20260929/manifest.json",
+      "manifest_sha256": "743d8fe6a7dec80dcc0c699cfc173349f83328c3a9fda8a9422fcf6727c66f68",
+      "counts": {"train": 30, "val": 7, "test": 14},
+      "role": "matched cross-model comparison for HS0/HS6 1TB, FM14 and HS6 5TB",
+      "admission": "new matched results required; official30 24/6 results remain separately labelled"
+    },
+    "detection_proxy_conic": {
+      "split": "official-baseline-fold0-nested-v1",
+      "batch_size": 8,
+      "admission": "retest any legacy random-split or B4 result; replace comparison cells only after validation"
+    },
+    "gram_gap_completion": {
+      "retrieval_clustering": ["rxrx3-core", "lc25000", "nct-crc-he-100"],
+      "detection_proxy": ["bbbc038", "conic", "livecell"],
+      "admission": "execute only missing or mismatched cells per checkpoint; preserve original evidence"
+    }
+  },
+  "segmentation": {
+    "cellpose": {"resolution": 512, "resize": "pad", "layers": [23], "class_weight": "none"},
+    "conic": {"resolution": 256, "resize": "stretch", "layers": [4, 11, 17, 23], "class_weight": "sqrt_inverse", "split": "official-baseline-fold0-nested-v1"},
+    "livecell": {"resolution": 512, "resize": "pad", "layers": [4, 11, 17, 23], "class_weight": "none", "split": "official-coco-train-val-test"},
+    "monuseg": {"resolution": 768, "resize": "pad", "layers": [23], "class_weight": "none"},
+    "multimodal_cellseg": {"resolution": 512, "resize": "pad", "layers": [23], "class_weight": "none"},
+    "pannuke": {"resolution": 256, "resize": "stretch", "layers": [4, 11, 17, 23], "class_weight": "none"},
+    "tissuenet": {"resolution": 256, "resize": "stretch", "layers": [23], "class_weight": "none"},
+    "bbbc038": {"resolution": 512, "resize": "pad", "layers": [4, 11, 17, 23], "class_weight": "none", "reporting_status": "v3-observational-only-not-v4-segmentation-union"}
+  },
+  "observational": {
+    "segmentation": ["bbbc038"],
+    "aggregate": false,
+    "main_ranking": false
+  },
+  "forbidden_union_task_datasets": [
+    "classification/chammi-hpa-task3", "classification/chammi-cp-task4",
+    "detection_proxy/midogpp", "segmentation/bbbc038"
+  ]
+}
