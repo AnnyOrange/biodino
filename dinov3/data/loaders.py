@@ -278,6 +278,37 @@ def make_dataset(
             skip_samples=wds_finite_skip_samples,
         )
 
+    if dataset_str.startswith("raw100tb_repeat_robust:"):
+        from .raw_100tb_stream import Raw100TBRepeatedStream
+
+        return Raw100TBRepeatedStream(
+            dataset_str[len("raw100tb_repeat_robust:"):], transform,
+            target_channels=target_channels or 3,
+            seed=wds_resample_seed,
+            shuffle_buffer=wds_shuffle_buffer,
+            skip_samples=wds_finite_skip_samples,
+        )
+
+    if dataset_str.startswith("raw100tb_full_pool_robust:"):
+        from .raw_100tb_stream import Raw100TBFullPoolStream
+
+        return Raw100TBFullPoolStream(
+            dataset_str[len("raw100tb_full_pool_robust:"):], transform,
+            target_channels=target_channels or 3,
+            seed=wds_resample_seed,
+            shuffle_buffer=wds_shuffle_buffer,
+        )
+
+    if dataset_str.startswith("raw1pb_full_pool_robust:"):
+        from .raw_1pb_stream import Raw1PBStream
+
+        return Raw1PBStream(
+            dataset_str[len("raw1pb_full_pool_robust:"):], transform,
+            target_channels=target_channels or 3,
+            seed=wds_resample_seed,
+            shuffle_buffer=wds_shuffle_buffer,
+        )
+
     if dataset_str.startswith("packwds_robust:"):
         return _make_packed_robust_webdataset(
             dataset_str[len("packwds_robust:") :],

@@ -10,18 +10,14 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-BENCHMARK_MODEL_ROOT = Path(os.environ.get('BENCHMARK_MODEL_ROOT', '/mnt/huawei_deepcad/benchmark_model'))
-if not (BENCHMARK_MODEL_ROOT / 'benchmark_eval/rules_dense_preflight.py').is_file():
-    raise RuntimeError(f'External FM source missing: {BENCHMARK_MODEL_ROOT}')
 os.environ['DINOV3_CODE_ROOT'] = str(ROOT)
-sys.path[:0] = [str(BENCHMARK_MODEL_ROOT), str(ROOT), str(ROOT / 'scripts')]
+sys.path[:0] = [str(ROOT), str(ROOT / 'scripts')]
 import run_shared_frozen_stage1_20260917 as queue
 from dinov3.eval.bio_frozen_eval.external_fm_protocol import PANNUKE_PROTOCOLS, validate_best_head
 
 NUMERICAL = {'torch': '2.10.0', 'torchvision': '0.25.0', 'numpy': '2.4.3',
              'scipy': '1.17.1', 'scikit-learn': '1.8.0', 'Pillow': '12.1.1'}
-BLOCKED = {'monuseg': 'NOT TESTED: official30/test14 sample identity evidence pending;37-pool forbidden',
-           'ctc': 'NOT TESTED: native20/five-fold fixed decoder/linker acceptance pending',
+BLOCKED = {'ctc': 'NOT TESTED: native20/five-fold fixed decoder/linker acceptance pending',
            'xray': 'NOT TESTED: common OOD selection/config freeze pending',
            'cryo': 'NOT TESTED: common OOD selection/config freeze pending',
            'bbbc038': 'NOT TESTED in formal queue: separate observation required'}
@@ -120,7 +116,8 @@ def prepare(args):
     os.environ.update(queue.THREADS)
     from benchmark_eval.rules_dense_preflight import audit_dense
     protocol = json.loads((ROOT / 'Evaluation Rules/protocol_v3.json').read_text())
-    snapshot = json.loads((ROOT / 'source_snapshot.json').read_text())
+    snapshot = queue.current_source_snapshot()
+    snapshot['git_commit'] = os.environ.get('DINOV3_GIT_COMMIT', 'UNKNOWN')
     queue.verify_campaign_source(dict(git_commit=snapshot['git_commit'], source_snapshot=snapshot))
     datasets = []
     for task in ('classification', 'regression', 'retrieval', 'segmentation', 'cell_tracking', 'ood'):
@@ -152,7 +149,8 @@ def prepare(args):
     manifest = dict(protocol_id='bio-eval-formal-v3-retest-20260918-components',
                     git_commit=snapshot['git_commit'], source_snapshot=snapshot,
                     authorization='Explicit user launch authorization 20260918',
-                    git_status_porcelain='LOCAL_COPY_HASH_VERIFIED', numerical_environment=NUMERICAL,
+                    git_status_porcelain='Worktree source files are hash-locked in source_snapshot.files',
+                    numerical_environment=NUMERICAL,
                     protocol_sha256=queue.sha256(ROOT / 'Evaluation Rules/protocol_v3.json'),
                     plan='Evaluation Rules/plans/retest_fleet_20260918.md',
                     plan_sha256=queue.sha256(ROOT / 'Evaluation Rules/plans/retest_fleet_20260918.md'),

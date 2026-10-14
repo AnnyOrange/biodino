@@ -42,9 +42,11 @@
 
 对于 5TB Early–Late coexistence diagnostic，五种冻结表示 `E/M/L/E+L/M+L` 在**同一 v4 dataset/split**上成对评估；classification 目标 25 项而不是 v3 的 24 项。PCA 仅在每个任务的训练侧拟合；对无监督 within-set retrieval 的降维必须先冻结独立、无 downstream-test 选择的拟合集和变换。诊断可以使用既有 checkpoint 观察选锚，但结果不充当未来正式训练方法的无偏 checkpoint 选择依据。
 
-## 5. 2026-09-29 MoNuSeg 与 detection 比较口径补充
+## 5. 2026-10-12 MoNuSeg 与 detection 比较口径补充
 
-用户选择以历史 37 张训练池作为 HS0/HS6 1TB、FM14、HS6 5TB no-GRAM/GRAM 及新方法的**共同 MoNuSeg 比较口径**。从下载的训练压缩包中固定 30 train / 7 val，另用独立的 14 张 test；全部 51 张图像和 XML 的身份及哈希、旧验证索引哈希均锁在 `outputs/02_eval_inputs/monuseg37_v4_20260929/manifest.json`，其 SHA256 见 `protocol_v4.json` 的 `comparison_amendment_20260929`。训练与测试样本 ID 无交集。经典挑战赛原始训练池为 30 张，现有 `dense_splits.monuseg` 的 24/6/14 结果继续保留独立标签，不与 30/7/14 的结果接成同一曲线。37 张池含经典30张之外的7张；这组比较结果不得称为经典挑战赛训练协议分数。
+用户确定以 MoNuSeg 的固定 30/7/14 划分作为 HS0/HS6 1TB、FM14、HS6 5TB no-GRAM/GRAM 及新方法的**共同 v4 比较口径**：经典挑战赛官方 train30 作训练集，下载训练包中额外标注的7张作验证集，官方 test14 作测试集。51 张图像与 XML 的身份和哈希按样本锁定在 `outputs/02_eval_inputs/monuseg37_v4_20261012/manifest.json`；该清单由现存的 `monuseg2018_train30_extra7val_test14_manifest.json` 生成，SHA256 见 `protocol_v4.json` 的 `comparison_amendment_20261012`。训练、验证、测试样本 ID 两两不交。
+
+2026-09-29 随机验证集锁定版的 30/7/14 数量虽相同，但 12 张 train/val 成员分配与固定清单不一致，现标为已被替代，只作为历史证据保留；依赖它产生的结果不能并入当前共同比较，需按新锁重测。`dense_splits.monuseg` 的 v3 24/6/14 结果仍保留原标签，不能与本 30/7/14 口径接成同一曲线。37 张训练池包含官方 train30 之外的7张，因此不能把该设定的结果称为仅使用官方 train30 训练的挑战赛标准结果。
 
 新的共同结果沿用分割 E20 与 E50 分开、B32、seeds 0/1/2、验证集 mIoU 选 epoch、PanNuke 三轮等固定设置。所有目标模型的 MoNuSeg 需要逐点核验已有原始结果能否满足**同一锁定身份和 probe 指纹**；不符合者重测，旧结果保留来源但退出新的匹配均值。HS0/HS6 1TB 的全部已有点、FM14、HS6-L/H+ 5TB 以及方法分支都列入覆盖清单，远端 checkpoint 只在权重仍可访问时执行。
 

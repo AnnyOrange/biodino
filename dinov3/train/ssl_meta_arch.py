@@ -235,6 +235,9 @@ class SSLMetaArch(nn.Module):
         self._ddp_wrapped = False
 
         self.cfg = cfg
+        # External-expert recoverability distillation (built in init_weights(), after the NaN fill).
+        self.external_distill_enabled = bool(getattr(getattr(cfg, "external_distill", None), "enabled", False))
+        self.external_distill = None
 
         student_model_dict = dict()
         teacher_model_dict = dict()
@@ -1323,6 +1326,18 @@ class SSLMetaArch(nn.Module):
             logger.info("OPTIONS -- RECOVERY -- global_tokens: %s, anchor_momentum: %s",
                         getattr(self.cfg.recovery, "global_tokens", "cls_patchmean"),
                         getattr(self.cfg.recovery, "anchor_momentum", 0.0))
+        if self.external_distill_enabled:
+            from dinov3.checkpointer import register_dont_save_hooks
+            from dinov3.train.external_distill import ExternalDistillation
+            self.external_distill = ExternalDistillation(self.cfg, self.student.backbone.embed_dim).cuda()
+            self.external_distill.reset_buffers()
+            # Frozen teachers are reloaded from their own files; keep them out of every checkpoint.
+            register_dont_save_hooks(self.external_distill, self.external_distill.teacher_state_keys())
+            logger.info("OPTIONS -- EXTERNAL DISTILL -- teachers: %s, loss_weight: %s, cls_weight: %s, "
+                        "patch_weight: %s, patches: %s",
+                        list(self.external_distill.teachers.keys()), self.cfg.external_distill.loss_weight,
+                        self.cfg.external_distill.cls_weight, self.cfg.external_distill.patch_weight,
+                        self.cfg.external_distill.patches)
         # All weights are set to `nan` to ensure we initialize everything explicitly
         self.student.backbone.init_weights()
         self.student.dino_head.init_weights()
@@ -2543,6 +2558,14 @@ class SSLMetaArch(nn.Module):
         else:
             gram_global = {}
 
+        external_inputs = None
+        if self.external_distill_enabled:
+            external_inputs = dict(
+                student_cls=student_global["cls_pre_head"],
+                student_patches=student_global["patch_pre_head"],
+                images=global_crops.unflatten(0, (n_global_crops, B)),
+                teacher_cls_bottleneck=teacher_global.get("cls_bottleneck"),
+            )
         # Compute losses and backprop
         loss_accumulator, loss_dict = self.compute_losses(
             teacher_global=teacher_global,
@@ -2553,6 +2576,7 @@ class SSLMetaArch(nn.Module):
             mask_indices_list=mask_indices_list,
             masks_weight=masks_weight,
             iteration=iteration,
+            external_inputs=external_inputs,
         )
         if self.ift_enabled:
             if (
@@ -2802,7 +2826,7 @@ class SSLMetaArch(nn.Module):
         masked_patch_after_head = self.teacher.ibot_head(buffer)
 
         # DINO head on CLS tokens
-        cls_after_head = self.teacher.dino_head(cls)  # [n_crops * B, K]
+        cls_after_head, cls_bottleneck = self.teacher.dino_head(cls, return_bottleneck=True)  # [n_crops * B, K], [n_crops * B, bottleneck]
 
         # Center with sinkhorn-knopp
         cls_centered = self.dino_loss.sinkhorn_knopp_teacher(
@@ -2820,6 +2844,9 @@ class SSLMetaArch(nn.Module):
             "reg_pre_head": reg.unflatten(0, [n_crops, B]),  # [n_crops, B, R, D]
             "patch_pre_head": ibot_patch.unflatten(0, [n_crops, B]),  # [n_crops, B, P, D]
             "cls_after_head": cls_after_head.unflatten(0, [n_crops, B]),  # [n_crops, B, K]
+            # pre-normalisation DINO-head bottleneck of the teacher: the coordinates that define the prototype
+            # assignment; used as the self-readout target (external_distill teacher kind "self_bottleneck").
+            "cls_bottleneck": cls_bottleneck.unflatten(0, [n_crops, B]),  # [n_crops, B, bottleneck]
             "cls_centered": cls_centered,  # [n_crops, B, K]
             "masked_patch_centered": masked_patch_centered,  # [n_masked_patches, K]
         }
@@ -3183,6 +3210,7 @@ class SSLMetaArch(nn.Module):
         mask_indices_list,
         masks_weight,
         iteration,
+        external_inputs=None,
     ):
         n_global_crops = student_global["cls_after_head"].shape[0]
         n_local_crops = student_local["cls_after_head"].shape[0]
@@ -3251,6 +3279,15 @@ class SSLMetaArch(nn.Module):
         )
         loss_dict["ibot_loss"] = ibot_patch_loss
         loss_accumulator += self.ibot_loss_weight * ibot_patch_loss
+
+        # External-expert recoverability distillation
+        if self.external_distill_enabled and external_inputs is not None:
+            if self.external_distill is None:
+                raise RuntimeError("external_distill enabled but not built; init_weights() must run first")
+            external_loss, external_stats = self.external_distill(**external_inputs)
+            loss_accumulator += float(self.cfg.external_distill.loss_weight) * external_loss
+            loss_dict.update(external_stats)
+            loss_dict["extd_weight"] = float(self.cfg.external_distill.loss_weight)
 
         # Gram loss
         if self.cfg.recovery.enabled:

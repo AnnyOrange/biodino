@@ -25,7 +25,7 @@ SITES = {
         "run": Path("/home/xzj/biodino_v2_20260930/outputs/01_training_runs/hs6_l5_v2_recovery_fork29279_20260930/global_cls_w3"),
         "eval": Path("/data/hs6_l5_v2_recovery_eval_20260930/global_cls_w3"),
         "config": Path("/data/hs6_l_5tb_nogram_eval_20260921/source/config.yaml"),
-        "monu": Path("/data/v2_monu30_resume_20261009"),
+        "monu": Path("/home/xzj/storage/disks/a/v2_monu30_resume_20261009"),
         "snapshot": Path("/data/v2_monu30_resume_20261009/snapshot"),
     },
 }

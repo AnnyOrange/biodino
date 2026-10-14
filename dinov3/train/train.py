@@ -16,6 +16,7 @@ import time
 from functools import partial
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.distributed
 from omegaconf import OmegaConf
@@ -342,6 +343,87 @@ def _apply_ema_batch_scaling(cfg, schedule):
     return scaled
 
 
+
+def _apply_cooldown_override(
+    cfg,
+    lr_schedule,
+    wd_schedule,
+    momentum_schedule,
+    teacher_temp_schedule,
+    last_layer_lr_schedule,
+):
+    """WSD-style cooldown branch for a resumed run.
+
+    From ``optim.cooldown.start_iteration`` the remaining schedule is replaced by a
+    linear (or cosine) decay of the learning rate (and last-layer lr) to ``lr_final``
+    and of the teacher EMA momentum to ``momentum_final`` over ``length`` optimizer
+    updates.  Weight decay either keeps its original schedule or is frozen; the
+    teacher temperature is frozen at its value at the fork.  Everything before
+    ``start_iteration`` is untouched, so the resumed trunk is reproduced exactly up to
+    the fork and only the tail of the schedule changes.
+    """
+    cd = getattr(cfg.optim, "cooldown", None)
+    if cd is None or not bool(getattr(cd, "enabled", False)):
+        return None
+    start = int(cd.start_iteration)
+    length = int(cd.length)
+    if start < 0 or length <= 0:
+        raise ValueError(f"optim.cooldown needs start_iteration>=0 and length>0, got {start}, {length}")
+    end = start + length
+    shape = str(getattr(cd, "shape", "linear"))
+    lr_final = cd.lr_final if getattr(cd, "lr_final", None) is not None else cfg.optim["min_lr"]
+    mom_final = (
+        cd.momentum_final
+        if getattr(cd, "momentum_final", None) is not None
+        else cfg.teacher["final_momentum_teacher"]
+    )
+    wd_mode = str(getattr(cd, "wd_mode", "continue"))
+    temp_mode = str(getattr(cd, "teacher_temp_mode", "freeze"))
+
+    def _ramp(v0, v1):
+        if shape == "linear":
+            return np.linspace(v0, v1, length, endpoint=True, dtype=np.float64)
+        if shape == "cosine":
+            x = np.arange(length, dtype=np.float64) / max(length - 1, 1)
+            return v1 + 0.5 * (v0 - v1) * (1.0 + np.cos(np.pi * x))
+        raise ValueError(f"unknown cooldown shape {shape}")
+
+    def _override(sched, final, freeze):
+        arr = np.array(sched.schedule, dtype=np.float64)
+        if start >= len(arr):
+            raise ValueError(f"cooldown start {start} beyond schedule length {len(arr)}")
+        v0 = float(arr[start])
+        target = v0 if freeze else float(final)
+        ramp = np.full(length, v0, dtype=np.float64) if freeze else _ramp(v0, target)
+        tail = np.full(max(len(arr) - end, 0), target, dtype=np.float64)
+        sched.schedule = np.concatenate([arr[:start], ramp, tail])
+        sched.total_iters = len(sched.schedule)
+        sched.final_value = np.float64(target)
+        return v0, target
+
+    lr0, lr1 = _override(lr_schedule, lr_final, freeze=False)
+    _override(last_layer_lr_schedule, lr_final, freeze=False)
+    m0, m1 = _override(momentum_schedule, mom_final, freeze=False)
+    if wd_mode == "freeze":
+        w0, w1 = _override(wd_schedule, None, freeze=True)
+    elif wd_mode == "continue":
+        w0, w1 = float(wd_schedule[start]), float(wd_schedule[end - 1])
+    else:
+        raise ValueError(f"unknown cooldown wd_mode {wd_mode}")
+    if temp_mode == "freeze":
+        t0, t1 = _override(teacher_temp_schedule, None, freeze=True)
+    elif temp_mode == "continue":
+        t0, t1 = float(teacher_temp_schedule[start]), float(teacher_temp_schedule[end - 1])
+    else:
+        raise ValueError(f"unknown cooldown teacher_temp_mode {temp_mode}")
+    logger.info(
+        "Cooldown override: updates [%d, %d) shape=%s | lr %.6g -> %.6g | momentum %.7f -> %.7f | "
+        "wd(%s) %.5f -> %.5f | teacher_temp(%s) %.5f -> %.5f",
+        start, end, shape, lr0, lr1, m0, m1, wd_mode, w0, w1, temp_mode, t0, t1,
+    )
+    return end
+
+
 def build_schedulers(cfg):
     if "schedules" in cfg:
         logger.info("Using schedules v2")
@@ -396,6 +478,14 @@ def build_schedulers(cfg):
 
     last_layer_lr_schedule.schedule[: _iters(cfg.optim["freeze_last_layer_epochs"])] = (
         0  # mimicking the original schedules
+    )
+    _apply_cooldown_override(
+        cfg,
+        lr_schedule,
+        wd_schedule,
+        momentum_schedule,
+        teacher_temp_schedule,
+        last_layer_lr_schedule,
     )
     logger.info("Schedulers ready.")
     return (
@@ -574,7 +664,11 @@ def build_data_loader_from_cfg(
     batch_size = dataloader_batch_size_per_gpu
     num_workers = cfg.train.num_workers
     dataset_path = cfg.train.dataset_path
-    finite_once = str(dataset_path).startswith(("packwds_once_robust:", "raw100tb_once_robust:"))
+    finite_once = str(dataset_path).startswith(("packwds_once_robust:", "raw100tb_once_robust:",
+                                                "raw100tb_repeat_robust:"))
+    finite_fresh_segment = finite_once and bool(
+        getattr(cfg.train, "finite_stream_fresh_segment", False)
+    )
     stream_start_iter = 0 if finite_once else start_iter
     dataset = make_dataset(
         dataset_str=dataset_path,
@@ -584,7 +678,8 @@ def build_data_loader_from_cfg(
         wds_shuffle_buffer=getattr(cfg.train, "wds_shuffle_buffer", 1000),
         wds_resample_seed=cfg.train.seed + stream_start_iter + 1,
         wds_finite_skip_samples=(
-            start_iter * accum_steps * dataloader_batch_size_per_gpu if finite_once else 0
+            start_iter * accum_steps * dataloader_batch_size_per_gpu
+            if finite_once and not finite_fresh_segment else 0
         ),
         wds_deterministic_resampling=bool(
             getattr(cfg.train, "wds_deterministic_resampling", False)
@@ -753,6 +848,16 @@ def do_train(cfg, model, resume=False):
             max_iter,
             cfg.optim.epochs * OFFICIAL_EPOCH_LENGTH,
         )
+    cooldown_cfg = getattr(cfg.optim, "cooldown", None)
+    if cooldown_cfg is not None and bool(getattr(cooldown_cfg, "enabled", False)):
+        cooldown_end = int(cooldown_cfg.start_iteration) + int(cooldown_cfg.length)
+        if start_iter != int(cooldown_cfg.start_iteration):
+            raise ValueError(
+                f"optim.cooldown.start_iteration={int(cooldown_cfg.start_iteration)} must equal the resumed "
+                f"start iteration {start_iter} (checkpoint iteration + 1)"
+            )
+        max_iter = min(max_iter, cooldown_end)
+        logger.info("Cooldown branch: training stops at optimizer update %d", max_iter)
     accum_steps = max(1, int(getattr(cfg.optim, "gradient_accumulation_steps", 1)))
     freeze_backbone_updates = max(0, int(getattr(cfg.optim, "freeze_backbone_updates", 0)))
 
@@ -819,15 +924,30 @@ def do_train(cfg, model, resume=False):
     optimizer.zero_grad(set_to_none=True)
     accum_loss_for_log = None
     accum_metrics = None
-    finite_once = str(cfg.train.dataset_path).startswith(("packwds_once_robust:", "raw100tb_once_robust:"))
+    finite_once = str(cfg.train.dataset_path).startswith(("packwds_once_robust:", "raw100tb_once_robust:",
+                                                          "raw100tb_repeat_robust:"))
+    finite_fresh_segment = finite_once and bool(
+        getattr(cfg.train, "finite_stream_fresh_segment", False)
+    )
+    repeating_raw100tb = str(cfg.train.dataset_path).startswith("raw100tb_repeat_robust:")
+    repeat_pass_size = 0
+    if repeating_raw100tb:
+        index_root = Path(str(cfg.train.dataset_path).split(":", 1)[1])
+        repeat_pass_size = json.loads((index_root / "assignment.json").read_text())["target_per_rank"]
+        if repeat_pass_size % cfg.train.batch_size_per_gpu:
+            raise ValueError("Repeated 100TB pass must end on a microbatch boundary")
     consumed_keys = set() if finite_once else None
+    consumed_total = 0
     audit_file = None
     if finite_once:
         if cfg.train.num_workers != 1:
             raise ValueError("Finite one-pass WDS requires exactly one data worker per rank")
         rank = distributed.get_rank()
-        audit_path = Path(cfg.train.output_dir, f"consumed_sample_keys_rank{rank:02d}.jsonl")
-        if start_iter:
+        segment_id = str(getattr(cfg.train, "finite_stream_id", "segment"))
+        audit_name = (f"consumed_sample_keys_{segment_id}_rank{rank:02d}.jsonl"
+                      if finite_fresh_segment else f"consumed_sample_keys_rank{rank:02d}.jsonl")
+        audit_path = Path(cfg.train.output_dir, audit_name)
+        if start_iter and not finite_fresh_segment:
             expected_batches = start_iter * accum_steps
             temp_path = audit_path.with_suffix(".resume_tmp")
             with audit_path.open("r", encoding="utf-8") as source, temp_path.open("w", encoding="utf-8") as dest:
@@ -836,9 +956,13 @@ def do_train(cfg, model, resume=False):
                     if not line:
                         raise ValueError(f"Rank {rank} audit ends before checkpoint at batch {batch_index}")
                     keys = json.loads(line)
-                    if len(keys) != cfg.train.batch_size_per_gpu or any(key in consumed_keys for key in keys):
+                    if len(keys) != cfg.train.batch_size_per_gpu or len(set(keys)) != len(keys) or \
+                            any(key in consumed_keys for key in keys):
                         raise ValueError(f"Rank {rank} audit has repeated or malformed keys at batch {batch_index}")
                     consumed_keys.update(keys)
+                    consumed_total += len(keys)
+                    if repeating_raw100tb and consumed_total % repeat_pass_size == 0:
+                        consumed_keys.clear()
                     dest.write(line)
             os.replace(temp_path, audit_path)
         audit_file = audit_path.open("a" if start_iter else "w", encoding="utf-8")
@@ -861,6 +985,9 @@ def do_train(cfg, model, resume=False):
             if len(set(keys)) != len(keys) or any(key in consumed_keys for key in keys):
                 raise ValueError(f"Finite WDS repeated an image on rank {rank}")
             consumed_keys.update(keys)
+            consumed_total += len(keys)
+            if repeating_raw100tb and consumed_total % repeat_pass_size == 0:
+                consumed_keys.clear()
             audit_file.write(json.dumps(keys, separators=(",", ":")) + "\n")
             if micro_step % 1000 == 0:
                 audit_file.flush()
@@ -1049,11 +1176,14 @@ def do_train(cfg, model, resume=False):
         optimizer.zero_grad(set_to_none=True)
     if audit_file is not None:
         audit_file.close()
-        expected = max_iter * accum_steps * cfg.train.batch_size_per_gpu
-        if len(consumed_keys) != expected:
-            raise ValueError(f"Finite WDS consumed {len(consumed_keys)} unique images on rank {rank}, expected {expected}")
+        expected_updates = max_iter - start_iter if finite_fresh_segment else max_iter
+        expected = expected_updates * accum_steps * cfg.train.batch_size_per_gpu
+        actual = consumed_total if repeating_raw100tb else len(consumed_keys)
+        if actual != expected:
+            raise ValueError(f"Finite WDS consumed {actual} images on rank {rank}, expected {expected}")
         with open(os.path.join(cfg.train.output_dir, f"consumed_sample_keys_rank{rank:02d}.json"), "w") as handle:
-            json.dump({"rank": rank, "micro_steps": micro_step, "unique_images": len(consumed_keys)}, handle)
+            json.dump({"rank": rank, "micro_steps": micro_step,
+                       "image_visits": consumed_total, "unique_images_in_current_pass": len(consumed_keys)}, handle)
     metric_logger.synchronize_between_processes()
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

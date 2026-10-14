@@ -101,7 +101,7 @@ CTC 以原生 `cell_tracking` 任务正式纳入 Tier B，覆盖本地 20 个官
 |---|---|---|
 | LIVECell | official COCO train / val / test | **Tier A 正式纳入**；必须原样使用官方 split 与固定 annotation hash，不自行重切 |
 | TissueNet | official train / val / test NPZ | 合法 |
-| MoNuSeg | official2018 train30, seed42 train24/val6; official test14 | BLOCKED until official sample-ID/source manifest admission; old37-pool/7-val index is LEGACY ONLY |
+| MoNuSeg | v3: official train30 split seed42 into train24/val6 + official test14; active v4 comparison: official train30 / extra annotated val7 / official test14 | v3 keeps its historical 24/6/14 identity; v4 uses fixed sample IDs from `monuseg2018_train30_extra7val_test14_manifest.json` and `monuseg37_v4_20261012/manifest.json`; 2026-09-29 randomized 37-pool assignment is superseded |
 | Cellpose | public train pool 的确定性前 80%/后 20% 为 train/val；official test 为 test | 可用；必须固定排序与是否包含 `train_cyto2` |
 | BBBC038 | 有 mask 的 stage1_train 做 seed42 70/15/15；官方 test 无 GT 不使用 | **OBSERVATIONAL**；可观察但不进入 aggregate / 主排名，必须固定 `bbbc038_splits.npz` |
 | Multimodal_CellSeg | train/val CSV；`test_source_heldout.csv` 只含 held-out Tuning source | 合法 source-heldout；WSI/超大图过滤规则必须固定 |
@@ -115,7 +115,7 @@ CTC 以原生 `cell_tracking` 任务正式纳入 Tier B，覆盖本地 20 个官
 - LIVECell 官方 COCO JSON 固定为 3253/570/1564 条 image records，对应 3188/569/1512 个 unique filenames；官方文件本身含重复 image records，且 train/val 有 30 个同名文件。v2/v3 按用户决定原样采用官方 split，通过三个 annotation SHA256 锁定（当前见 `protocol_v3.json`），不得静默去重或另行随机切分；报告样本量时同时记录 records 与 unique filenames。
 - PanNuke 本地 fold 大小固定为 F1=2656、F2=2523、F3=2722；三个正式协议标识分别为 `pannuke-fold1-train-fold2-val-fold3-test`、`pannuke-fold2-train-fold1-val-fold3-test`、`pannuke-fold3-train-fold2-val-fold1-test`。
 - MoNuSeg 37-pool val index SHA256：`932a09d0e936bd2ee83438145f6e6955dac224b747f2536ae06d31c764ff5c91`（7 个 val）。经典30图的身份锁已经准入 v3；37图是另一个需独立标记的 v4 跨模型比较口径，不可把两种分数混算。
-- 2026-09-29 v4 跨模型比较补充：用户选定上述 37 张池的固定 30 train / 7 val，配独立 test14；按 `09_Union_v4_Protocol.md` 第5节和新身份 manifest 报告。此补充只定义新的 v4 比较结果，不追改旧 v3/经典30张池的身份或结果。
+- 2026-10-12 v4 跨模型比较补充：固定使用官方 train30、训练归档额外标注的7张 val、官方 test14；manifest/hash 以 `protocol_v4.json` 的 `comparison_amendment_20261012` 为准。2026-09-29 的随机37池锁定有12张 train/val 分配不一致，现已 superseded；旧结果不并入新 split。此补充不追改 v3 的24/6/14身份或结果。
 - Multimodal split：876 train、176 val、101 source-heldout test；test source 为 `Tuning`，与 train/val source 集合分开。三个 CSV 的 SHA256 必须由 campaign manifest 完整记录。
 
 ## 7. Split 正确性的启动前自动检查

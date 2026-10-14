@@ -258,6 +258,12 @@ def get_monuseg_paths(
         import json
         from pathlib import Path
         from .monuseg_official import official_paths
+        override = os.environ.get('DINOV3_MONUSEG_MANIFEST_FILE')
+        if override:
+            counts = json.loads(os.environ.get('DINOV3_MONUSEG_COUNTS', '{}'))
+            return official_paths(data_root, split,
+                                  os.environ.get('DINOV3_MONUSEG_MANIFEST_SHA256', ''),
+                                  manifest_file=override, counts=counts)
         registry = Path(__file__).resolve().parents[4] / 'Evaluation Rules' / 'protocol_v3.json'
         lock = json.loads(registry.read_text()).get('dense_splits', {}).get('monuseg', {})
         return official_paths(data_root, split, lock.get('manifest_sha256', ''))

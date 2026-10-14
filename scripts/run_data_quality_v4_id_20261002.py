@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -15,9 +16,8 @@ from audit_data_quality_1m_20261002 import ARMS, ROOT
 
 
 REPO = Path("/mnt/huawei_deepcad/dinov3")
-PYTHON = "/mnt/huawei_deepcad/eval_envs/retest_20260918_v2/bin/python"
-SHARED_SOURCE = Path("/mnt/huawei_deepcad/dinov3_20tb_online_snapshot_20260918")
-MONUSEG_SOURCE = Path("/mnt/huawei_deepcad/dinov3_monuseg_train30val7_snapshot_20260929")
+PYTHON = sys.executable
+MONUSEG_SOURCE = REPO
 
 
 def save(path: Path, value: object) -> None:
@@ -108,13 +108,13 @@ def run_phase(root: Path, phase: str, commands: list[list[str]], gpus: list[int]
             done = completed(root, phase)
             cards = gpu_status(gpus, arm_label)
             record = dict(time_unix=time.time(), phase=phase, completed=done, expected=expected,
-                          gpu_status=cards, under_50pct_while_pending=[row["gpu"] for row in cards
-                          if row["own_memory_fraction"] < 0.5 and done < expected])
+                          gpu_status=cards, under_60pct_while_pending=[row["gpu"] for row in cards
+                          if row["own_memory_fraction"] < 0.6 and done < expected])
             with (root / "gpu_monitor.jsonl").open("a") as stream:
                 stream.write(json.dumps(record) + "\n")
             save(root / "driver_status.json", record)
             print(time.strftime("%Y-%m-%d %H:%M:%S"), phase, f"{done}/{expected}",
-                  "under_50pct", record["under_50pct_while_pending"], flush=True)
+                  "under_60pct", record["under_60pct_while_pending"], flush=True)
             time.sleep(180)
         codes = [process.wait() for process, _, _ in processes]
         if any(code != 0 for code in codes):
@@ -135,6 +135,7 @@ def main() -> None:
     parser.add_argument("--eval-root", type=Path,
                         help="Prepared campaign root; defaults to the matched 1M arm")
     parser.add_argument("--gpus", type=int, nargs="+", required=True)
+    parser.add_argument("--target-per-gpu", type=int, default=8)
     args = parser.parse_args()
     if args.eval_root is None and args.arm not in ARMS:
         raise ValueError(f"Unknown matched 1M arm: {args.arm}")
@@ -151,18 +152,21 @@ def main() -> None:
         wait_for_gpus(root, gpus)
 
     if completed(root, "shared") != 38:
-        command = [PYTHON, "-u", str(SHARED_SOURCE / "scripts/run_retest_fleet_20260918.py"),
-                   "worker", "--output", str(root / "shared"), "--host", host,
-                   "--gpus", *map(str, gpus), "--target-per-gpu", "5",
-                   "--max-host-jobs", str(5 * len(gpus)), "--max-global-jobs", "160"]
+        command = [PYTHON, "-u", str(REPO / "scripts/run_data_quality_v4_shared_worker_20261012.py"),
+                   "--output", str(root / "shared"), "--host", host,
+                   "--gpus", *map(str, gpus), "--target-per-gpu", str(args.target_per_gpu),
+                   "--max-host-jobs", str(args.target_per_gpu * len(gpus)), "--max-global-jobs", "160"]
         run_phase(root, "shared", [command], gpus, 38)
     if completed(root, "extension") != 9:
         commands = [[PYTHON, "-u", str(REPO / "scripts/run_data_quality_v4_extension_worker_20261002.py"),
                      "--arm", args.arm, "--eval-root", str(root),
-                     "--gpu", str(gpu), "--slot", str(slot)]
-                    for slot in range(5) for gpu in gpus[:2]]
-        run_phase(root, "extension", commands, gpus[:2], 9)
+                     "--gpu", str(gpu), "--slot", "0"] for gpu in gpus]
+        run_phase(root, "extension", commands, gpus, 9)
     if completed(root, "monuseg") != 1:
+        os.environ["DINOV3_MONUSEG_MANIFEST_FILE"] = str(
+            REPO / "outputs/02_eval_inputs/monuseg37_v4_20261012/manifest.json")
+        os.environ["DINOV3_MONUSEG_MANIFEST_SHA256"] = "6b71c7d02c3031558ceeb2b17eb57c1916520d55807249668696c061550688e7"
+        os.environ["DINOV3_MONUSEG_COUNTS"] = json.dumps({"train": 30, "val": 7, "test": 14})
         command = [PYTHON, "-u", str(MONUSEG_SOURCE / "scripts/run_retest_fleet_20260918.py"),
                    "worker", "--output", str(root / "monuseg"), "--host", host,
                    "--gpus", str(gpus[0]), "--target-per-gpu", "1",

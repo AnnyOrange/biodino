@@ -155,7 +155,7 @@
       "manifest_sha256": "743d8fe6a7dec80dcc0c699cfc173349f83328c3a9fda8a9422fcf6727c66f68",
       "counts": {"train": 30, "val": 7, "test": 14},
       "role": "matched cross-model comparison for HS0/HS6 1TB, FM14 and HS6 5TB",
-      "admission": "new matched results required; official30 24/6 results remain separately labelled"
+      "admission": "SUPERSEDED_20261012: its random train/val membership differs from the authoritative fixed 30/7/14 manifest; preserve only as historical evidence"
     },
     "detection_proxy_conic": {
       "split": "official-baseline-fold0-nested-v1",
@@ -166,6 +166,20 @@
       "retrieval_clustering": ["rxrx3-core", "lc25000", "nct-crc-he-100"],
       "detection_proxy": ["bbbc038", "conic", "livecell"],
       "admission": "execute only missing or mismatched cells per checkpoint; preserve original evidence"
+    }
+  },
+  "current_comparison_amendment": "comparison_amendment_20261012",
+  "comparison_amendment_20261012": {
+    "monuseg": {
+      "protocol": "monuseg2018-train30-extra7val-test14-v1",
+      "manifest": "outputs/02_eval_inputs/monuseg37_v4_20261012/manifest.json",
+      "manifest_sha256": "6b71c7d02c3031558ceeb2b17eb57c1916520d55807249668696c061550688e7",
+      "source_manifest": "/mnt/huawei_deepcad/benchmark/segmentation/monuseg/extracted/monuseg2018_train30_extra7val_test14_manifest.json",
+      "source_manifest_sha256": "52dd206e30f91238666b80e5b99501bb3111f79129c8e6400d91a2895a3632ec",
+      "counts": {"train": 30, "val": 7, "test": 14},
+      "selection": "classic official challenge train30; seven extra annotated samples in the training archive as validation; official test14; fixed by sample ID, no random reassignment",
+      "role": "active matched cross-model v4 comparison for HS0/HS6 1TB, FM14, HS6 5TB and new methods",
+      "admission": "new matched results required; results under the superseded 2026-09-29 random val membership are not comparable and must be rerun"
     }
   },
   "segmentation": {
