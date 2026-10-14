@@ -219,9 +219,10 @@ def ac_compile_parallelize(
             fully_shard(m.backbone, **fsdp_config, reshard_after_forward=True)
             register_fsdp_forward_method(m.backbone, "get_intermediate_layers")
 
-    # 4/ Move to `cuda` device
+    # 4/ Materialize offloaded inference models on CPU as required by FSDP2.
     for model in all_models:
-        model.to_empty(device="cuda")
+        offloaded = model is not trained_model and bool(getattr(cfg.compute_precision, "teacher_cpu_offload", False))
+        model.to_empty(device="cpu" if offloaded else "cuda")
 
     # 5/ FSDP2: Reshard immediately after forward for inference-only models
     for model in inference_only_models:
