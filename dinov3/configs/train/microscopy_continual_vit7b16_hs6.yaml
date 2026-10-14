@@ -13,6 +13,7 @@ compute_precision:
   reduce_dtype: fp32
   sharding_strategy: SHARD_GRAD_OP
   distributed_mode: fsdp
+  teacher_cpu_offload: false
 
 dino:
   loss_weight: 1.0
