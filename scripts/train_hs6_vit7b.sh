@@ -23,8 +23,8 @@ Common overrides:
   NUM_WORKERS=2 PREFETCH_FACTOR=1
   FP8_ENABLED=true TRAIN_COMPILE=false
   DISTRIBUTED_MODE=fsdp CHECKPOINTING_FULL=false
-  LOCAL_CROPS_NUMBER=8
   TEACHER_CPU_OFFLOAD=false
+  STUDENT_CPU_OFFLOAD=false
   EVAL_PERIOD=0 CHECKPOINT_PERIOD=<mode default> CHECKPOINT_MAX_TO_KEEP=2
   RESUME=1                 Resume from OUTPUT_DIR/ckpt when present.
   DRY_RUN=1                Validate and print the command without launching.
@@ -140,8 +140,8 @@ FP8_ENABLED="${FP8_ENABLED:-true}"
 TRAIN_COMPILE="${TRAIN_COMPILE:-false}"
 DISTRIBUTED_MODE="${DISTRIBUTED_MODE:-fsdp}"
 CHECKPOINTING_FULL="${CHECKPOINTING_FULL:-false}"
-LOCAL_CROPS_NUMBER="${LOCAL_CROPS_NUMBER:-8}"
 TEACHER_CPU_OFFLOAD="${TEACHER_CPU_OFFLOAD:-false}"
+STUDENT_CPU_OFFLOAD="${STUDENT_CPU_OFFLOAD:-false}"
 EVAL_PERIOD="${EVAL_PERIOD:-0}"
 CHECKPOINT_PERIOD="${CHECKPOINT_PERIOD:-$DEFAULT_CHECKPOINT_PERIOD}"
 CHECKPOINT_MAX_TO_KEEP="${CHECKPOINT_MAX_TO_KEEP:-2}"
@@ -206,6 +206,7 @@ cmd=(
   train.sharded_eval_checkpoint=true
   compute_precision.distributed_mode="$DISTRIBUTED_MODE"
   compute_precision.teacher_cpu_offload="$TEACHER_CPU_OFFLOAD"
+  compute_precision.student_cpu_offload="$STUDENT_CPU_OFFLOAD"
   student.resume_from_teacher_chkpt="$INIT_WEIGHTS"
   student.fp8_enabled="$FP8_ENABLED"
   optim.epochs="$EPOCHS"
@@ -214,7 +215,6 @@ cmd=(
   optim.gradient_accumulation_steps="$GRAD_ACCUM_STEPS"
   "crops.rgb_mean=$RGB_MEAN"
   "crops.rgb_std=$RGB_STD"
-  crops.local_crops_number="$LOCAL_CROPS_NUMBER"
   evaluation.eval_period_iterations="$EVAL_PERIOD"
   checkpointing.period="$CHECKPOINT_PERIOD"
   checkpointing.max_to_keep="$CHECKPOINT_MAX_TO_KEEP"
@@ -228,8 +228,8 @@ echo "[hs6-7b] output=$OUTPUT_DIR init=${INIT_WEIGHTS:-<random>}"
 echo "[hs6-7b] batch=$TOTAL_GPUS GPUs x $BATCH_SIZE_PER_GPU/GPU x accum $GRAD_ACCUM_STEPS = $EFFECTIVE_GLOBAL_BATCH ($ACCUM_SOURCE)"
 echo "[hs6-7b] schedule=$EPOCHS epochs x $OFFICIAL_EPOCH_LENGTH updates; lr=$LR; fp8=$FP8_ENABLED"
 echo "[hs6-7b] distributed=$DISTRIBUTED_MODE activation_checkpointing_full=$CHECKPOINTING_FULL"
-echo "[hs6-7b] local_crops_number=$LOCAL_CROPS_NUMBER"
 echo "[hs6-7b] teacher_cpu_offload=$TEACHER_CPU_OFFLOAD"
+echo "[hs6-7b] student_cpu_offload=$STUDENT_CPU_OFFLOAD"
 printf ' %q' "${cmd[@]}"
 printf '\n'
 

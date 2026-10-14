@@ -3437,7 +3437,7 @@ class SSLMetaArch(nn.Module):
         with torch.no_grad():
             student_local = [p._local_tensor if hasattr(p, "_local_tensor") else p for p in student_param_list]
             teacher_local = [p._local_tensor if hasattr(p, "_local_tensor") else p for p in teacher_param_list]
-            if any(s.device != t.device for s, t in zip(student_local, teacher_local)):
+            if any(s.device.type == "cpu" or t.device.type == "cpu" for s, t in zip(student_local, teacher_local)):
                 for student_param, teacher_param in zip(student_local, teacher_local):
                     teacher_param.mul_(m)
                     teacher_param.add_(student_param.detach().to(teacher_param.device), alpha=1 - m)

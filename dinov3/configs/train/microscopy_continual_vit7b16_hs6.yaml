@@ -14,6 +14,7 @@ compute_precision:
   sharding_strategy: SHARD_GRAD_OP
   distributed_mode: fsdp
   teacher_cpu_offload: false
+  student_cpu_offload: false
 
 dino:
   loss_weight: 1.0
