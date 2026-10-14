@@ -36,9 +36,9 @@ def matmul(first, amax_first, second_t, amax_second_t, bias):
         out_dtype=torch.bfloat16,
         use_fast_accum=False,
     )
-    output = (output * scale_first * scale_second_t.t()).to(torch.bfloat16)
+    output.mul_(scale_first).mul_(scale_second_t.t())
     if bias is not None:
-        output = output + bias
+        output.add_(bias)
     return output
 
 
