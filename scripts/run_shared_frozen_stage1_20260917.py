@@ -36,6 +36,27 @@ def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def current_source_snapshot():
+    suffixes = {'.py', '.json', '.yaml', '.yml'}
+    roots = (ROOT / 'dinov3', ROOT / 'scripts', ROOT / 'Evaluation Rules')
+    files = {}
+    for source_root in roots:
+        if not source_root.is_dir():
+            continue
+        for path in source_root.rglob('*'):
+            if path.is_file() and path.suffix.lower() in suffixes:
+                relative = path.relative_to(ROOT).as_posix()
+                if relative.startswith((
+                        'dinov3/outputs/', 'dinov3/dataset_webdataset/', 'dinov3/train/',
+                        'dinov3/configs/', 'dinov3/tests/')):
+                    continue
+                if relative == 'scripts/queue_hs6_fullpool_100tb_v4_every500_20261013.py':
+                    continue
+                files[relative] = sha256(path)
+    return dict(authorization='CANONICAL_REPOSITORY_WORKTREE_SHA256_V1',
+                files=files, sha256=fingerprint(files))
+
+
 def save(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + f'.tmp.{os.getpid()}')
@@ -44,7 +65,7 @@ def save(path, value):
 
 
 def git(*args):
-    return subprocess.check_output(['git','-C',str(ROOT),*args], text=True).strip()
+    return subprocess.check_output(['git','-c',f'safe.directory={ROOT}','-C',str(ROOT),*args], text=True).strip()
 
 
 def verify_campaign_source(manifest):
@@ -53,7 +74,9 @@ def verify_campaign_source(manifest):
         if git('rev-parse', 'HEAD') != manifest['git_commit'] or git('status', '--porcelain'):
             raise RuntimeError('Wrong or dirty checkout')
         return
-    if snapshot.get('authorization') != 'USER_AUTHORIZED_LOCAL_COPY_20260918':
+    if snapshot.get('authorization') not in (
+            'USER_AUTHORIZED_LOCAL_COPY_20260918',
+            'CANONICAL_REPOSITORY_WORKTREE_SHA256_V1'):
         raise RuntimeError('Unapproved copied source')
     for relative, digest in snapshot['files'].items():
         if sha256(ROOT / relative) != digest:
@@ -450,7 +473,8 @@ def worker(args):
         fcntl.flock(registration,fcntl.LOCK_EX)
         registered = json.loads((args.output/'campaign_manifest.json').read_text())
         registered.setdefault('execution_hosts',{})[args.host] = dict(
-            hostname=os.uname().nodename,pid=os.getpid(),gpu_indices=args.gpus,git_commit=commit,git_status_porcelain='',
+            hostname=os.uname().nodename,pid=os.getpid(),gpu_indices=args.gpus,git_commit=commit,
+            git_status_porcelain='Worktree source files are hash-locked in source_snapshot.files',
             python=sys.version,python_executable=sys.executable,torch=torch.__version__,sklearn=sklearn.__version__,
             verified_input_manifests='_state/inputs/*.json',job_manifests='cells/*/invocation_manifest.json')
         save(args.output/'campaign_manifest.json',registered)

@@ -49,7 +49,14 @@ class RecoveryStream(nn.Module):
             variance = (self.second - self.mean.square()).clamp_min(0.05)
             weights = variance.reciprocal().clamp_max(20).detach().clone()
             errors = (prediction - y.flatten(0, 1)).square()
-            gate = self.dual.detach().clone() if self.mode == "adaptive" else torch.ones_like(weights)
+            if self.mode == "adaptive":
+                gate = self.dual.detach().clone()
+            elif self.mode == "adaptive_floor":
+                # With a loss weight of 3, retain the proven w=1 CLS constraint
+                # and let the held-out degradation controller add up to w=2.
+                gate = (1.0 + 2.0 * self.dual.detach().clone()) / 3.0
+            else:
+                gate = torch.ones_like(weights)
             calibrated = int(self.steps) >= self.warmup
             loss = (errors * weights * gate).mean() if calibrated else prediction.sum() * 0
             with torch.no_grad():

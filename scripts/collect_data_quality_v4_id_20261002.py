@@ -90,12 +90,15 @@ def dense_score(directory: Path, checkpoint: str, checkpoint_sha: str,
     return statistics.mean(scores), ";".join(map(str, paths))
 
 
-def collect_arm(arm: str) -> list[dict]:
-    root = ROOT / "eval" / arm
+def collect_arm(arm: str, root_override: Path | None = None,
+                audit_override: Path | None = None) -> list[dict]:
+    root = root_override or ROOT / "eval" / arm
     prepared = read_json(root / "prepared.json")
-    audit = read_json(ROOT / "training" / arm / "audit.json")
-    checkpoint = audit["checkpoint"]
-    digest = audit["checkpoint_sha256"]
+    audit = read_json(audit_override or ROOT / "training" / arm / "audit.json")
+    checkpoint = audit.get("checkpoint", audit.get("teacher_checkpoint"))
+    digest = audit.get("checkpoint_sha256", audit.get("teacher_checkpoint_sha256"))
+    if not checkpoint or not digest:
+        raise ValueError(f"Arm {arm}: training audit does not identify a checkpoint")
     if prepared["checkpoint_sha256"] != digest or prepared["monuseg_counts"] != {"train": 30, "val": 7, "test": 14}:
         raise ValueError(f"Arm {arm} provenance or MoNuSeg split mismatch")
     rows = []
@@ -106,7 +109,9 @@ def collect_arm(arm: str) -> list[dict]:
                          checkpoint_sha256=digest, source=source))
 
     shared = read_json(root / "shared/campaign_manifest.json")
-    if len(shared["tasks"]) != 38 or shared["checkpoint_teacher_sha256"] != {f"dq_{arm}": digest}:
+    teacher_labels = {task["asset"]["arm"] for task in shared["tasks"]}
+    if len(shared["tasks"]) != 38 or len(teacher_labels) != 1 or \
+            shared["checkpoint_teacher_sha256"] != {next(iter(teacher_labels)): digest}:
         raise ValueError(f"Arm {arm}: shared task inventory or checkpoint mismatch")
     for task in shared["tasks"]:
         spec = task["dataset"]
@@ -211,26 +216,53 @@ def collect_arm(arm: str) -> list[dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--arms", nargs="+", choices=ARMS, default=list(ARMS[:5]))
+    parser.add_argument("--arms", nargs="+", choices=ARMS)
+    parser.add_argument("--arm", help="Single custom arm label for an explicit evaluation root")
+    parser.add_argument("--eval-root", type=Path)
+    parser.add_argument("--audit-path", type=Path)
+    parser.add_argument("--output-dir", type=Path, default=ROOT)
     parser.add_argument("--stem", default="v4_id")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z0-9_]+", args.stem):
         raise ValueError("Output stem must contain only lowercase letters, digits, and underscores")
-    if args.stem == "v4_id_two20tb" and tuple(args.arms) != (
+    if args.eval_root:
+        if not args.arm or not args.audit_path:
+            parser.error("--eval-root requires --arm and --audit-path")
+        arms = [args.arm]
+        rows = collect_arm(args.arm, args.eval_root, args.audit_path)
+    else:
+        if args.arm or args.audit_path:
+            parser.error("--arm and --audit-path require --eval-root")
+        arms = args.arms or list(ARMS[:5])
+        rows = [row for arm in arms for row in collect_arm(arm)]
+    if args.stem == "v4_id_two20tb" and tuple(arms) != (
         "1tb", "5tb", "20tb_route2_ddp", "20tb_route1_ddp", "100tb", "1pb"
     ):
         raise ValueError("The two-20TB figure requires both independently audited DDP arms")
-    rows = [row for arm in args.arms for row in collect_arm(arm)]
-    score_path = ROOT / f"{args.stem}_cell_scores.csv"
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    score_path = args.output_dir / f"{args.stem}_cell_scores.csv"
     with score_path.open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
+    components_path = args.output_dir / "components.csv"
+    with components_path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=("checkpoint", "task_key", "family", "dataset",
+                                                     "split", "metric", "value", "status", "source",
+                                                     "validation"))
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(dict(checkpoint=Path(row["checkpoint"]).parent.name.removeprefix("training_"),
+                                 task_key=f"{row['arm']}__{row['family']}__{row['dataset']}",
+                                 family=row["family"], dataset=row["dataset"], split=row["split"],
+                                 metric="mDice" if row["dataset"] == "monuseg" or row["family"] == "segmentation"
+                                 else row["family"], value=row["score"], status="VALID_COMPLETE",
+                                 source=row["source"], validation=str(args.eval_root)))
     by_family = defaultdict(list)
     for row in rows:
         by_family[(row["arm"], row["family"])].append(row["score"])
     family_rows = []
-    for arm in args.arms:
+    for arm in arms:
         means = []
         for family in FAMILIES:
             scores = by_family[(arm, family)]
@@ -239,17 +271,24 @@ def main() -> None:
             family_rows.append(dict(arm=arm, family=family, n_datasets=len(scores), mean_score=mean))
         family_rows.append(dict(arm=arm, family="ID family mean", n_datasets=sum(EXPECTED.values()),
                                 mean_score=statistics.mean(means)))
-    family_path = ROOT / f"{args.stem}_family_scores.csv"
+    family_path = args.output_dir / f"{args.stem}_family_scores.csv"
     with family_path.open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=family_rows[0].keys())
         writer.writeheader()
         writer.writerows(family_rows)
-    (ROOT / f"{args.stem}_summary.json").write_text(json.dumps(dict(
+    training_state = "COMPLETE"
+    optimizer_update = None
+    if args.eval_root:
+        prepared = read_json(args.eval_root / "prepared.json")
+        training_state = prepared.get("training_state", "COMPLETE")
+        optimizer_update = prepared.get("checkpoint_optimizer_update")
+    (args.output_dir / f"{args.stem}_summary.json").write_text(json.dumps(dict(
         protocol="bio-eval-union-v4 ID only, MoNuSeg train30/val7/test14",
-        arms=args.arms, cells_per_arm=sum(EXPECTED.values()),
+        arms=arms, cells_per_arm=sum(EXPECTED.values()), training_state=training_state,
+        checkpoint_optimizer_update=optimizer_update,
         source_score_csv=str(score_path), source_family_csv=str(family_path),
         family_rows=family_rows), indent=2) + "\n")
-    print(f"Collected {len(rows)} validated ID scores from {len(args.arms)} arms")
+    print(f"Collected {len(rows)} validated ID scores from {len(arms)} arms")
 
 
 if __name__ == "__main__":

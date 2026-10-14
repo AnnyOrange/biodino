@@ -27,8 +27,8 @@ from pathlib import Path
 
 REPO = Path("/mnt/huawei_deepcad/dinov3")
 ROOT = REPO / "outputs/02_eval_runs/hs6_l_1tb_5tb_1pb_100tb_v4_completion_20260924"
-SOURCE = Path("/mnt/huawei_deepcad/dinov3_selective_retention_snapshot_20260923")
-PYTHON = Path("/mnt/huawei_deepcad/eval_envs/retest_20260918_v2/bin/python")
+SOURCE = REPO
+PYTHON = Path(sys.executable)
 BENCHMARK = Path("/mnt/huawei_deepcad/benchmark")
 RXRX3_CACHE = REPO / "outputs/02_eval_inputs/formal_v3/rxrx3-core"
 PROTOCOL = REPO / "Evaluation Rules/protocol_v4.json"

@@ -18,7 +18,7 @@ ROOT = Path("/mnt/huawei_deepcad/dinov3")
 DATA = Path("/mnt/huawei_blm/hs6_long_uniform_100tb_vs_20tb_20261009")
 BASE = ROOT / "outputs/01_training_runs/HS6_L_robust_biosafe256_gb1024_lr1e4_wu3_tw30_nosig_e61x4098_20tb_route2_15tb07_5tbboundary03_ablation_8x3090qi_20260928/config.yaml"
 TWENTY_INVENTORY = Path("/mnt/huawei_blm/deepcad_20tb_quality_1m_20261002/inventory.json")
-HUNDRED_STREAM = DATA / "stream_index/assignment.json"
+HUNDRED_STREAM = DATA / "stream_index_exact/assignment.json"
 UPDATES = 16_000
 WORLD_SIZE = 8
 MICROBATCH = 8
@@ -48,9 +48,9 @@ def source_items(arm: str) -> list[tuple[str, int]]:
 def assignment(arm: str) -> dict:
     if arm == "100tb":
         index = json.loads(HUNDRED_STREAM.read_text())
-        if index["status"] != "PASS" or index["format"] != "100tb_raw_tar_stream_v1" or \
+        if index["status"] != "PASS" or index["format"] != "100tb_raw_tar_stream_v2" or \
                 index["candidate_count"] != EXPECTED_100TB or index["world_size"] != WORLD_SIZE or \
-                min(index["rank_sample_counts"]) < TARGET_PER_RANK:
+                index["rank_primary_counts"] != [TARGET_PER_RANK] * WORLD_SIZE:
             raise ValueError("100TB streaming index does not cover the requested budget")
         return {
             "status": "PASS", "arm": arm,
@@ -131,7 +131,8 @@ def main() -> None:
     parser.add_argument("--python-bin", default="/home/bbnc/anaconda3/envs/dinov3/bin/python")
     args = parser.parse_args()
     allocation = assignment(args.arm)
-    allocation_path = DATA / f"{args.arm}_rank_assignment.json"
+    allocation_path = DATA / ("100tb_exact_rank_assignment.json" if args.arm == "100tb"
+                              else "20tb_rank_assignment.json")
     if allocation_path.exists():
         prior = json.loads(allocation_path.read_text())
         if prior != allocation:
@@ -162,7 +163,7 @@ def main() -> None:
         "train.OFFICIAL_EPOCH_LENGTH": 4098,
         "train.max_updates": 1 if args.smoke else UPDATES,
         "train.num_workers": 1,
-        "train.wds_shuffle_buffer": 64 if args.arm == "100tb" else 3000,
+        "train.wds_shuffle_buffer": 1 if args.arm == "20tb" else 64,
         "train.wds_deterministic_resampling": True,
         "train.prefetch_factor": 1,
         "train.pin_memory": False,
@@ -196,7 +197,7 @@ def main() -> None:
     manifest = {
         "arm": args.arm, "objective": "matched finite no-replacement quality comparison",
         "source_population": allocation["sampling_unit"],
-        "sampling": "global SRS candidate set, rank-disjoint raw-tar streaming" if args.arm == "100tb" else "random finite pass over complete 20TB route-2 pool",
+        "sampling": "first 16,384,000 global SRS priorities, raw-tar streaming; later priorities are read-failure backups" if args.arm == "100tb" else "random finite pass over complete 20TB route-2 pool",
         "source_shards": allocation["source_shards"],
         "source_images": allocation["sample_count"],
         "inventory_sha256": allocation["inventory_sha256"],

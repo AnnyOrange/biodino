@@ -22,7 +22,8 @@ SITES = {
         "worker": Path("/data/xuzijing/hs6_l5_v2_recovery_eval_20260930/bin/run_hs6_l_6m_full_eval_fleet_worker.py"),
         "benchmark": Path("/data/xuzijing/benchmark"),
         "train_config": Path("/data/xuzijing/hs6_l5_v2_recovery_eval_20260930/bin"),
-        "cards": {4: (2, 3500), 5: (2, 3500)},
+        "cards": {0: (5, 1500), 1: (5, 1500), 2: (5, 1500), 3: (5, 1500),
+                  4: (2, 3500), 5: (2, 3500)},
         "prefix": "lyx-w1-resume-v4",
     },
     "hxw": {
@@ -34,8 +35,8 @@ SITES = {
         "worker": Path("/data/hs6_hplus_5tb_eval_20260921/bin/run_hs6_l_6m_full_eval_fleet_worker.py"),
         "benchmark": Path("/data/benchmark"),
         "train_config": Path("/data/hs6_l_5tb_nogram_eval_20260921/source"),
-        "cards": {0: (2, 3500), 1: (1, 2000), 2: (1, 2000), 3: (1, 2000),
-                  5: (2, 3500), 6: (2, 3500), 7: (2, 3500)},
+        "cards": {0: (3, 1500), 1: (1, 1000), 2: (3, 1500), 3: (1, 1000),
+                  4: (5, 1500), 5: (2, 1500), 6: (3, 1500), 7: (2, 1500)},
         "prefix": "hxw-w3-resume-v4",
     },
 }
@@ -82,7 +83,8 @@ def launch(site, gpu, slot, log_root):
                "--benchmark-root", str(site["benchmark"]),
                "--python-bin", str(site["python"]), "--gpu", str(gpu), "--worker", name,
                "--official-epoch-length", "4098", "--full-eval-period", "488",
-               "--min-local-checkpoint-id", "35623", "--expected-checkpoints", "31",
+               "--min-local-checkpoint-id", str(site.get("min_checkpoint", 35623)),
+               "--expected-checkpoints", str(site.get("expected_checkpoints", 31)),
                "--ready-age-seconds", "300", "--jobs-cap", "1", "--max-attempts", "2",
                "--poll-seconds", "15", "--allow-busy-gpu", "--once", "--include-lanes", LANES]
     env = dict(os.environ, PYTHONPATH=str(site["repo"]), FROZEN_BATCH_SIZE="64",
@@ -98,15 +100,41 @@ def launch(site, gpu, slot, log_root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--site", choices=SITES, required=True)
+    parser.add_argument("--gpus", type=int, nargs="+", help="Restrict evaluation to these physical GPUs")
+    parser.add_argument("--arm", help="Evaluate another arm in the same training root")
+    parser.add_argument("--min-checkpoint", type=int, default=35623)
+    parser.add_argument("--expected-checkpoints", type=int, default=31)
+    parser.add_argument("--prefix", help="Unique worker and controller prefix")
+    parser.add_argument("--per-gpu-limit", type=int)
+    parser.add_argument("--headroom-mib", type=int)
     args = parser.parse_args()
     site = SITES[args.site]
+    if args.arm:
+        site["run"] = site["run"].parent / args.arm
+        site["arm"] = args.arm
+    site["min_checkpoint"] = args.min_checkpoint
+    site["expected_checkpoints"] = args.expected_checkpoints
+    if args.prefix:
+        site["prefix"] = args.prefix
+    if args.gpus is not None:
+        unknown = set(args.gpus) - set(site["cards"])
+        if unknown:
+            parser.error(f"unknown GPU indices: {sorted(unknown)}")
+        site["cards"] = {gpu: site["cards"][gpu] for gpu in args.gpus}
+    if args.per_gpu_limit is not None or args.headroom_mib is not None:
+        site["cards"] = {gpu: (args.per_gpu_limit or limit, args.headroom_mib or headroom)
+                         for gpu, (limit, headroom) in site["cards"].items()}
+    (site["eval"] / site["arm"] / "adapters").mkdir(parents=True, exist_ok=True)
+    (site["eval"] / site["arm"] / "results").mkdir(parents=True, exist_ok=True)
     log_root = site["eval"] / "logs/resume_v4_20261009"
     log_root.mkdir(parents=True, exist_ok=True)
-    with (log_root / f"{args.site}_frozen_controller.lock").open("a") as lock:
+    with (log_root / f"{site['prefix']}_frozen_controller.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         children = {}
         started = {}
         cooldown = {}
+        gpu_order = list(site["cards"])
+        gpu_cursor = 0
         while True:
             now = time.time()
             for key, process in list(children.items()):
@@ -117,11 +145,17 @@ def main():
                     del started[key]
             cards = memory()
             counts = resident_workers(site["prefix"])
-            for gpu, (limit, headroom) in site["cards"].items():
+            ready = any(int(p.parent.name.rsplit("_", 1)[-1]) >= site["min_checkpoint"]
+                        for p in (site["run"] / "eval").glob("training_*/teacher_checkpoint.pth"))
+            launched = False
+            for offset in range(len(gpu_order)):
+                index = (gpu_cursor + offset) % len(gpu_order)
+                gpu = gpu_order[index]
+                limit, headroom = site["cards"][gpu]
                 used, total = cards[gpu]
                 loading = sum(EXPECTED_TEST_MIB for key, when in started.items()
                               if key.startswith(f"gpu{gpu}-") and now - when < 90)
-                if counts.get(gpu, 0) >= limit or total - used - loading < EXPECTED_TEST_MIB + headroom:
+                if not ready or counts.get(gpu, 0) >= limit or total - used - loading < EXPECTED_TEST_MIB + headroom:
                     continue
                 for slot in range(limit):
                     key = f"gpu{gpu}-slot{slot}"
@@ -130,10 +164,14 @@ def main():
                     children[key] = launch(site, gpu, slot, log_root)
                     started[key] = now
                     print("START", key, children[key].pid, "gpu_used_mib", used, flush=True)
+                    gpu_cursor = (index + 1) % len(gpu_order)
+                    launched = True
                     break
-                break
-            atomic_json(log_root / f"{args.site}_frozen_status.json", {
+                if launched:
+                    break
+            atomic_json(log_root / f"{site['prefix']}_frozen_status.json", {
                 "updated_utc": datetime.now(timezone.utc).isoformat(),
+                "arm": site["arm"], "ready": ready,
                 "gpu_memory": cards, "workers": counts,
                 "children": {key: process.pid for key, process in children.items()},
                 "limits": {gpu: value[0] for gpu, value in site["cards"].items()},

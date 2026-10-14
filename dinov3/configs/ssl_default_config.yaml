@@ -330,6 +330,18 @@ optim:
   warmup_epochs: 10
   min_lr: 1.0e-06
   schedule_trunc_extra: 0.0  # Compute the schedule for (1 + schedule_trunc_extra) steps and truncate, .25 is a good choice
+  # WSD-style cooldown branch for resumed runs: from start_iteration (must equal the resumed
+  # iteration = checkpoint iteration + 1) decay lr -> lr_final (default min_lr) and teacher momentum
+  # -> momentum_final (default final_momentum_teacher) over `length` updates, then stop.
+  cooldown:
+    enabled: false
+    start_iteration: 0
+    length: 0
+    shape: linear  # linear | cosine
+    lr_final: null
+    momentum_final: null
+    wd_mode: continue  # continue (original schedule) | freeze (hold the fork value)
+    teacher_temp_mode: freeze  # freeze | continue
   clip_grad: 3.0
   freeze_last_layer_epochs: 1
   # Keep the trunk fixed for an initial heads-only warmup, measured in optimizer updates.
@@ -415,6 +427,19 @@ checkpointing:
 # #     end: 0.07
 # #     warmup_epochs: 30
 
+# Multi-teacher recoverability distillation from frozen external experts (dinov3/train/external_distill.py).
+# teachers: list of {name, kind: timm_dir|dinov3, path|weights, img_size, mean, std, weight, model_args}.
+external_distill:
+  enabled: false
+  loss_weight: 1.0
+  cls_weight: 1.0
+  patch_weight: 1.0
+  patches: 64
+  ridge: 0.1
+  momentum: 0.98
+  warmup: 32
+  solve_every: 8
+  teachers: []
 recovery:
   enabled: false
   mode: adaptive
