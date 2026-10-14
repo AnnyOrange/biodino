@@ -14,7 +14,6 @@ compute_precision:
   sharding_strategy: SHARD_GRAD_OP
   distributed_mode: fsdp
   teacher_cpu_offload: false
-  student_cpu_offload: false
 
 dino:
   loss_weight: 1.0
@@ -128,6 +127,7 @@ optim:
   dino_head_wd_multiplier: 1.0
   layerwise_decay: 0.98
   multi_tensor_optim: true
+  cpu_offload_state: false
   adamw_beta1: 0.9
   adamw_beta2: 0.99
 

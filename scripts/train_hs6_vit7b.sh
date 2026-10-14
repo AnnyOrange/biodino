@@ -24,7 +24,7 @@ Common overrides:
   FP8_ENABLED=true TRAIN_COMPILE=false
   DISTRIBUTED_MODE=fsdp CHECKPOINTING_FULL=false
   TEACHER_CPU_OFFLOAD=false
-  STUDENT_CPU_OFFLOAD=false
+  OPTIM_CPU_OFFLOAD_STATE=false
   EVAL_PERIOD=0 CHECKPOINT_PERIOD=<mode default> CHECKPOINT_MAX_TO_KEEP=2
   RESUME=1                 Resume from OUTPUT_DIR/ckpt when present.
   DRY_RUN=1                Validate and print the command without launching.
@@ -141,7 +141,7 @@ TRAIN_COMPILE="${TRAIN_COMPILE:-false}"
 DISTRIBUTED_MODE="${DISTRIBUTED_MODE:-fsdp}"
 CHECKPOINTING_FULL="${CHECKPOINTING_FULL:-false}"
 TEACHER_CPU_OFFLOAD="${TEACHER_CPU_OFFLOAD:-false}"
-STUDENT_CPU_OFFLOAD="${STUDENT_CPU_OFFLOAD:-false}"
+OPTIM_CPU_OFFLOAD_STATE="${OPTIM_CPU_OFFLOAD_STATE:-false}"
 EVAL_PERIOD="${EVAL_PERIOD:-0}"
 CHECKPOINT_PERIOD="${CHECKPOINT_PERIOD:-$DEFAULT_CHECKPOINT_PERIOD}"
 CHECKPOINT_MAX_TO_KEEP="${CHECKPOINT_MAX_TO_KEEP:-2}"
@@ -206,13 +206,13 @@ cmd=(
   train.sharded_eval_checkpoint=true
   compute_precision.distributed_mode="$DISTRIBUTED_MODE"
   compute_precision.teacher_cpu_offload="$TEACHER_CPU_OFFLOAD"
-  compute_precision.student_cpu_offload="$STUDENT_CPU_OFFLOAD"
   student.resume_from_teacher_chkpt="$INIT_WEIGHTS"
   student.fp8_enabled="$FP8_ENABLED"
   optim.epochs="$EPOCHS"
   optim.lr="$LR"
   optim.scaling_rule=fixed
   optim.gradient_accumulation_steps="$GRAD_ACCUM_STEPS"
+  optim.cpu_offload_state="$OPTIM_CPU_OFFLOAD_STATE"
   "crops.rgb_mean=$RGB_MEAN"
   "crops.rgb_std=$RGB_STD"
   evaluation.eval_period_iterations="$EVAL_PERIOD"
@@ -229,7 +229,7 @@ echo "[hs6-7b] batch=$TOTAL_GPUS GPUs x $BATCH_SIZE_PER_GPU/GPU x accum $GRAD_AC
 echo "[hs6-7b] schedule=$EPOCHS epochs x $OFFICIAL_EPOCH_LENGTH updates; lr=$LR; fp8=$FP8_ENABLED"
 echo "[hs6-7b] distributed=$DISTRIBUTED_MODE activation_checkpointing_full=$CHECKPOINTING_FULL"
 echo "[hs6-7b] teacher_cpu_offload=$TEACHER_CPU_OFFLOAD"
-echo "[hs6-7b] student_cpu_offload=$STUDENT_CPU_OFFLOAD"
+echo "[hs6-7b] optim_cpu_offload_state=$OPTIM_CPU_OFFLOAD_STATE"
 printf ' %q' "${cmd[@]}"
 printf '\n'
 

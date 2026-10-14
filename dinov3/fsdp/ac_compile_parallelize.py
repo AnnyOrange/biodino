@@ -196,11 +196,7 @@ def ac_compile_parallelize(
         else:
             mesh = world_mesh
         fsdp_config = {"mesh": mesh, "mp_policy": mp_policy}
-        offloaded = (
-            (m is trained_model and bool(getattr(cfg.compute_precision, "student_cpu_offload", False)))
-            or (m is not trained_model and bool(getattr(cfg.compute_precision, "teacher_cpu_offload", False)))
-        )
-        if offloaded:
+        if m is not trained_model and bool(getattr(cfg.compute_precision, "teacher_cpu_offload", False)):
             fsdp_config["offload_policy"] = CPUOffloadPolicy()
         for k in m.keys():
             if k != "backbone":
@@ -223,12 +219,9 @@ def ac_compile_parallelize(
             fully_shard(m.backbone, **fsdp_config, reshard_after_forward=True)
             register_fsdp_forward_method(m.backbone, "get_intermediate_layers")
 
-    # 4/ Materialize offloaded models on CPU as required by FSDP2.
+    # 4/ Materialize offloaded inference models on CPU as required by FSDP2.
     for model in all_models:
-        offloaded = (
-            (model is trained_model and bool(getattr(cfg.compute_precision, "student_cpu_offload", False)))
-            or (model is not trained_model and bool(getattr(cfg.compute_precision, "teacher_cpu_offload", False)))
-        )
+        offloaded = model is not trained_model and bool(getattr(cfg.compute_precision, "teacher_cpu_offload", False))
         model.to_empty(device="cpu" if offloaded else "cuda")
 
     # 5/ FSDP2: Reshard immediately after forward for inference-only models
