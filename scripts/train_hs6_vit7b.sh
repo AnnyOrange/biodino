@@ -22,6 +22,7 @@ Common overrides:
   LR=3e-5 EPOCHS=15
   NUM_WORKERS=2 PREFETCH_FACTOR=1
   FP8_ENABLED=true TRAIN_COMPILE=false
+  DISTRIBUTED_MODE=fsdp CHECKPOINTING_FULL=false
   EVAL_PERIOD=0 CHECKPOINT_PERIOD=<mode default> CHECKPOINT_MAX_TO_KEEP=2
   RESUME=1                 Resume from OUTPUT_DIR/ckpt when present.
   DRY_RUN=1                Validate and print the command without launching.
@@ -135,12 +136,19 @@ NUM_WORKERS="${NUM_WORKERS:-2}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
 FP8_ENABLED="${FP8_ENABLED:-true}"
 TRAIN_COMPILE="${TRAIN_COMPILE:-false}"
+DISTRIBUTED_MODE="${DISTRIBUTED_MODE:-fsdp}"
+CHECKPOINTING_FULL="${CHECKPOINTING_FULL:-false}"
 EVAL_PERIOD="${EVAL_PERIOD:-0}"
 CHECKPOINT_PERIOD="${CHECKPOINT_PERIOD:-$DEFAULT_CHECKPOINT_PERIOD}"
 CHECKPOINT_MAX_TO_KEEP="${CHECKPOINT_MAX_TO_KEEP:-2}"
 RESUME="${RESUME:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 SKIP_DATA_CHECK="${SKIP_DATA_CHECK:-0}"
+
+case "$DISTRIBUTED_MODE" in
+  fsdp|ddp) ;;
+  *) echo "ERROR: DISTRIBUTED_MODE must be fsdp or ddp." >&2; exit 2 ;;
+esac
 
 [[ -f "$CONFIG_FILE" ]] || { echo "ERROR: missing config: $CONFIG_FILE" >&2; exit 2; }
 [[ -x "$PYTHON" ]] || { echo "ERROR: Python is not executable: $PYTHON" >&2; exit 2; }
@@ -190,7 +198,9 @@ cmd=(
   train.prefetch_factor="$PREFETCH_FACTOR"
   train.OFFICIAL_EPOCH_LENGTH="$OFFICIAL_EPOCH_LENGTH"
   train.compile="$TRAIN_COMPILE"
+  train.checkpointing_full="$CHECKPOINTING_FULL"
   train.sharded_eval_checkpoint=true
+  compute_precision.distributed_mode="$DISTRIBUTED_MODE"
   student.resume_from_teacher_chkpt="$INIT_WEIGHTS"
   student.fp8_enabled="$FP8_ENABLED"
   optim.epochs="$EPOCHS"
@@ -211,6 +221,7 @@ echo "[hs6-7b] mean=$RGB_MEAN std=$RGB_STD"
 echo "[hs6-7b] output=$OUTPUT_DIR init=${INIT_WEIGHTS:-<random>}"
 echo "[hs6-7b] batch=$TOTAL_GPUS GPUs x $BATCH_SIZE_PER_GPU/GPU x accum $GRAD_ACCUM_STEPS = $EFFECTIVE_GLOBAL_BATCH ($ACCUM_SOURCE)"
 echo "[hs6-7b] schedule=$EPOCHS epochs x $OFFICIAL_EPOCH_LENGTH updates; lr=$LR; fp8=$FP8_ENABLED"
+echo "[hs6-7b] distributed=$DISTRIBUTED_MODE activation_checkpointing_full=$CHECKPOINTING_FULL"
 printf ' %q' "${cmd[@]}"
 printf '\n'
 
