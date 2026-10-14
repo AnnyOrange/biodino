@@ -3435,8 +3435,13 @@ class SSLMetaArch(nn.Module):
         else:
             student_param_list, teacher_param_list = self.ema_params_lists
         with torch.no_grad():
-            torch._foreach_mul_(teacher_param_list, m)
-            torch._foreach_add_(teacher_param_list, student_param_list, alpha=1 - m)
+            if any(s.device != t.device for s, t in zip(student_param_list, teacher_param_list)):
+                for student_param, teacher_param in zip(student_param_list, teacher_param_list):
+                    teacher_param.mul_(m)
+                    teacher_param.add_(student_param.detach().to(teacher_param.device), alpha=1 - m)
+            else:
+                torch._foreach_mul_(teacher_param_list, m)
+                torch._foreach_add_(teacher_param_list, student_param_list, alpha=1 - m)
 
     def update_gram(self, m=0, log=True):
         if not self.has_gram_teacher:
