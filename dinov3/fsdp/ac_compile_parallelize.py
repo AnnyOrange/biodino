@@ -10,7 +10,7 @@ from typing import Any, List, Optional
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from torch.distributed._composable.fsdp import MixedPrecisionPolicy, fully_shard
+from torch.distributed._composable.fsdp import CPUOffloadPolicy, MixedPrecisionPolicy, fully_shard
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.distributed.fsdp import register_fsdp_forward_method
 from torch.distributed.fsdp._fully_shard._fsdp_state import FSDPState
@@ -196,6 +196,8 @@ def ac_compile_parallelize(
         else:
             mesh = world_mesh
         fsdp_config = {"mesh": mesh, "mp_policy": mp_policy}
+        if m is not trained_model and bool(getattr(cfg.compute_precision, "teacher_cpu_offload", False)):
+            fsdp_config["offload_policy"] = CPUOffloadPolicy()
         for k in m.keys():
             if k != "backbone":
                 m[k] = fully_shard(m[k], **fsdp_config, reshard_after_forward=True)
