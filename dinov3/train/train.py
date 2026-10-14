@@ -312,6 +312,15 @@ def build_optimizer(cfg, params_groups):
     return torch.optim.AdamW(params_groups, betas=(cfg.optim.adamw_beta1, cfg.optim.adamw_beta2))
 
 
+def _move_adamw_state(optimizer, device):
+    for param, state in optimizer.state.items():
+        target = param.device if device == "param" else device
+        for key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
+            value = state.get(key)
+            if value is not None and value.device != torch.device(target):
+                state[key] = value.to(target, non_blocking=True)
+
+
 def _effective_optimizer_batch(cfg):
     accum_steps = max(1, int(getattr(cfg.optim, "gradient_accumulation_steps", 1)))
     if cfg.multidistillation.enabled:
@@ -818,6 +827,8 @@ def do_train(cfg, model, resume=False):
             )
             + 1
         )
+    if bool(getattr(cfg.optim, "cpu_offload_state", False)):
+        _move_adamw_state(optimizer, "cpu")
     configured_start_iter = getattr(cfg.train, "start_iteration_override", None)
     if configured_start_iter is not None:
         if resume:
@@ -1104,7 +1115,11 @@ def do_train(cfg, model, resume=False):
                     else grad_norm.item()
                 )
 
+        if bool(getattr(cfg.optim, "cpu_offload_state", False)):
+            _move_adamw_state(optimizer, "param")
         optimizer.step()
+        if bool(getattr(cfg.optim, "cpu_offload_state", False)):
+            _move_adamw_state(optimizer, "cpu")
         model.update_ema(mom)
         if cfg.recovery.enabled and float(getattr(cfg.recovery, "anchor_momentum", 0.0)) > 0:
             # Slow anchor: the recovery target tracks the EMA teacher with a long horizon
