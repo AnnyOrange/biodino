@@ -26,6 +26,7 @@ Distributed checkpointer docs:
 
 import inspect
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -286,9 +287,14 @@ def save_checkpoint(
     to_save.update(others)
 
     if sharded:
+        # Some PyTorch writers retain every tensor until a shard file closes,
+        # even with TORCH_SAVE. A file per tensor bounds this additional CPU
+        # memory for large models with optimizer moments already offloaded.
+        single_file_per_rank = os.environ.get("DINOV3_DCP_SINGLE_FILE_PER_RANK", "1") != "0"
+        logger.info("Saving DCP checkpoint (single_file_per_rank=%s): %s", single_file_per_rank, ckpt_dir)
         dcp.save(
             to_save,
-            storage_writer=dcpfs.FileSystemWriter(ckpt_dir_tmp),
+            storage_writer=dcpfs.FileSystemWriter(ckpt_dir_tmp, single_file_per_rank=single_file_per_rank),
             process_group=process_group,
         )
         if rank == 0:
@@ -332,6 +338,7 @@ def load_checkpoint(
     optimizer: torch.optim.Optimizer | None = None,
     strict_loading: bool = True,
     process_group: dist.ProcessGroup = None,
+    optimizer_cpu_offload: bool = False,
     **others: Stateful,
 ) -> int | None:
     """
@@ -409,7 +416,25 @@ def load_checkpoint(
     to_load = {"iteration": None}
     to_load["model"] = dcpsd.get_model_state_dict(model)
     if optimizer is not None:
+        if optimizer_cpu_offload:
+            # DCP normally initializes Adam by making a dummy GPU optimizer
+            # step. A 7B model fits on four GPUs with CPU moments, but that
+            # temporary allocation of ALL moments and gradients does not.
+            if not isinstance(optimizer, torch.optim.AdamW):
+                raise TypeError('CPU optimizer checkpoint restore currently supports AdamW only')
+            if optimizer.state:
+                raise ValueError('CPU optimizer restore expects an uninitialized optimizer')
+            for group in optimizer.param_groups:
+                for param in group['params']:
+                    state = optimizer.state[param]
+                    step_device = param.device if group.get('capturable') or group.get('fused') else 'cpu'
+                    state['step'] = torch.zeros((), dtype=torch.float32, device=step_device)
+                    for name in ('exp_avg', 'exp_avg_sq'):
+                        state[name] = torch.zeros_like(param, device='cpu')
+                    if group.get('amsgrad'):
+                        state['max_exp_avg_sq'] = torch.zeros_like(param, device='cpu')
         to_load["optimizer"] = dcpsd.get_optimizer_state_dict(model, optimizer)
+        optimizer_layout = [tuple(g['params']) for g in to_load['optimizer']['param_groups']]
     to_load.update(others)
     dcp.load(
         to_load,
@@ -420,7 +445,22 @@ def load_checkpoint(
     iteration = to_load["iteration"]
     dcpsd.set_model_state_dict(model, to_load["model"])
     if optimizer is not None:
-        dcpsd.set_optimizer_state_dict(model, optimizer, to_load["optimizer"])
+        if optimizer_cpu_offload:
+            loaded = to_load['optimizer']
+            if [tuple(g['params']) for g in loaded['param_groups']] != optimizer_layout:
+                raise ValueError('Optimizer parameter layout changed while loading the checkpoint')
+            # Avoid Optimizer.load_state_dict(), which copies every moment to
+            # the parameter's GPU even when the run uses CPU state offload.
+            for group, saved_group in zip(optimizer.param_groups, loaded['param_groups']):
+                for param, name in zip(group['params'], saved_group['params']):
+                    optimizer.state[param] = loaded['state'][name]
+                    if any(v.device.type != 'cpu' for k, v in optimizer.state[param].items()
+                           if k != 'step' and torch.is_tensor(v)):
+                        raise RuntimeError('Restored offloaded AdamW state must remain on CPU')
+                group.update({k: v for k, v in saved_group.items() if k != 'params'})
+            logger.info('Restored DCP AdamW moments directly on CPU without a dummy GPU step')
+        else:
+            dcpsd.set_optimizer_state_dict(model, optimizer, to_load["optimizer"])
     logger.info("Loaded DCP checkpoint: %s", ckpt_dir)
     return iteration
 

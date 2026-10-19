@@ -18,6 +18,7 @@ import json
 import os
 import random
 import itertools
+import re
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional, Union
@@ -243,6 +244,61 @@ def build_packed_wds_pipeline(
     return pipeline
 
 
+# Specimen-paired views (2026-10-15). The 20TB route2 shards store each source image as several adjacent tiles
+# (keys ..._sid<source>_s<run>_i<item>_r<row>_c<col>; ~5.4 tiles per image in sampled shards), and the 5TB shards
+# occasionally store several crops of one original image (..._oid<image>_crop_<y>_<x>). Tiles of one source image
+# share the specimen (cell line, perturbation, tissue, stain) but show different cells. With probability
+# DINOV3_SPECIMEN_PAIR_PROB a tile is emitted together with a random sibling tile, and the augmentation draws its
+# second global crop (and half of the local crops) from the sibling (DataAugmentationDINO.specimen_pair). Grouping
+# runs on the shard order, before the sample shuffle, so it costs no extra I/O.
+SPECIMEN_PAIR_ENV = "DINOV3_SPECIMEN_PAIR_PROB"
+_SPECIMEN_KEY_RES = (
+    re.compile(r"_sid(\d+)_s(\d+)_i(\d+)_r\d+_c\d+$"),
+    re.compile(r"_oid(\d+)_crop_\d+_\d+$"),
+)
+
+
+def _specimen_id(key: str) -> Optional[str]:
+    for pattern in _SPECIMEN_KEY_RES:
+        m = pattern.search(key)
+        if m:
+            return "/".join(m.groups())
+    return None
+
+
+def _specimen_pair_prob() -> float:
+    try:
+        return float(os.environ.get(SPECIMEN_PAIR_ENV, "0") or 0.0)
+    except ValueError:
+        return 0.0
+
+
+def _make_specimen_pairing(prob: float, seed: int, max_group: int = 64):
+    def stage(samples):
+        worker = torch.utils.data.get_worker_info()
+        rng = random.Random(seed * 7919 + (0 if worker is None else worker.id) + 104729 * os.getpid())
+        group: list = []
+        group_id = None
+
+        def flush(members):
+            for i, sample in enumerate(members):
+                if len(members) > 1 and rng.random() < prob:
+                    j = rng.choice([k for k in range(len(members)) if k != i])
+                    sample = dict(sample)
+                    sample["__partner__"] = {k: v for k, v in members[j].items() if k.lower().startswith("ch")}
+                yield sample
+
+        for sample in samples:
+            sid = _specimen_id(str(sample.get("__key__", "")))
+            if sid is None or sid != group_id or len(group) >= max_group:
+                yield from flush(group)
+                group, group_id = [], sid
+            group.append(sample)
+        yield from flush(group)
+
+    return stage
+
+
 def build_packed_robust_wds_pipeline(
     config: WdsConfig,
     transform: Optional[Callable] = None,
@@ -265,23 +321,40 @@ def build_packed_robust_wds_pipeline(
 
     target_ch = config.target_channels or 8
 
+    pair_prob = _specimen_pair_prob()
+    emit_teacher_domain = os.environ.get("DINOV3_TEACHER_DOMAIN_METADATA", "0") == "1"
+
     def decode_sample(sample: dict) -> Optional[dict]:
         tensor = decode_packed_sample_robust(
             sample, target_channels=target_ch, p_low=p_low, p_high=p_high
         )
         if tensor is None:
             return None
-        return {
+        out = {
             "image": tensor,
             "__key__": sample.get("__key__", ""),
             "__url__": sample.get("__url__", ""),
         }
+        partner = sample.get("__partner__")
+        if emit_teacher_domain:
+            from .teacher_domains import teacher_domain
+            out["teacher_domain"] = teacher_domain(sample)
+        if partner:
+            partner_tensor = decode_packed_sample_robust(
+                {**partner, "__key__": sample.get("__key__", "") + "#partner"},
+                target_channels=target_ch, p_low=p_low, p_high=p_high,
+            )
+            if partner_tensor is not None and partner_tensor.shape[0] == tensor.shape[0]:
+                out["partner"] = partner_tensor
+        return out
 
     stages = [
         _make_shard_source(wds, config),
         wds.tarfile_to_samples(),
-        _make_sample_shuffle(wds, config),
     ]
+    if pair_prob > 0:
+        stages.append(_make_specimen_pairing(pair_prob, config.resample_seed))
+    stages.append(_make_sample_shuffle(wds, config))
     stages.extend([wds.map(decode_sample), wds.select(lambda x: x is not None)])
     if config.finite_once and config.skip_samples:
         if config.skip_samples < 0:
@@ -290,7 +363,12 @@ def build_packed_robust_wds_pipeline(
 
     if transform is not None:
         def apply_transform(sample: dict) -> tuple:
-            transformed = transform(sample["image"])
+            if "partner" in sample and hasattr(transform, "specimen_pair"):
+                transformed = transform.specimen_pair(sample["image"], sample["partner"])
+            else:
+                transformed = transform(sample["image"])
+            if emit_teacher_domain:
+                transformed["teacher_domain"] = sample["teacher_domain"]
             transformed["__key__"] = sample.get("__key__", "")
             transformed["__url__"] = sample.get("__url__", "")
             return transformed, ()
@@ -299,10 +377,11 @@ def build_packed_robust_wds_pipeline(
 
     pipeline = wds.DataPipeline(*stages)
     logger.info(
-        "Packed ROBUST WebDataset pipeline built: target_channels=%d pct=[%s,%s] urls=%s",
+        "Packed ROBUST WebDataset pipeline built: target_channels=%d pct=[%s,%s] specimen_pair_prob=%s urls=%s",
         target_ch,
         p_low,
         p_high,
+        pair_prob,
         config.shard_urls,
     )
     return pipeline

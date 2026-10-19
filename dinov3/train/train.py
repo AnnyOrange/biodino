@@ -268,6 +268,8 @@ def get_args_parser(add_help: bool = True):
         action="store_true",
         help="Whether to not attempt to resume from the checkpoint directory. ",
     )
+    parser.add_argument("--expected-start-iteration", type=int, default=None,
+                        help="Fail before training if checkpoint resume starts at another iteration.")
     parser.add_argument("--eval-only", action="store_true", help="perform evaluation only")
     parser.add_argument("--eval", type=str, default="", help="Eval type to perform")
     parser.add_argument(
@@ -319,6 +321,32 @@ def _move_adamw_state(optimizer, device):
             value = state.get(key)
             if value is not None and value.device != torch.device(target):
                 state[key] = value.to(target, non_blocking=True)
+
+
+def _chunked_offloaded_step(optimizer, chunk):
+    # AdamW step with CPU-resident moments, a few parameters at a time: only `chunk` parameters' moments are on the
+    # GPU at once (a full ViT-7B moment set is ~13 GB per rank on 4 ranks, which does not fit next to params+grads).
+    groups = optimizer.param_groups
+    try:
+        for group in groups:
+            params = [p for p in group["params"] if p.grad is not None]
+            for i in range(0, len(params), chunk):
+                sub = params[i : i + chunk]
+                for p in sub:
+                    st = optimizer.state.get(p)
+                    if st:
+                        for key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
+                            if st.get(key) is not None:
+                                st[key] = st[key].to(p.device, non_blocking=True)
+                optimizer.param_groups = [{**group, "params": sub}]
+                optimizer.step()
+                for p in sub:
+                    st = optimizer.state[p]
+                    for key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
+                        if st.get(key) is not None:
+                            st[key] = st[key].to("cpu")
+    finally:
+        optimizer.param_groups = groups
 
 
 def _effective_optimizer_batch(cfg):
@@ -790,7 +818,7 @@ def build_multi_resolution_data_loader_from_cfg(
     return data_loader
 
 
-def do_train(cfg, model, resume=False):
+def do_train(cfg, model, resume=False, expected_start_iteration=None):
     process_subgroup = distributed.get_process_subgroup()
     checkpoint_pg = distributed.get_checkpoint_process_group()
     ckpt_dir = Path(cfg.train.output_dir, "ckpt").expanduser()
@@ -824,9 +852,13 @@ def do_train(cfg, model, resume=False):
                 optimizer=optimizer,
                 strict_loading=False,
                 process_group=checkpoint_pg,
+                optimizer_cpu_offload=bool(getattr(cfg.optim, "cpu_offload_state", False)),
             )
             + 1
         )
+    if expected_start_iteration is not None and start_iter != expected_start_iteration:
+        raise ValueError(f"Training starts at iteration {start_iter}, expected "
+                         f"{expected_start_iteration}; check the output directory and checkpoint")
     if bool(getattr(cfg.optim, "cpu_offload_state", False)):
         _move_adamw_state(optimizer, "cpu")
     configured_start_iter = getattr(cfg.train, "start_iteration_override", None)
@@ -862,10 +894,12 @@ def do_train(cfg, model, resume=False):
     cooldown_cfg = getattr(cfg.optim, "cooldown", None)
     if cooldown_cfg is not None and bool(getattr(cooldown_cfg, "enabled", False)):
         cooldown_end = int(cooldown_cfg.start_iteration) + int(cooldown_cfg.length)
-        if start_iter != int(cooldown_cfg.start_iteration):
+        # The override is a pure function of the config, so a crashed cooldown branch can resume from any of
+        # its own checkpoints inside [start_iteration, end); a fork must start exactly at start_iteration.
+        if not int(cooldown_cfg.start_iteration) <= start_iter < cooldown_end:
             raise ValueError(
-                f"optim.cooldown.start_iteration={int(cooldown_cfg.start_iteration)} must equal the resumed "
-                f"start iteration {start_iter} (checkpoint iteration + 1)"
+                f"resumed start iteration {start_iter} (checkpoint iteration + 1) must lie in the cooldown window "
+                f"[{int(cooldown_cfg.start_iteration)}, {cooldown_end})"
             )
         max_iter = min(max_iter, cooldown_end)
         logger.info("Cooldown branch: training stops at optimizer update %d", max_iter)
@@ -900,6 +934,8 @@ def do_train(cfg, model, resume=False):
 
     # Metric logging
     logger.info("Starting training from iteration %d", start_iter)
+    if torch.cuda.is_available():
+        logger.info("CUDA memory at start: allocated %.2f GiB, reserved %.2f GiB", torch.cuda.memory_allocated() / 2**30, torch.cuda.memory_reserved() / 2**30)
     metrics_file = os.path.join(cfg.train.output_dir, "training_metrics.json")
     raw_metrics_file = os.path.join(cfg.train.output_dir, "raw_loss_metrics.jsonl")
     raw_loss_static_fields = _build_raw_loss_static_fields(
@@ -976,7 +1012,9 @@ def do_train(cfg, model, resume=False):
                         consumed_keys.clear()
                     dest.write(line)
             os.replace(temp_path, audit_path)
-        audit_file = audit_path.open("a" if start_iter else "w", encoding="utf-8")
+        audit_file = audit_path.open(
+            "w" if finite_fresh_segment or not start_iter else "a", encoding="utf-8"
+        )
 
     for data in metric_logger.log_every(
         data_loader,
@@ -1009,7 +1047,9 @@ def do_train(cfg, model, resume=False):
         is_cycle_start = micro_step_in_cycle == 0
         is_update_step = (micro_step_in_cycle + 1) == accum_steps
 
-        if accum_steps > 1:
+        # ViT-7B on 32 GB cards: skipping the sync keeps a full unsharded gradient (13-27 GB) alive between
+        # micro-steps, so `train.sync_grads_every_microstep` reduce-scatters every micro-step instead (more traffic).
+        if accum_steps > 1 and not bool(getattr(cfg.train, "sync_grads_every_microstep", False)):
             # FSDP2 otherwise reduce-scatters gradients after every micro-step.
             # DDP exposes the same intent through ``require_backward_grad_sync``.
             for student_module in student.values():
@@ -1116,10 +1156,9 @@ def do_train(cfg, model, resume=False):
                 )
 
         if bool(getattr(cfg.optim, "cpu_offload_state", False)):
-            _move_adamw_state(optimizer, "param")
-        optimizer.step()
-        if bool(getattr(cfg.optim, "cpu_offload_state", False)):
-            _move_adamw_state(optimizer, "cpu")
+            _chunked_offloaded_step(optimizer, int(getattr(cfg.optim, "cpu_offload_chunk_params", 16)))
+        else:
+            optimizer.step()
         model.update_ema(mom)
         if cfg.recovery.enabled and float(getattr(cfg.recovery, "anchor_momentum", 0.0)) > 0:
             # Slow anchor: the recovery target tracks the EMA teacher with a long horizon
@@ -1161,6 +1200,10 @@ def do_train(cfg, model, resume=False):
             batch_sample_key_digest=batch_sample_key_digest,
         )
 
+        # Gradients have been consumed by the optimizer and are not checkpoint
+        # state. Release their shards before teacher export / optimizer saving.
+        optimizer.zero_grad(set_to_none=True)
+
         if (
             cfg.evaluation.eval_period_iterations > 0
             and (iteration + 1) % cfg.evaluation.eval_period_iterations == 0
@@ -1188,7 +1231,6 @@ def do_train(cfg, model, resume=False):
                     keep_checkpoint_copy(ckpt_dir / str(iteration))
 
         iteration = iteration + 1
-        optimizer.zero_grad(set_to_none=True)
     if audit_file is not None:
         audit_file.close()
         expected_updates = max_iter - start_iter if finite_fresh_segment else max_iter
@@ -1256,7 +1298,8 @@ def main(argv=None):
             + 1
         )
         return do_test(cfg, model, f"manual_{iteration}", distributed.get_checkpoint_process_group())
-    do_train(cfg, model, resume=not args.no_resume)
+    do_train(cfg, model, resume=not args.no_resume,
+             expected_start_iteration=args.expected_start_iteration)
 
 
 if __name__ == "__main__":
