@@ -89,9 +89,21 @@ def verify_new(state):
         raise RuntimeError('New 7B supervisor did not apply the required batch')
     if recovery.get('status') in ('STOPPED_AFTER_THREE_FAILURES', 'STOPPED_LOW_DISK'):
         raise RuntimeError(f"New 7B supervisor stopped: {recovery['status']}")
+    try:
+        checkpoint = json.loads(remote([PYTHON, PAUSE, '--run', NEW, '--min-step', '250']))
+    except subprocess.CalledProcessError:
+        state.update(status='WAITING_FOR_FIRST_1024_CHECKPOINT',
+                     new_recovery_status=recovery.get('status'))
+        save(state)
+        return False
+    metric = json.loads(remote(['tail', '-1', f'{NEW}/raw_loss_metrics.jsonl']))
+    if checkpoint['checkpoint']['step'] < 250 or metric['effective_global_batch_size'] != 1024:
+        raise RuntimeError('First corrected 7B update did not use batch 1024')
     state.update(status='NEW_1024_BATCH_CONFIRMED',
-                 new_recovery_status=recovery.get('status'))
+                 new_recovery_status=recovery.get('status'),
+                 new_first_checkpoint=checkpoint['checkpoint'])
     save(state)
+    return True
 
 
 def main():
@@ -106,8 +118,8 @@ def main():
             try:
                 if pause_old(state):
                     launch_new(state)
-                    verify_new(state)
-                    return
+                    if verify_new(state):
+                        return
             except Exception as exc:
                 state.update(status='RETRY', last_error=repr(exc),
                              failures=state.get('failures', 0) + 1)
