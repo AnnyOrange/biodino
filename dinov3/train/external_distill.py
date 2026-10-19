@@ -66,7 +66,8 @@ class ExternalRecoveryStream(nn.Module):
             x /= dist.get_world_size()
         return x
 
-    def forward(self, student: Tensor, target: Tensor) -> tuple[Tensor, dict[str, Tensor | float]]:
+    def forward(self, student: Tensor, target: Tensor, sample_weight: Tensor | None = None
+                ) -> tuple[Tensor, dict[str, Tensor | float]]:
         if student.ndim != 3 or target.ndim != 3 or student.shape[:2] != target.shape[:2] or len(student) < 2:
             raise ValueError(
                 "recoverability expects >=2 images [B,N,D_student] / [B,N,D_teacher] with matching B,N; "
@@ -76,6 +77,8 @@ class ExternalRecoveryStream(nn.Module):
             raise ValueError(
                 f"stream built for {self.in_dim}->{self.out_dim}, got {student.shape[-1]}->{target.shape[-1]}"
             )
+        if sample_weight is not None:
+            return self._forward_routed(student, target, sample_weight)
         with torch.autocast(device_type=student.device.type, enabled=False):
             x, y = student.float(), target.detach().float()
             fit_x, fit_y = x[::2].flatten(0, 1), y[::2].flatten(0, 1)
@@ -117,6 +120,63 @@ class ExternalRecoveryStream(nn.Module):
             explained = (self.monitor / variance.clamp_min(floor)).mean()
             return loss, {"error": held_out.mean().detach(), "nerr": explained.detach(),
                           "calibrated": float(calibrated)}
+
+    def _forward_routed(self, student, target, sample_weight):
+        """Fit only eligible images; keep the original per-image loss coefficient.
+
+        Weighted sufficient-statistic sums and counts are reduced separately.
+        This handles ranks with zero pathology images without rank-wise bias or
+        collective mismatches. Even/odd image positions remain fit/monitor sets.
+        """
+        if sample_weight.shape != student.shape[:1] or not torch.isfinite(sample_weight).all():
+            raise ValueError('Expected one finite domain weight per image')
+        if (sample_weight < 0).any() or (sample_weight > 1).any():
+            raise ValueError('Domain weights must be in [0,1]')
+        with torch.autocast(device_type=student.device.type, enabled=False):
+            x, y = student.float(), target.detach().float()
+            sw = sample_weight.detach().float()[:, None].expand(x.shape[:2])
+            raw = x.flatten(0, 1)
+            aug = torch.cat((raw, torch.ones_like(raw[:, :1])), dim=1)
+            decoder = self.delta.detach().clone()
+            prediction = aug @ decoder
+            variance = (self.second - self.mean.square()).clamp_min(1e-8)
+            floor = .05 * variance.mean().clamp_min(1e-8)
+            weights = variance.clamp_min(floor).reciprocal()
+            weights = (weights / weights.mean()).detach()
+            calibrated = int(self.steps) >= self.warmup
+            # Divide by ALL images, not active images: rare H&E batches do not
+            # silently amplify the original lw5 coefficient by ~10x.
+            loss = (((prediction - y.flatten(0, 1)).square() * weights)
+                    * sw.flatten()[:, None]).mean() if calibrated else prediction.sum() * 0
+            with torch.no_grad():
+                fx, fy = x[::2].detach().flatten(0, 1), y[::2].flatten(0, 1)
+                vx, vy = x[1::2].detach().flatten(0, 1), y[1::2].flatten(0, 1)
+                fw, vw = sw[::2].flatten(), sw[1::2].flatten()
+                counts = self._average(torch.stack((fw.sum(), vw.sum())))
+                fa = torch.cat((fx, torch.ones_like(fx[:, :1])), dim=1)
+                va = torch.cat((vx, torch.ones_like(vx[:, :1])), dim=1)
+                held_out = self._average((((va @ decoder - vy).square() * weights) * vw[:, None]).sum(0))
+                if counts[1] > 0:
+                    held_out /= counts[1]
+                    self.monitor.lerp_(held_out, .1)
+                if counts[0] > 0:
+                    cov = self._average(fa.T @ (fa * fw[:, None])) / counts[0]
+                    cross = self._average(fa.T @ (fy * fw[:, None])) / counts[0]
+                    mu = self._average((fy * fw[:, None]).sum(0)) / counts[0]
+                    sq = self._average((fy.square() * fw[:, None]).sum(0)) / counts[0]
+                    step = int(self.steps)
+                    rate = 1 / (step + 1) if step < self.warmup else 1 - self.momentum
+                    self.xx.lerp_(cov, rate)
+                    self.xr.lerp_(cross, rate)
+                    self.mean.lerp_(mu, rate)
+                    self.second.lerp_(sq, rate)
+                    if (step + 1) % self.solve_every == 0:
+                        regularized = self.xx + self.ridge * torch.eye(self.in_dim + 1, device=x.device)
+                        self.delta.copy_(torch.linalg.solve(regularized, self.xr))
+                    self.steps.add_(1)
+            return loss, {'error': held_out.mean().detach(),
+                          'nerr': (self.monitor / variance.clamp_min(floor)).mean().detach(),
+                          'calibrated': float(calibrated)}
 
 
 class _TeacherBase(nn.Module):
@@ -233,6 +293,28 @@ def build_teacher(spec, cfg, student_mean, student_std) -> _TeacherBase:
     raise ValueError(f"unknown external teacher kind {kind!r} (timm_dir|dinov3)")
 
 
+class TeacherResidualizer(nn.Module):
+    """Remove knowledge linearly explained by a frozen reference teacher.
+
+    Use the decoder from preceding minibatches for the current residual, then
+    update its fit/monitor statistics. Both teachers and this decomposition are
+    detached; the student cannot reduce its target by changing the reference.
+    """
+
+    def __init__(self, reference_dim, target_dim, **kwargs):
+        super().__init__()
+        self.fit = ExternalRecoveryStream(reference_dim, target_dim, **kwargs)
+
+    @torch.no_grad()
+    def forward(self, reference, target, sample_weight=None):
+        with torch.autocast(device_type=reference.device.type, enabled=False):
+            x, y = reference.detach().float(), target.detach().float()
+            augmented = torch.cat((x, torch.ones_like(x[..., :1])), dim=-1)
+            residual = y - augmented @ self.fit.delta.detach()
+            _, stats = self.fit(x, y, sample_weight)
+        return residual, stats
+
+
 class ExternalDistillation(nn.Module):
     """Multi-teacher recoverability loss on the first global crop."""
 
@@ -246,8 +328,14 @@ class ExternalDistillation(nn.Module):
         if not len(ed.teachers):
             raise ValueError("external_distill.enabled requires at least one entry in external_distill.teachers")
         teachers, streams, weights = {}, {}, {}
+        self.teacher_domains = {}
+        self.residual_references = {}
         self.self_targets: list[str] = []
         for spec in ed.teachers:
+            domains = tuple(getattr(spec, "domains", []) or [])
+            if any(d not in ("pathology", "other") for d in domains):
+                raise ValueError(f'Unsupported teacher domains: {domains}')
+            self.teacher_domains[spec.name] = domains
             weights[spec.name] = float(getattr(spec, "weight", 1.0))
             if str(spec.kind) == "self_bottleneck":
                 # Self-readout alignment: the EMA teacher's own DINO-head bottleneck (the coordinates that define its
@@ -263,6 +351,9 @@ class ExternalDistillation(nn.Module):
                 continue
             teacher = build_teacher(spec, cfg, student_mean, student_std)
             teachers[spec.name] = teacher
+            reference = getattr(spec, 'residual_of', None)
+            if reference:
+                self.residual_references[spec.name] = str(reference)
             for part in ("cls", "patch"):
                 streams[f"{spec.name}__{part}"] = ExternalRecoveryStream(
                     student_dim, teacher.embed_dim, ridge=float(ed.ridge), momentum=float(ed.momentum),
@@ -272,6 +363,20 @@ class ExternalDistillation(nn.Module):
         self.teachers = nn.ModuleDict(teachers)
         self.streams = nn.ModuleDict(streams)
         self.teacher_weights = weights
+        residualizers = {}
+        for name, reference in self.residual_references.items():
+            if reference == name or reference not in teachers:
+                raise ValueError(f'Residual teacher {name} requires a separate frozen reference teacher')
+            if list(teachers).index(reference) >= list(teachers).index(name):
+                raise ValueError('The reference teacher must precede its residual teacher')
+            if self.teacher_domains[reference]:
+                raise ValueError('The residual reference must cover all training images')
+            for part in ('cls', 'patch'):
+                residualizers[f'{name}__{part}'] = TeacherResidualizer(
+                    teachers[reference].embed_dim, teachers[name].embed_dim,
+                    ridge=float(ed.ridge), momentum=float(ed.momentum),
+                    warmup=int(ed.warmup), solve_every=int(ed.solve_every))
+        self.residualizers = nn.ModuleDict(residualizers)
 
     def teacher_state_keys(self) -> list[str]:
         return [k for k in self.state_dict().keys() if k.startswith("teachers.")]
@@ -279,9 +384,11 @@ class ExternalDistillation(nn.Module):
     def reset_buffers(self) -> None:
         for s in self.streams.values():
             s.reset_buffers()
+        for projection in self.residualizers.values():
+            projection.fit.reset_buffers()
 
     def forward(self, *, student_cls: Tensor, student_patches: Tensor, images: Tensor,
-                teacher_cls_bottleneck: Tensor | None = None):
+                teacher_cls_bottleneck: Tensor | None = None, teacher_domains=None):
         # Only the first global crop: fit/monitor halves must not share an image.
         s_cls = student_cls[0].unsqueeze(1)  # [B,1,Ds]
         s_patch = student_patches[0]  # [B,P,Ds]
@@ -291,6 +398,7 @@ class ExternalDistillation(nn.Module):
         idx = torch.linspace(0, P - 1, min(self.n_patches, P), device=s_patch.device).long()
         total = s_cls.new_zeros(())
         stats: dict[str, Tensor | float] = {}
+        reference_features = {}
         for name in self.self_targets:
             if teacher_cls_bottleneck is None:
                 raise ValueError("self_bottleneck target needs teacher_global['cls_bottleneck']")
@@ -301,15 +409,49 @@ class ExternalDistillation(nn.Module):
             stats[f"extd_{name}_cls_nerr"] = cls_stats["nerr"]
             stats[f"extd_{name}_calibrated"] = cls_stats["calibrated"]
         for name, teacher in self.teachers.items():
-            t_cls, t_patch = teacher(x)  # [B,Dt], [B,Pt,Dt]
+            domains = self.teacher_domains[name]
+            sample_weight = None
+            selected = torch.ones(B, device=x.device, dtype=torch.bool)
+            if domains:
+                if teacher_domains is None or len(teacher_domains) != B:
+                    raise ValueError('Domain-routed teacher requires training metadata for every image')
+                selected = torch.tensor([d in domains for d in teacher_domains], device=x.device)
+                sample_weight = selected.float()
+                stats[f'extd_{name}_eligible_fraction'] = sample_weight.mean()
+            # Frozen teachers have no distributed collectives. Skip their
+            # expensive forward on ineligible images, including empty ranks.
+            if selected.any():
+                selected_cls, selected_patch = teacher(x[selected])
+                if selected_patch.shape[1] != P:
+                    tg = int(round(selected_patch.shape[1] ** .5))
+                    selected_patch = F.interpolate(
+                        selected_patch.transpose(1, 2).reshape(-1, teacher.embed_dim, tg, tg),
+                        size=(grid, grid), mode='bilinear', align_corners=False).flatten(2).transpose(1, 2)
+                t_cls = selected_cls.new_zeros((B, teacher.embed_dim))
+                t_patch = selected_patch.new_zeros((B, P, teacher.embed_dim))
+                t_cls[selected], t_patch[selected] = selected_cls, selected_patch
+            else:
+                t_cls = x.new_zeros((B, teacher.embed_dim), dtype=torch.float32)
+                t_patch = x.new_zeros((B, P, teacher.embed_dim), dtype=torch.float32)
             if t_patch.shape[1] != P:
                 tg = int(round(t_patch.shape[1] ** 0.5))
                 t_patch = F.interpolate(
                     t_patch.transpose(1, 2).reshape(B, -1, tg, tg), size=(grid, grid),
                     mode="bilinear", align_corners=False).flatten(2).transpose(1, 2)
             w = self.teacher_weights[name]
-            cls_loss, cls_stats = self.streams[f"{name}__cls"](s_cls, t_cls.unsqueeze(1))
-            patch_loss, patch_stats = self.streams[f"{name}__patch"](s_patch[:, idx], t_patch[:, idx])
+            cls_target, patch_target = t_cls.unsqueeze(1), t_patch[:, idx]
+            if name in self.residual_references.values():
+                reference_features[name] = (cls_target.detach(), patch_target.detach())
+            if name in self.residual_references:
+                ref_cls, ref_patch = reference_features[self.residual_references[name]]
+                cls_target, ref_cls_stats = self.residualizers[f'{name}__cls'](
+                    ref_cls, cls_target, sample_weight)
+                patch_target, ref_patch_stats = self.residualizers[f'{name}__patch'](
+                    ref_patch, patch_target, sample_weight)
+                stats[f'extd_{name}_reference_cls_nerr'] = ref_cls_stats['nerr']
+                stats[f'extd_{name}_reference_patch_nerr'] = ref_patch_stats['nerr']
+            cls_loss, cls_stats = self.streams[f"{name}__cls"](s_cls, cls_target, sample_weight)
+            patch_loss, patch_stats = self.streams[f"{name}__patch"](s_patch[:, idx], patch_target, sample_weight)
             total = total + w * (self.cls_weight * cls_loss + self.patch_weight * patch_loss)
             stats[f"extd_{name}_cls_loss"] = cls_loss.detach()
             stats[f"extd_{name}_patch_loss"] = patch_loss.detach()
