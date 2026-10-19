@@ -79,6 +79,19 @@ def main():
                                     stdout=handle, stderr=subprocess.STDOUT, start_new_session=True)
             save(status='TRAINING', train_pid=proc.pid, log=str(logfile))
             attempt.update(returncode=proc.wait(), finished=time.time())
+        if attempt['returncode'] and int(cfg.train.batch_size_per_gpu) == 64 and \
+                ('CUDA out of memory' in logfile.read_text(errors='replace') or
+                 'torch.OutOfMemoryError' in logfile.read_text(errors='replace')):
+            cfg.train.batch_size_per_gpu = 32
+            cfg.optim.gradient_accumulation_steps = 8
+            temp = config.with_suffix('.fallback.tmp')
+            OmegaConf.save(cfg, temp)
+            temp.replace(config)
+            attempt['fallback'] = '4x32x8 after 4x64x4 CUDA OOM'
+            save(status='FALLBACK_AFTER_OOM', microbatch=32, accumulation_steps=8,
+                 effective_global_batch=1024)
+            failures = 0
+            continue
         failures += 1
         save(status='CHECKING_CHECKPOINT', consecutive_failures=failures)
         time.sleep(30)

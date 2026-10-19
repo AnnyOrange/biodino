@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--resume-step', type=int, required=True)
     parser.add_argument('--bio5tb', type=Path)
+    parser.add_argument('--microbatch', type=int, default=64)
     args = parser.parse_args()
 
     route = '/home/xzj/storage/merged/15TB_from_20TB/filtered_projection_20TB_nested-'
@@ -44,6 +45,10 @@ def main():
         raise RuntimeError(f'Unexpected teachers: {list(teachers)}; expected {expected}')
     if args.bio5tb and teachers['bio5tb'].residual_of != 'dinov3l':
         raise RuntimeError('Complementary teacher must retain the DINOv3-L residual')
+    if not cfg.train.checkpointing_full or args.microbatch not in (32, 64):
+        raise RuntimeError('hxw 4-GPU L resume requires full activation checkpointing and batch 32 or 64')
+    cfg.train.batch_size_per_gpu = args.microbatch
+    cfg.optim.gradient_accumulation_steps = 1024 // (4 * args.microbatch)
 
     cfg.train.dataset_path = 'mixwds_robust:' + '||'.join(
         f'{weight}={pattern}' for weight, pattern in parts) + '::pct=1,99'
@@ -56,7 +61,8 @@ def main():
     output = args.output_dir / 'candidate_hxw.yaml'
     OmegaConf.save(cfg, output)
     print(f'Prepared {output}: shards={counts}, resume={args.resume_step + 1}, '
-          f'end={cfg.train.max_updates}, teachers={sorted(teachers)}')
+          f'end={cfg.train.max_updates}, teachers={sorted(teachers)}, '
+          f'batch=4x{args.microbatch}x{cfg.optim.gradient_accumulation_steps}')
 
 
 if __name__ == '__main__':
