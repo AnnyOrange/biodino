@@ -47,6 +47,10 @@ def main():
     p.add_argument('--batch-size', type=int, default=8)
     p.add_argument('--accum-steps', type=int, default=32)
     p.add_argument('--checkpoint-period', type=int, default=25)
+    p.add_argument('--lr', type=float, default=3e-5)
+    p.add_argument('--adamw-beta2', type=float, default=0.999)
+    p.add_argument('--clip-grad', type=float, default=3.0)
+    p.add_argument('--warmup-epochs', type=int, default=3)
     a = p.parse_args()
     world_size = len(a.gpus.split(','))
     if world_size * a.batch_size * a.accum_steps != 1024:
@@ -66,7 +70,10 @@ def main():
         state = json.loads(state_path.read_text())
     state.update(world_size=world_size, gpus=a.gpus, batch_size_per_gpu=a.batch_size,
                  accumulation_steps=a.accum_steps, global_batch=1024,
-                 checkpoint_period=a.checkpoint_period)
+                 checkpoint_period=a.checkpoint_period,
+                 recipe_reference='20TB L no-GRAM mix009; 7B HS6 learning rate and layer decay',
+                 lr=a.lr, adamw_beta2=a.adamw_beta2, clip_grad=a.clip_grad,
+                 warmup_epochs=a.warmup_epochs)
 
     def save(**kwargs):
         state.update(kwargs, updated=time.time(), supervisor_pid=os.getpid())
@@ -116,6 +123,8 @@ def main():
         cmd += [f'train.max_updates={end}', f'train.batch_size_per_gpu={a.batch_size}', 'train.num_workers=1',
                 'train.wds_shuffle_buffer=128', 'train.prefetch_factor=1',
                 f'optim.gradient_accumulation_steps={a.accum_steps}',
+                f'optim.lr={a.lr}', f'optim.adamw_beta2={a.adamw_beta2}',
+                f'optim.clip_grad={a.clip_grad}', f'optim.warmup_epochs={a.warmup_epochs}',
                 f'train.start_iteration_override={250 if bootstrap else "null"}',
                 f'student.resume_from_teacher_chkpt={a.teacher if bootstrap else "null"}',
                 f'evaluation.eval_period_iterations={1 if bootstrap else 250}',
