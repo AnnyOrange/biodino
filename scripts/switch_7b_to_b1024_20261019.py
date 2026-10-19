@@ -14,8 +14,8 @@ REPORT = Path('/mnt/huawei_deepcad/dinov3/outputs/00_reports/l20tb_domain_7b_bas
 STATE = REPORT / 'seven_b_batch1024_switch_state.json'
 HOST = '5090-hxw-xzj'
 PYTHON = '/home/xzj/miniconda3/envs/dinov3/bin/python'
-REPO = '/home/xzj/biodino_7b_20261015'
-PAUSE = '/home/xzj/biodino_l20tb_domain_snapshot_20261018/scripts/pause_hxw_7b_for_l_20261019.py'
+REPO = '/home/xzj/biodino_hxw_sync_20261019'
+PAUSE = f'{REPO}/scripts/pause_hxw_7b_for_l_20261019.py'
 SUPERVISOR = f'{REPO}/scripts/resume_7b_20tb_20261018.py'
 OLD = '/home/xzj/storage/merged/vit7b_20tb_recovered249_20261018'
 NEW = '/home/xzj/storage/merged/vit7b_20tb_hs6_nogram_b1024_from249_20261019'
@@ -62,7 +62,7 @@ def pause_old(state):
 def launch_new(state):
     if state.get('new_supervisor_pid'):
         return
-    marker = f'{REPO}/github_synced_b1024_20261019.json'
+    marker = '/home/xzj/storage/merged/github_synced_b1024_20261019.json'
     sync = json.loads(remote(['cat', marker]))
     if not sync.get('verified') or sync.get('effective_global_batch') != 1024:
         raise RuntimeError('GitHub-sourced 7B code has not been verified')
