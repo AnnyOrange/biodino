@@ -20,7 +20,7 @@ RUN = '/home/xzj/storage/merged/vit7b_20tb_hs6_nogram_b1024_from249_20261019'
 REFERENCE = ('/home/xzj/storage/merged/vit7b_20tb_recovered249_20261018'
              '/eval/training_499/sharded_teacher_checkpoint')
 HXW_PY = '/home/xzj/miniconda3/envs/dinov3/bin/python'
-EXPORT = '/home/xzj/biodino_l20tb_domain_snapshot_20261018/scripts/export_paused_7b_teacher_20261019.py'
+EXPORT = '/home/xzj/biodino_hxw_sync_20261019/scripts/export_paused_7b_teacher_20261019.py'
 LYX_ROOT = '/data/xuzijing/cooldown_20261013_eval'
 ARM = '7b_20tb_hs6_nogram_b1024_from249_20261019'
 LYX_ARM = f'{LYX_ROOT}/{ARM}'

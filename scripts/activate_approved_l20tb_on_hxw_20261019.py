@@ -15,7 +15,7 @@ from transfer_approved_l20tb_to_hxw_20261019 import (
 
 
 STATE = REPORT / 'approved_l_activation_state.json'
-SNAPSHOT = '/home/xzj/biodino_l20tb_domain_snapshot_20261018'
+SNAPSHOT = '/home/xzj/biodino_hxw_sync_20261019'
 PYTHON = '/home/xzj/miniconda3/envs/dinov3/bin/python'
 PAUSE = f'{SNAPSHOT}/scripts/pause_hxw_7b_for_l_20261019.py'
 SEVEN_B_RUN = '/home/xzj/storage/merged/vit7b_20tb_hs6_nogram_b1024_from249_20261019'
