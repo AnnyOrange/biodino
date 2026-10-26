@@ -4,7 +4,7 @@
 # source of `benchmark_results_retrieval_clustering.md`). The only change vs the
 # reference is that `build_retrieval_dataset` takes an explicit `benchmark_root`
 # (the reference hard-coded `/mnt/huawei_deepcad/benchmark`). Metric functions
-# are byte-for-byte identical.
+# retain their numerical rules; optional sample outputs support paired inference.
 from __future__ import annotations
 
 import io
@@ -262,7 +262,7 @@ def build_retrieval_dataset(
     raise KeyError(f"Unknown retrieval/clustering dataset: {name}")
 
 
-def retrieval_metrics(features: np.ndarray, labels: np.ndarray, k_values: tuple[int, ...] = (1, 5, 10), chunk_size: int = 512) -> dict[str, float]:
+def retrieval_metrics(features: np.ndarray, labels: np.ndarray, k_values: tuple[int, ...] = (1, 5, 10), chunk_size: int = 512, return_samples: bool = False):
     x = np.asarray(features, dtype=np.float32)
     y = np.asarray(labels)
     x /= np.linalg.norm(x, axis=1, keepdims=True) + 1e-12
@@ -271,6 +271,7 @@ def retrieval_metrics(features: np.ndarray, labels: np.ndarray, k_values: tuple[
     hits = {k: 0 for k in k_values}
     ap_sum = {k: 0.0 for k in k_values}
     reciprocal_sum = 0.0
+    sample_rows = []
 
     for start in range(0, n, chunk_size):
         end = min(start + chunk_size, n)
@@ -282,9 +283,11 @@ def retrieval_metrics(features: np.ndarray, labels: np.ndarray, k_values: tuple[
         scores = np.take_along_axis(sim, idx_part, axis=1)
         order = np.argsort(-scores, axis=1)
         top_idx = np.take_along_axis(idx_part, order, axis=1)
+        ranked_scores = np.take_along_axis(scores, order, axis=1) if return_samples else None
         rel = y[top_idx] == y[row_ids, None]
         for local_i in range(end - start):
             rel_i = rel[local_i]
+            sample = {"mrr": 1.0 / float(np.flatnonzero(rel_i)[0] + 1) if np.any(rel_i) else 0.0}
             if np.any(rel_i):
                 reciprocal_sum += 1.0 / float(np.flatnonzero(rel_i)[0] + 1)
             for k in k_values:
@@ -292,15 +295,21 @@ def retrieval_metrics(features: np.ndarray, labels: np.ndarray, k_values: tuple[
                 rel_k = rel_i[:kk]
                 hits[k] += int(np.any(rel_k))
                 denom = min(int((y == y[row_ids[local_i]]).sum()) - 1, kk)
+                sample[f"recall_at_{k}"] = int(np.any(rel_k))
+                sample[f"map_at_{k}"] = 0.0
                 if denom > 0:
                     precisions = np.cumsum(rel_k) / np.arange(1, kk + 1)
                     ap_sum[k] += float((precisions * rel_k).sum() / denom)
+                    sample[f"map_at_{k}"] = float((precisions * rel_k).sum() / denom)
+            if return_samples:
+                sample_rows.append({**sample, "neighbor_indices": top_idx[local_i].tolist(),
+                                    "neighbor_scores": ranked_scores[local_i].tolist()})
 
     out: dict[str, float] = {"mrr": reciprocal_sum / n}
     for k in k_values:
         out[f"recall_at_{k}"] = hits[k] / n
         out[f"map_at_{k}"] = ap_sum[k] / n
-    return out
+    return (out, sample_rows) if return_samples else out
 
 
 def query_gallery_metrics(
@@ -311,6 +320,7 @@ def query_gallery_metrics(
     k_values: tuple[int, ...] = (1, 5, 10),
     chunk_size: int = 256,
     metric_device: str = "auto",
+    return_samples: bool = False,
 ) -> dict[str, float]:
     """Compute retrieval metrics for disjoint query and gallery sets."""
     gallery_labels = np.asarray(gallery_labels).reshape(-1)
@@ -329,6 +339,7 @@ def query_gallery_metrics(
     hits = {k: 0 for k in k_values}
     ap_sum = {k: 0.0 for k in k_values}
     reciprocal_sum = 0.0
+    sample_rows = []
     class_counts = {label: int((gallery_labels == label).sum()) for label in np.unique(gallery_labels)}
 
     for start in range(0, len(query_labels), chunk_size):
@@ -336,28 +347,37 @@ def query_gallery_metrics(
         query = torch.as_tensor(query_features[start:end], dtype=torch.float32, device=device)
         query = torch.nn.functional.normalize(query, dim=1)
         query_y = torch.as_tensor(query_labels[start:end], device=device)
-        top_idx = torch.topk(query @ gallery.T, k=max_k, dim=1, largest=True, sorted=True).indices
+        ranked = torch.topk(query @ gallery.T, k=max_k, dim=1, largest=True, sorted=True)
+        top_idx = ranked.indices
         relevant = (gallery_y[top_idx] == query_y[:, None]).cpu().numpy()
         for local_idx, rel in enumerate(relevant):
+            sample = {"mrr": 0.0}
             positives = class_counts[query_labels[start + local_idx]]
             positive_ranks = np.flatnonzero(rel)
             if len(positive_ranks):
                 reciprocal_sum += 1.0 / float(positive_ranks[0] + 1)
+                sample["mrr"] = 1.0 / float(positive_ranks[0] + 1)
             for k in k_values:
                 kk = min(k, max_k)
                 rel_k = rel[:kk]
                 hits[k] += int(np.any(rel_k))
+                sample[f"recall_at_{k}"] = int(np.any(rel_k))
+                sample[f"map_at_{k}"] = 0.0
                 denom = min(positives, kk)
                 if denom:
                     precision = np.cumsum(rel_k) / np.arange(1, kk + 1)
                     ap_sum[k] += float((precision * rel_k).sum() / denom)
+                    sample[f"map_at_{k}"] = float((precision * rel_k).sum() / denom)
+            if return_samples:
+                sample_rows.append({**sample, "neighbor_indices": top_idx[local_idx].cpu().tolist(),
+                                    "neighbor_scores": ranked.values[local_idx].cpu().tolist()})
 
     n_query = len(query_labels)
     result = {"mrr": reciprocal_sum / n_query}
     for k in k_values:
         result[f"recall_at_{k}"] = hits[k] / n_query
         result[f"map_at_{k}"] = ap_sum[k] / n_query
-    return result
+    return (result, sample_rows) if return_samples else result
 
 
 def remap_labels(labels: np.ndarray) -> np.ndarray:
@@ -365,7 +385,7 @@ def remap_labels(labels: np.ndarray) -> np.ndarray:
     return np.unique(np.asarray(labels), return_inverse=True)[1].astype(np.int64)
 
 
-def clustering_metrics(features: np.ndarray, labels: np.ndarray, seed: int = 0) -> dict[str, float]:
+def clustering_metrics(features: np.ndarray, labels: np.ndarray, seed: int = 0, return_assignments: bool = False, silhouette_seed: int | None = None):
     from scipy.optimize import linear_sum_assignment
     from sklearn.cluster import MiniBatchKMeans
     from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, silhouette_score
@@ -381,10 +401,11 @@ def clustering_metrics(features: np.ndarray, labels: np.ndarray, seed: int = 0) 
             table[int(true), int(got)] += 1
     rows, cols = linear_sum_assignment(-table)
     acc = table[rows, cols].sum() / len(y)
-    sil = silhouette_score(x, pred, metric="cosine", sample_size=min(5000, len(y)), random_state=seed) if len(y) > n_clusters else float("nan")
-    return {
+    sil = silhouette_score(x, pred, metric="cosine", sample_size=min(5000, len(y)), random_state=seed if silhouette_seed is None else silhouette_seed) if len(y) > n_clusters else float("nan")
+    result = {
         "cluster_accuracy": float(acc),
         "ari": float(adjusted_rand_score(y, pred)),
         "nmi": float(normalized_mutual_info_score(y, pred)),
         "silhouette_cosine": float(sil),
     }
+    return (result, pred) if return_assignments else result

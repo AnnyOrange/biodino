@@ -92,6 +92,48 @@ def create_edge_mapping_indexed(
     return np.concatenate(all_edges, axis=0).astype(int)
 
 
+def count_graph_operations_indexed(ref_tracks, comp_tracks, labels_ref, labels_comp, mapped_ref, mapped_comp):
+    """Pinned AOGM operations without sparse full-row zeroing's dense allocation.
+
+    Vertex membership is identical to the pinned binary detection matrix. Edges
+    are matched by endpoint pairs, retaining the exact original semantics.
+    """
+    cumulative_r = np.cumsum([0] + [len(x) for x in labels_ref])
+    cumulative_c = np.cumsum([0] + [len(x) for x in labels_comp])
+    nr, nc = int(cumulative_r[-1]), int(cumulative_c[-1])
+    pairs = set()
+    for t, (lr, lc, mr, mc) in enumerate(zip(labels_ref, labels_comp, mapped_ref, mapped_comp)):
+        rp = {int(v): i + int(cumulative_r[t]) for i, v in enumerate(lr)}
+        cp = {int(v): i + int(cumulative_c[t]) for i, v in enumerate(lc)}
+        pairs.update((cp[int(c)], rp[int(r)]) for r, c in zip(mr, mc))
+    pairs = np.asarray(sorted(pairs), dtype=np.int64).reshape(-1, 2)
+    ac = np.bincount(pairs[:, 0], minlength=nc)
+    ar = np.bincount(pairs[:, 1], minlength=nr)
+    if np.any(ar > 1):
+        raise ValueError('A reference vertex cannot map to multiple computed vertices')
+    tp_r, tp_c = ar == 1, ac == 1
+    stats = dict(num_vertices_R=nr, num_vertices_C=nc, num_vertices=nr,
+        TP=int(tp_r.sum()), FN=int((~tp_r).sum()), FP=int((ac == 0).sum()), VS=int((ac > 1).sum()))
+    stats['NS'] = stats['TP'] - int(tp_c.sum()) - stats['VS']
+    comp_to_ref = np.full(nc, -1, dtype=np.int64)
+    unique = pairs[tp_c[pairs[:, 0]]]
+    comp_to_ref[unique[:, 0]] = unique[:, 1]
+    er = create_edge_mapping_indexed(ref_tracks, labels_ref, tp_r, cumulative_r)
+    ec = create_edge_mapping_indexed(comp_tracks, labels_comp, tp_c, cumulative_c)
+    if not len(ec):
+        stats.update(ED=0, EA=len(er), EC=0, num_edges=len(er))
+        return stats
+    ec = ec[(ec[:, 2] * ec[:, 6]) == 1]
+    ref_edges = {(int(e[0]), int(e[4])): int(e[8]) for e in er}
+    comp_edges = {(int(comp_to_ref[e[0]]), int(comp_to_ref[e[4]])): int(e[8]) for e in ec}
+    if len(ref_edges) != len(er) or len(comp_edges) != len(ec):
+        raise ValueError('Duplicate endpoint pairs violate pinned graph assumptions')
+    shared = ref_edges.keys() & comp_edges.keys()
+    stats.update(ED=len(comp_edges.keys() - ref_edges.keys()), EA=len(ref_edges.keys() - comp_edges.keys()),
+        EC=sum(ref_edges[k] != comp_edges[k] for k in shared), num_edges=len(er))
+    return stats
+
+
 def calculate_requested_metrics(
     comp_tracks: np.ndarray,
     ref_tracks: np.ndarray,
@@ -101,25 +143,15 @@ def calculate_requested_metrics(
 ) -> tuple[dict[str, Any], float]:
     """Calculate Valid/DET/SEG/TRA from the pinned package primitives."""
     from ctc_metrics.metrics import det, seg, tra
-    from ctc_metrics.utils import representations
 
     if not is_valid:
         return {"Valid": 0, "DET": None, "SEG": None, "TRA": None}, 0.0
 
     started = time.perf_counter()
-    original_edge_mapping = representations.create_edge_mapping
-    try:
-        representations.create_edge_mapping = create_edge_mapping_indexed
-        operations = representations.count_acyclic_graph_correction_operations(
-            ref_tracks,
-            comp_tracks,
-            trajectory["labels_ref"],
-            trajectory["labels_comp"],
-            trajectory["mapped_ref"],
-            trajectory["mapped_comp"],
-        )
-    finally:
-        representations.create_edge_mapping = original_edge_mapping
+    operations = count_graph_operations_indexed(
+        ref_tracks, comp_tracks, trajectory['labels_ref'], trajectory['labels_comp'],
+        trajectory['mapped_ref'], trajectory['mapped_comp'],
+    )
 
     tra_value, aogm, aogm0 = tra(**operations)
     metrics = {
@@ -164,7 +196,7 @@ def score_requested_metrics(
         is_valid,
     )
     diagnostics = {
-        "implementation": "pinned_primitives_requested_only_indexed_parent_lookup_v1",
+        "implementation": "pinned_primitives_requested_only_indexed_graph_v2",
         "threads": threads,
         "load_data_seconds": loaded - started,
         "graph_operations_seconds": graph_seconds,

@@ -456,6 +456,32 @@ class DataAugmentationDINO(object):
 
     # ------------------------------------------------------------------
 
+    def specimen_pair(self, image, partner):
+        """Views for a specimen pair: global crop 1 and the first half of the local crops come from `image`, global
+        crop 2 and the second half from `partner` (another field/tile of the same source image). The DINO CLS losses
+        (student global/local vs the other teacher global) then compare different fields of one specimen, while iBOT
+        (same-crop masked patches) stays within one tile. Gram crops / local-subset-of-global are not supported."""
+        if self.gram_teacher_crops_size is not None or self.local_crops_subset_of_global_crops or self.share_color_jitter:
+            raise ValueError("specimen_pair views need gram crops off, independent local crops and per-view jitter")
+        self._active_channel_ids = None
+        bases = [self.geometric_augmentation_global(image), self.geometric_augmentation_global(partner)]
+        globals_ = [
+            self.resize_global_post_transf(self.global_transfo1(bases[0])),
+            self.resize_global_post_transf(self.global_transfo2(bases[1])),
+        ]
+        output = {"weak_flag": True, "global_crops": globals_}
+        output["global_crops_teacher"] = (
+            [self.normalize(b) for b in bases] if self.teacher_no_color_jitter else list(globals_)
+        )
+        half = self.local_crops_number // 2
+        output["local_crops"] = [
+            self.local_transfo(self.geometric_augmentation_local(image if i < half else partner))
+            for i in range(self.local_crops_number)
+        ]
+        output["offsets"] = ()
+        output["specimen_paired"] = True
+        return output
+
     def __call__(self, image, channel_ids=None):
         self._active_channel_ids = channel_ids
         output = {}

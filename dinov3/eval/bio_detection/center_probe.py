@@ -214,19 +214,25 @@ def _estimate_pos_weight(loader: DataLoader) -> float:
     return max(1.0, min(neg / max(pos, 1.0), 100.0))
 
 
-def _eval(model, head, loader, threshold: float = 0.5) -> Dict[str, float]:
+def _eval(model, head, loader, threshold: float = 0.5, prediction_path=None) -> Dict[str, float]:
     model.eval()
     head.eval()
     tp = fp = fn = tn = 0.0
     losses = []
+    saved_logits, saved_labels, saved_predictions = [], [], []
     criterion = nn.BCEWithLogitsLoss()
     with torch.inference_mode():
         for images, labels in loader:
             images = images.cuda(non_blocking=True)
             labels = labels.cuda(non_blocking=True)
             logits = head(model(images)).squeeze(-1)
+            if prediction_path is not None:
+                saved_logits.append(logits.float().cpu().numpy())
+                saved_labels.append(labels.cpu().numpy())
             losses.append(float(criterion(logits, labels).item()))
             pred = torch.sigmoid(logits) >= threshold
+            if prediction_path is not None:
+                saved_predictions.append(pred.cpu().numpy())
             lab = labels >= 0.5
             tp += float((pred & lab).sum().item())
             fp += float((pred & ~lab).sum().item())
@@ -236,6 +242,11 @@ def _eval(model, head, loader, threshold: float = 0.5) -> Dict[str, float]:
     recall = tp / max(tp + fn, 1.0)
     f1 = 2 * precision * recall / max(precision + recall, 1e-12)
     acc = (tp + tn) / max(tp + fp + fn + tn, 1.0)
+    if prediction_path is not None:
+        with open(str(prediction_path) + '.tmp', 'wb') as handle:
+            np.savez_compressed(handle, logits=np.concatenate(saved_logits),
+                                labels=np.concatenate(saved_labels), predicted=np.concatenate(saved_predictions), threshold=threshold)
+        os.replace(str(prediction_path) + '.tmp', prediction_path)
     return {"loss": float(np.mean(losses)), "patch_accuracy": acc * 100.0, "patch_precision": precision * 100.0, "patch_recall": recall * 100.0, "patch_f1": f1 * 100.0}
 
 
@@ -258,6 +269,7 @@ def run_bio_detection_eval(
     max_samples_per_split: int,
     seed: int,
     conic_split_protocol: str = "official-baseline-fold0-nested-v1",
+    save_predictions: bool = False,
 ) -> Dict[str, float | str | int]:
     os.makedirs(output_dir, exist_ok=True)
     dataset = dataset.lower()
@@ -320,7 +332,10 @@ def run_bio_detection_eval(
             optim.step()
         logger.info("epoch=%d val=%s", epoch + 1, _eval(feature_model, head, val_loader))
     val_metrics = _eval(feature_model, head, val_loader)
-    test_metrics = _eval(feature_model, head, test_loader)
+    prediction_path = os.path.join(output_dir, 'test_patch_predictions.npz') if save_predictions else None
+    test_metrics = _eval(feature_model, head, test_loader, prediction_path=prediction_path)
+    if save_predictions:
+        torch.save({'head': head.state_dict(), 'seed': seed}, os.path.join(output_dir, 'final_head.pth'))
     results: Dict[str, float | str | int] = {
         "dataset": dataset,
         "checkpoint": checkpoint_stem(checkpoint, weights),

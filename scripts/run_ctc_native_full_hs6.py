@@ -323,10 +323,13 @@ def _consolidate_slices_3d(slices: list[np.ndarray]) -> np.ndarray:
                 right = current[cy0:cy1, cx0:cx1]
                 valid = (left > 0) & (right > 0)
                 if valid.any():
-                    for first, second in np.unique(
-                        np.stack((left[valid], right[valid]), axis=1), axis=0
-                    ):
-                        union(int(first), int(second))
+                    # Positive int32 IDs fit losslessly in two uint32 lanes.
+                    # Numeric uint64 order equals the original lexicographic
+                    # pair order, preserving even the union/relabel sequence.
+                    pairs = (left[valid].astype(np.uint64) << 32) | right[valid].astype(np.uint64)
+                    for packed in np.unique(pairs):
+                        value = int(packed)
+                        union(value >> 32, value & 0xffffffff)
     roots = np.zeros(next_label, dtype=np.int32)
     for value in range(1, next_label):
         roots[value] = find(value)
@@ -446,11 +449,9 @@ def evaluate_domain(
     for index, frame in enumerate(frames, start=1):
         local = _infer_frame(model, frame["image"], int(spec["ndim"]), device)
         tracked = linker.step(local)
-        if int(tracked.max(initial=0)) > np.iinfo(np.uint16).max:
-            raise RuntimeError(f"{domain} exceeded CTC uint16 track-label limit")
         tifffile.imwrite(
             result_dir / f"mask{frame['token']}.tif",
-            tracked.astype(np.uint16), compression="zlib",
+            tracked.astype(np.uint32), compression="zlib",
         )
         segmentation_rows.extend(_extra_segmentation(local, seg_by_frame.get(int(frame["frame"]), [])))
         if index == 1 or index % 25 == 0 or index == len(frames):
@@ -481,6 +482,8 @@ def evaluate_domain(
         "ndim": int(spec["ndim"]), "host": platform.node(),
         "test_frames": len(frames), "seg_annotations": len(segmentation_rows),
         "tracks": len(table), "training_only_median_diameter": diameter,
+        "label_storage": "uint32 lossless local scoring extension; official CTC submission format is uint16",
+        "track_ids_fit_official_uint16": int(table[:, 0].max(initial=0)) <= 65535,
         "training_instances_for_diameter": diameter_instances,
         "ctc_metrics": metrics, "ctc_scoring": diagnostics,
         "extra_segmentation_metrics": extras,

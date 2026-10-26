@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import re
+from functools import lru_cache
 from pathlib import Path
 
 # Human-readable rule per dataset (recorded into the split JSON for documentation).
@@ -23,10 +25,29 @@ GROUP_KEY_RULES: dict[str, str] = {
     "midog25-atypical": "source slide = the CSV 'filename' column for each image_id (e.g. 201.tiff)",
     "bbbc013": "plate well = letter-number position in the filename (Channel1-01-A-01.BMP -> A-01)",
     "bbbc005": "plate/count/field = SIMCEPImages_<well>_C<count>_F<field> (… A01_C1_F1_s01_w1.TIF -> A01_C1_F1)",
+    "lc25000": "published LC25000-clean original-tile group_id; all augmented descendants stay in one split",
 }
 
 # Datasets with no official test split, evaluated with a fixed group-aware split.
 GROUP_SPLIT_DATASETS = sorted(GROUP_KEY_RULES.keys())
+LC25000_GROUPS = Path(__file__).resolve().parents[3] / "outputs/02_eval_inputs/formal_v4/lc25000_clean_groups.csv"
+LC25000_GROUPS_SHA256 = "2ff9e992f759f265dfc9aa2363de0dfcc8e6559884d8bb02a4c925214fdf7e23"
+
+
+@lru_cache(maxsize=1)
+def _lc25000_groups() -> dict[tuple[str, str], str]:
+    if hashlib.sha256(LC25000_GROUPS.read_bytes()).hexdigest() != LC25000_GROUPS_SHA256:
+        raise ValueError("LC25000 source-tile annotations differ from the pinned publication")
+    mapping = {}
+    with LC25000_GROUPS.open(newline="") as stream:
+        for row in csv.DictReader(stream):
+            key = (row["stem"], row["label"])
+            if key in mapping or Path(row["filename"]).stem != row["stem"]:
+                raise ValueError(f"Duplicate or malformed LC25000 annotation: {key}")
+            mapping[key] = row["group_id"]
+    if len(mapping) != 25000 or len(set(mapping.values())) != 1246:
+        raise ValueError("LC25000 annotation inventory or group count changed")
+    return mapping
 
 
 def _sample_paths(dataset) -> list[Path]:
@@ -84,6 +105,14 @@ def group_keys(dataset_name: str, dataset, benchmark_root=None) -> list[str]:
     if dataset_name == "midog25-atypical":
         return _midog25_keys(dataset, benchmark_root)
     paths = _sample_paths(dataset)
+    if dataset_name == "lc25000":
+        mapping = _lc25000_groups()
+        keys = [(p.stem, p.parent.name) for p in paths]
+        if len(keys) == 25000 and set(keys) != set(mapping):
+            raise ValueError("LC25000 image inventory differs from published group annotation")
+        if any(key not in mapping for key in keys):
+            raise ValueError("LC25000 sample has no original-tile group annotation")
+        return [mapping[key] for key in keys]
     fn = {
         "cyclops-protein-loc": _cyclops_key,
         "bbbc048-cellcycle": _bbbc048_key,

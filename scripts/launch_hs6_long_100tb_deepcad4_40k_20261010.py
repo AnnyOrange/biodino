@@ -37,6 +37,9 @@ def main() -> None:
     parser.add_argument("--full-pool", action="store_true")
     parser.add_argument("--python-bin", default="/home/deepcad/anaconda3/envs/dinov3/bin/python")
     parser.add_argument("--master-port", type=int, default=31861)
+    parser.add_argument("--target-updates", type=int, default=UPDATES)
+    parser.add_argument("--full-pool-microbatch", type=int, default=FULL_POOL_MICROBATCH)
+    parser.add_argument("--gpu-group", default=GPUS)
     args = parser.parse_args()
     if args.smoke and args.resume:
         raise ValueError("Smoke runs cannot resume")
@@ -44,10 +47,18 @@ def main() -> None:
         raise ValueError("Smoke tag requires --smoke and must be alphanumeric")
     if args.smoke_updates < 1 or (args.smoke_updates != 1 and not args.smoke):
         raise ValueError("--smoke-updates requires --smoke and a positive count")
+    if args.target_updates < 1 or args.full_pool_microbatch < 1:
+        raise ValueError("Target updates and microbatch must be positive")
+    gpu_group = args.gpu_group.split(",")
+    if len(gpu_group) != WORLD_SIZE or len(set(gpu_group)) != WORLD_SIZE:
+        raise ValueError("This run requires four distinct GPUs")
     index = FULL_POOL_INDEX if args.full_pool else INDEX
     run_name = FULL_POOL_RUN_NAME if args.full_pool else RUN_NAME
-    microbatch = FULL_POOL_MICROBATCH if args.full_pool else MICROBATCH
-    accum = FULL_POOL_ACCUM if args.full_pool else ACCUM
+    microbatch = args.full_pool_microbatch if args.full_pool else MICROBATCH
+    if 1024 % (WORLD_SIZE * microbatch):
+        raise ValueError("Microbatch must preserve the 1024-image optimizer batch")
+    accum = 1024 // (WORLD_SIZE * microbatch)
+    target_updates = args.smoke_updates if args.smoke else args.target_updates
     assignment = json.loads((index / "assignment.json").read_text())
     if args.full_pool:
         if assignment["status"] != "PASS" or assignment["world_size"] != WORLD_SIZE or \
@@ -72,7 +83,7 @@ def main() -> None:
         "train.batch_size_per_gpu": microbatch,
         "optim.gradient_accumulation_steps": accum,
         "train.OFFICIAL_EPOCH_LENGTH": 4098,
-        "train.max_updates": args.smoke_updates if args.smoke else UPDATES,
+        "train.max_updates": target_updates,
         "train.num_workers": 2 if args.full_pool else 1,
         "train.wds_shuffle_buffer": 128 if args.full_pool else 64,
         "train.wds_deterministic_resampling": True,
@@ -95,11 +106,11 @@ def main() -> None:
           for key, value in overrides.items()),
     ]
     manifest = {
-        "arm": "100tb", "host": "deepcad", "gpu_group": GPUS,
+        "arm": "100tb", "host": "deepcad", "gpu_group": args.gpu_group,
         "world_size": WORLD_SIZE, "microbatch": microbatch,
         "gradient_accumulation_steps": accum, "effective_batch": WORLD_SIZE * microbatch * accum,
-        "target_updates": args.smoke_updates if args.smoke else UPDATES,
-        "target_image_visits": args.smoke_updates * 1024 if args.smoke else UPDATES * 1024,
+        "target_updates": target_updates,
+        "target_image_visits": target_updates * 1024,
         "source_population": ("all 100TB exported stored items" if args.full_pool else
                               "audited global-random 100TB exported stored-item subset"),
         "sampling": ("rank-disjoint shards, 4 interleaved random-order shards, 128-item buffer; "
@@ -118,12 +129,13 @@ def main() -> None:
         return
     if args.resume:
         prepare_resume_metrics(run)
+        (run / "resume_extension_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     else:
         run.mkdir(parents=True)
         (run / "launch_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     env = os.environ.copy()
     env.update(
-        CUDA_VISIBLE_DEVICES=GPUS,
+        CUDA_VISIBLE_DEVICES=args.gpu_group,
         DQ_STREAM_FAILURE_LOG_DIR=str(run),
         PYTHONPATH=str(ROOT), PYTHONUNBUFFERED="1", OMP_NUM_THREADS="4",
         PYTORCH_ALLOC_CONF="expandable_segments:True",

@@ -349,6 +349,9 @@ def id_vs_ood_knn(
     k: int = 10,
     train_fraction: float = 0.7,
     seed: int = 0,
+    return_predictions: bool = False,
+    bank_indices: np.ndarray | None = None,
+    test_indices: np.ndarray | None = None,
 ) -> dict[str, float]:
     rng = np.random.default_rng(seed)
     id_x = l2_normalize(id_features)
@@ -356,20 +359,35 @@ def id_vs_ood_knn(
     idx = np.arange(len(id_x))
     rng.shuffle(idx)
     n_train = max(1, min(len(idx) - 1, int(round(len(idx) * train_fraction))))
+    if bank_indices is not None or test_indices is not None:
+        if bank_indices is None or test_indices is None:
+            raise ValueError('Both fixed reference and test indices are required')
+        bank_indices = np.asarray(bank_indices, dtype=np.int64)
+        test_indices = np.asarray(test_indices, dtype=np.int64)
+        idx = np.concatenate([bank_indices, test_indices])
+        if (not len(bank_indices) or not len(test_indices) or
+                len(idx) != len(id_x) or not np.array_equal(np.sort(idx), np.arange(len(id_x)))):
+            raise ValueError('Fixed reference/test must partition all ID inputs without overlap')
+        n_train = len(bank_indices)
     bank = id_x[idx[:n_train]]
     id_test = id_x[idx[n_train:]]
     k = max(1, min(k, len(bank)))
 
     def score(query: np.ndarray) -> np.ndarray:
-        sim = query @ bank.T
-        part = np.partition(sim, kth=sim.shape[1] - k, axis=1)[:, -k:]
-        # Low similarity to the ID bank should mean more OOD-like.
-        return 1.0 - part.mean(axis=1)
+        chunks = []
+        for start in range(0, len(query), 1024):
+            sim = query[start:start + 1024] @ bank.T
+            part = np.partition(sim, kth=sim.shape[1] - k, axis=1)[:, -k:]
+            # Low similarity to the ID bank should mean more OOD-like.
+            chunks.append(1.0 - part.mean(axis=1))
+        return np.concatenate(chunks)
 
     scores = np.concatenate([score(id_test), score(ood_x)])
     labels = np.concatenate([np.zeros(len(id_test), dtype=np.int64), np.ones(len(ood_x), dtype=np.int64)])
     out = binary_auc_ap(scores, labels)
     out.update({"id_bank": int(len(bank)), "id_test": int(len(id_test)), "ood_test": int(len(ood_x))})
+    if return_predictions:
+        return out, {"scores": scores, "labels": labels, "id_test_indices": idx[n_train:]}
     return out
 
 

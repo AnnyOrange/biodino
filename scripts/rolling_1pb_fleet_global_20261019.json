@@ -1,0 +1,34 @@
+{
+  "hosts": {
+    "cpu1": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu2": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python", "queue_root": "/mnt/huawei_blm_1pb/rolling_1pb_wds_v1/queue"},
+    "cpu4": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu5": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu7": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu8": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu9": {"workers": 4, "python": "/home/inspur/miniconda3/envs/dinov3/bin/python"},
+    "cpu10": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu11": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu12": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python", "queue_root": "/mnt/huawei_blm_1pb/rolling_1pb_wds_v1/queue"},
+    "cpu15": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu18": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu19": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu20": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"}
+  },
+  "root_hosts": {
+    "/mnt/deepcad_nfs": "all",
+    "/slfm": "all",
+    "/home/inspur/as13000_sam2p": "all",
+    "/home/inspur/huaweimount_sam2p": "all",
+    "/mnt/mount_100t_zzf_2": "all",
+    "/mnt/mount_100t_zzf_3": "all"
+  },
+  "root_aliases": {
+    "/mnt/mount_100t_zzf_2": "/mnt/rolling1pb_100t_zzf_2",
+    "/mnt/mount_100t_zzf_3": "/mnt/rolling1pb_100t_zzf_3"
+  },
+  "host_root_aliases": {
+    "cpu9": {"/mnt/deepcad_nfs": "/mnt/rolling1pb_deepcad_nfs"},
+    "cpu18": {"/home/inspur/as13000_sam2p": "/mnt/rolling1pb_as13000_sam2p"}
+  }
+}

@@ -151,7 +151,7 @@ def hest_result(x, y, meta):
     }
 
 
-def rxrx3_result(x, y, meta):
+def rxrx3_result(x, y, meta, seed=0, return_samples=False):
     rows = meta["rows"]
     gallery = np.asarray([r["split"] == "gallery" for r in rows])
     query = ~gallery
@@ -167,17 +167,17 @@ def rxrx3_result(x, y, meta):
     cluster_input = np.concatenate((g, q))
     if meta.get("protocol_id") == "crispr-query-guide-plate-disjoint-all-eligible-genes-v1":
         pred_clusters = MiniBatchKMeans(
-            n_clusters=n_clusters, n_init=5, random_state=0,
+            n_clusters=n_clusters, n_init=5, random_state=seed,
             batch_size=min(1024, len(cluster_input)), max_iter=200,
         ).fit_predict(cluster_input)
-        clustering_method = "MiniBatchKMeans(n_init=5,max_iter=200,seed=0)"
+        clustering_method = f"MiniBatchKMeans(n_init=5,max_iter=200,seed={seed})"
     else:
-        pred_clusters = KMeans(n_clusters=n_clusters, n_init=5, random_state=0).fit_predict(cluster_input)
-        clustering_method = "KMeans(n_init=5,seed=0)"
+        pred_clusters = KMeans(n_clusters=n_clusters, n_init=5, random_state=seed).fit_predict(cluster_input)
+        clustering_method = f"KMeans(n_init=5,seed={seed})"
     from sklearn.metrics import normalized_mutual_info_score
     reciprocal_ranks = 1.0 / ranks
     is_formal = meta.get("protocol_id") == "crispr-query-guide-plate-disjoint-all-eligible-genes-v1"
-    return {
+    result = {
         "protocol_id": meta["protocol_id"], "n_gallery": int(gallery.sum()), "n_query": int(query.sum()),
         "recall_at_1": finite(np.mean(ranks <= 1)), "recall_at_5": finite(np.mean(ranks <= 5)),
         "recall_at_10": finite(np.mean(ranks <= 10)), "mrr_at_10": finite(np.mean(np.where(ranks <= 10, 1/ranks, 0))),
@@ -187,6 +187,11 @@ def rxrx3_result(x, y, meta):
         "clustering_method": clustering_method,
         "status": "FORMAL" if is_formal else "OBSERVATIONAL", "proxy": False,
     }
+    if return_samples:
+        return result, dict(ranks=ranks, neighbor_indices=order[:, :10],
+                            neighbor_scores=np.take_along_axis(scores, order[:, :10], axis=1),
+                            cluster=pred_clusters, labels=labels)
+    return result
 
 
 def midog_result(x, y, meta):

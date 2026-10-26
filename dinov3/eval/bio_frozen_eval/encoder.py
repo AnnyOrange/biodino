@@ -267,6 +267,19 @@ class Dinov3CkptEncoder:
     @torch.inference_mode()
     def encode_tensor(self, images: list[torch.Tensor]) -> np.ndarray:
         tensors = [self._resize_center_crop_tensor(img) for img in images]
+        return self._encode_spatial_tensors(tensors)
+
+    @torch.inference_mode()
+    def encode_prepared_tensor(self, tensors: list[torch.Tensor]) -> np.ndarray:
+        """Consume losslessly transported outputs of the fixed tensor resize/crop."""
+        if (self.resize_size, self.image_size) != (256, 224):
+            raise ValueError('Prepared tensor transport requires resize256/crop224')
+        if any(t.dtype != torch.float32 or t.ndim != 3 or tuple(t.shape[-2:]) != (224, 224) for t in tensors):
+            raise ValueError('Prepared tensor shape or dtype differs from certified prefix')
+        return self._encode_spatial_tensors(tensors)
+
+    @torch.inference_mode()
+    def _encode_spatial_tensors(self, tensors: list[torch.Tensor]) -> np.ndarray:
         max_channels = max(int(t.shape[0]) for t in tensors)
         batch = torch.zeros(
             len(tensors),
@@ -299,6 +312,14 @@ class Dinov3CkptEncoder:
 
     @torch.inference_mode()
     def encode_images(self, images: list) -> np.ndarray:
+        if images and hasattr(images[0], 'prepared_rgb'):
+            # Lossless transport after the identical deterministic spatial prefix.
+            # Only the final dtype conversion / normalization remains.
+            if (self.resize_size,self.image_size)!=(256,224):
+                raise ValueError('Prepared RGB transport requires the certified resize256/crop224 recipe')
+            x=torch.stack([self.transform.transforms[-1](image.prepared_rgb) for image in images]).to(self.device,non_blocking=True)
+            feat=self.model(x).float()
+            return F.normalize(feat,dim=1).cpu().numpy().astype(np.float16)
         if images and torch.is_tensor(images[0]):
             return self.encode_tensor(images)
         return self.encode_pil(images)

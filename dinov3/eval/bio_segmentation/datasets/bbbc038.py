@@ -222,7 +222,7 @@ def get_bbbc038_paths(
         )
 
     # ---- Deterministic train / val / test split ----
-    split_file = os.path.join(data_root, 'bbbc038_splits.npz')
+    split_file = os.environ.get('DINOV3_BBBC038_SPLIT_FILE', os.path.join(data_root, 'bbbc038_splits.npz'))
     if os.path.exists(split_file):
         sp = np.load(split_file)
         val_idx  = set(sp['val_idx'].tolist())

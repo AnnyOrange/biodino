@@ -24,7 +24,8 @@ def official_paths(root, split, approved_sha256, manifest_file='monuseg2018_offi
         raise ValueError('MoNuSeg split counts differ from the registered protocol')
     if counts == {'train': 30, 'val': 7, 'test': 14}:
         if manifest.get('protocol') != 'monuseg2018-train30-extra7val-test14-v1' or \
-                not manifest.get('inventory_sha256') or not manifest.get('archive_sha256'):
+                not (manifest.get('inventory_sha256') or manifest.get('official_inventory_sha256')) or \
+                not (manifest.get('archive_sha256') or manifest.get('official_archive_sha256')):
             raise ValueError('The locked v4 MoNuSeg manifest must include inventory and archive hashes')
     elif not manifest.get('official_source_url') or not manifest.get('official_inventory_sha256'):
         raise ValueError('Official inventory/source evidence required')

@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path("/mnt/huawei_deepcad/dinov3")
 CAMPAIGN = ROOT / "plot/fig2/data_quality/long_100tb_full_pool_partial_v4_id_20261012_retry1/100tb_ck7999"
-REPORT = ROOT / "outputs/00_reports/hs0_hs6_1tb_5tb_fm14_20260924/100tb_fullpool_ck7999_partial_20261012"
+REPORT = ROOT / "outputs/00_reports/hs0_hs6_1tb_5tb_fm14_20260924/100tb_fullpool_every500_v4_20261019/ck7999"
 CHECKPOINT_SHA = "c4bf90f1943c4399c3dcdf55ba32054afc0a9ee9b65f7f429c1643dd703c0d10"
 
 

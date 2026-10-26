@@ -106,10 +106,17 @@ def main():
           f"{len(m20) - len(m_fleet)} cells from campaign CSV {cks_csv}")
     cks20 = cks_fleet or cks_csv
     for name, sub in (("20tb_cooldown", "lyx"), ("20tb_distill_lw2 [local]", "local_distill_lw2"),
-                      ("20tb_distill_lw5 [hxw]", "hxw_distill_lw5"), ("20tb_distill_lw2_rebal [hxw]", "hxw_distill_lw2_rebal"),
+                      ("20tb_distill_lw5 [hxw]", "hxw_distill_lw5"), ("20tb_distill_lw2_rebal [hxw]", "hxw_distill_lw2_rebal"), ("20tb_selfread [local]", "local_selfread"),
+                      ("20tb_scv_p05 [local]", "local_scv_p05"), ("20tb_from47823_lw5 [local]", "local_from47823_lw5"),
                       ("lyx_distill", "lyx_distill")):
         a = parse_fleet(S / sub)
         if a: report(name, a, m20, sd20, cks20, rows)
+    # The best-trunk fork (ck47823) is also compared with the trunk at its own fork point (same fleet worker, lyx).
+    peak = parse_fleet(S / "peak47823"); a = parse_fleet(S / "local_from47823_lw5")
+    if peak and a:
+        mp, _ = ref_mean(peak, sorted(peak))
+        print("\n(vs trunk ck47823 itself; sd from the late-trunk reference)")
+        report("20tb_from47823_lw5 vs ck47823", a, mp, sd20, sorted(peak), [])
     OUT.mkdir(parents=True, exist_ok=True)
     with open(OUT / "early_scores_nonseg.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=["arm", "checkpoint", "family", "dataset", "value", "ref", "ref_sd", "delta_pp"]); w.writeheader(); w.writerows(rows)

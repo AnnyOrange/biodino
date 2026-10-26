@@ -19,7 +19,7 @@ import prepare_data_quality_v4_id_20261002 as old
 
 REPO = Path("/mnt/huawei_deepcad/dinov3")
 EVAL_BASE = REPO / "plot/fig2/data_quality/long_norepeat_eval_20261009"
-STEPS = tuple(range(499, 40_000, 500))
+STEPS = tuple(range(499, 80_000, 500))
 
 
 def checkpoint_audit(train: Path, arm: str, step: int) -> dict:
@@ -33,8 +33,9 @@ def checkpoint_audit(train: Path, arm: str, step: int) -> dict:
         raise ValueError("Partial checkpoint is not from the audited 100TB full-pool stream")
     if launch.get("effective_batch") != 1024 or launch.get("world_size") != 4 or \
             cfg["compute_precision"]["distributed_mode"] != "ddp" or \
-            cfg["train"]["max_updates"] != 40_000 or cfg["train"]["batch_size_per_gpu"] != 128 or \
-            cfg["optim"]["gradient_accumulation_steps"] != 2 or \
+            cfg["train"]["max_updates"] not in (40_000, 80_000) or \
+            cfg["train"]["batch_size_per_gpu"] * launch["world_size"] * \
+            cfg["optim"]["gradient_accumulation_steps"] != 1024 or \
             cfg["train"]["dataset_path"] != "raw100tb_full_pool_robust:" + str(index):
         raise ValueError("Partial checkpoint training configuration differs from the 100TB full-pool run")
     teacher = train / f"eval/training_{step}/teacher_checkpoint.pth"
@@ -65,7 +66,7 @@ def checkpoint_audit(train: Path, arm: str, step: int) -> dict:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    return dict(status="PASS_CHECKPOINT_ONLY", arm=arm, protocol="100tb_40k_full_pool_v1",
+    return dict(status="PASS_CHECKPOINT_ONLY", arm=arm, protocol="100tb_full_pool_v1",
                 optimizer_update=step, optimizer_updates_observed=step + 1,
                 image_visits=target["samples_seen"], effective_batch=1024,
                 source_subset_size=assignment["total_items"],

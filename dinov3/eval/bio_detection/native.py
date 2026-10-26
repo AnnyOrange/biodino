@@ -10,6 +10,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -17,6 +18,14 @@ import numpy as np
 from PIL import Image
 import torch
 from torch import nn
+
+def resolve_source_image(path):
+    """Relocate identical source bytes while preserving canonical manifest IDs."""
+    path=Path(path);resident=os.environ.get('UNIFIED_PAPER_BENCHMARK_ROOT')
+    canonical=Path('/mnt/huawei_deepcad/benchmark')
+    if resident and path.is_relative_to(canonical):
+        return Path(resident)/path.relative_to(canonical)
+    return path
 
 
 def sha256(path):
@@ -157,7 +166,7 @@ class NativeDetectionDataset(torch.utils.data.Dataset):
         from torchvision.transforms.functional import pil_to_tensor
 
         row = self.records[index]
-        with Image.open(row["path"]) as image:
+        with Image.open(resolve_source_image(row["path"])) as image:
             pixels = pil_to_tensor(image.convert("RGB")).float() / 255
         boxes = torch.tensor(row["boxes"], dtype=torch.float32).reshape(-1, 4)
         target = {"boxes": boxes, "labels": torch.tensor(row["labels"], dtype=torch.int64),
@@ -205,6 +214,10 @@ def build_detector(backbone, layers, num_classes, min_size=512, max_size=1024):
 
 
 def coco_bbox_metrics(dataset, predictions, classes):
+    import sys
+    pinned = Path(__file__).resolve().parents[3] / 'outputs/02_eval_runtime/pycocotools_2_0_10'
+    if pinned.is_dir() and str(pinned) not in sys.path:
+        sys.path.insert(0, str(pinned))
     from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval
 
@@ -226,7 +239,8 @@ def coco_bbox_metrics(dataset, predictions, classes):
                                "bbox": [x, y, xx-x, yy-y], "score": score})
     with contextlib.redirect_stdout(io.StringIO()):
         truth = COCO()
-        truth.dataset = {"images": images, "annotations": annotations,
+        truth.dataset = {"info": {"description": "Shared native microscopy box evaluation"}, "licenses": [],
+                         "images": images, "annotations": annotations,
                          "categories": [{"id": i+1, "name": name} for i, name in enumerate(classes)]}
         truth.createIndex()
         if detections:

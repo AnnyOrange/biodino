@@ -739,7 +739,8 @@ def _build_dataset(
     size = None if (img_size is None or img_size == 0) else (img_size, img_size)
 
     if loader_type == 'file':
-        img_paths, mask_paths = get_paths_fn(data_root, split=split)
+        kwargs = {'split_protocol': dataset_split_protocol} if dataset_name == 'multimodal_cellseg' else {}
+        img_paths, mask_paths = get_paths_fn(data_root, split=split, **kwargs)
         return DatasetClass(
             img_paths,
             mask_paths,

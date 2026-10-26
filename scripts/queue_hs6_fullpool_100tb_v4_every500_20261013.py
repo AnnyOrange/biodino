@@ -18,13 +18,18 @@ from pathlib import Path
 REPO = Path('/mnt/huawei_deepcad/dinov3')
 DATA = Path('/mnt/huawei_blm/hs6_long_uniform_100tb_vs_20tb_20261009')
 RUN = REPO / 'outputs/01_training_runs/HS6_L_quality_long_100tb_fullpool_ddp_gb1024_mb128_ga2_40k_4xa100_deepcad_20261010'
+CONTINUATION_RUN = Path('/mnt/liyixin22/100tb')
 CONTROL = REPO / 'outputs/02_eval_runs/hs6_100tb_fullpool_v4_every500_20261013'
 BASE = CONTROL
 EVAL_BASE = CONTROL / 'campaigns'
 EVAL_PYTHON = sys.executable
-EXISTING_7999 = REPO / 'outputs/00_reports/hs0_hs6_1tb_5tb_fm14_20260924/100tb_fullpool_ck7999_partial_20261012/status.json'
-STEPS = tuple(range(499, 40_000, 500))
+EXISTING_7999 = REPO / 'outputs/00_reports/hs0_hs6_1tb_5tb_fm14_20260924/100tb_fullpool_every500_v4_20261019/ck7999/status.json'
+STEPS = tuple(range(499, 80_000, 500))
 SOURCE_ARCHIVE = REPO / 'outputs/03_source_archives/100tb_fullpool_v4_20261013/source.tar.gz'
+
+
+def run_for_step(step: int) -> Path:
+    return RUN if step <= 41999 else CONTINUATION_RUN
 
 
 def sha256(path: Path) -> str:
@@ -51,14 +56,20 @@ def register_campaign(host: str, gpus: list[int]) -> None:
         raise FileNotFoundError(f'Missing canonical source archive: {SOURCE_ARCHIVE}')
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text())
+        manifest['train_target_optimizer_updates'] = 80_000
+        manifest['checkpoint_steps'] = list(STEPS)
+        manifest['train_run_continuation'] = str(CONTINUATION_RUN)
         archive_sha = sha256(SOURCE_ARCHIVE)
         if manifest.get('source_snapshot_sha256') != snapshot['sha256'] or \
                 manifest.get('source_archive_sha256') != archive_sha:
             revisions = list(manifest.get('prelaunch_source_revisions', []))
+            started = any(EVAL_BASE.glob('100tb_ck*/driver_status.json'))
             revisions.append(dict(
                 source_snapshot_sha256=manifest.get('source_snapshot_sha256'),
                 source_archive_sha256=manifest.get('source_archive_sha256'),
-                status='PRELAUNCH_HASH_DRIFT_NO_GPU_WORKER_STARTED', recorded_unix=time.time()))
+                status=('POSTLAUNCH_HASH_DRIFT_RECORDED' if started else
+                        'PRELAUNCH_HASH_DRIFT_NO_GPU_WORKER_STARTED'),
+                recorded_unix=time.time()))
             manifest.update(source_snapshot=snapshot, source_snapshot_sha256=snapshot['sha256'],
                             source_archive=str(SOURCE_ARCHIVE), source_archive_sha256=archive_sha,
                             git_commit=snapshot['git_commit'], prelaunch_source_revisions=revisions)
@@ -66,7 +77,8 @@ def register_campaign(host: str, gpus: list[int]) -> None:
         manifest = dict(
             protocol_id='bio-eval-union-v4',
             scope='HS6 100TB full-pool; checkpoints every 500 optimizer updates; 38 shared + 9 extension + MoNuSeg 30/7/14',
-            train_run=str(RUN), train_target_optimizer_updates=40_000,
+            train_run=str(RUN), train_target_optimizer_updates=80_000,
+            train_run_continuation=str(CONTINUATION_RUN),
             checkpoint_steps=list(STEPS), existing_ck7999_report=str(EXISTING_7999),
             evaluation_root=str(EVAL_BASE), git_commit=snapshot['git_commit'],
             git_status='Worktree code and rules are fully hash-recorded; exact source archive is included below',
@@ -91,8 +103,9 @@ def register_campaign(host: str, gpus: list[int]) -> None:
 
 
 def checkpoint_ready(step: int) -> bool:
-    optimizer = RUN / f'ckpt/{step}/checkpoint.pth'
-    metrics = RUN / 'raw_loss_metrics.jsonl'
+    run = run_for_step(step)
+    optimizer = run / f'ckpt/{step}/checkpoint.pth'
+    metrics = run / 'raw_loss_metrics.jsonl'
     return optimizer.is_file() and optimizer.stat().st_size > 3_000_000_000 and metrics.is_file()
 
 
@@ -109,6 +122,7 @@ def completed(step: int) -> bool:
 
 
 def evaluate(step: int, gpus: list[int], target_per_gpu: int, host: str) -> None:
+    run = run_for_step(step)
     campaign = EVAL_BASE / f'100tb_ck{step}'
     label = f'long_fullpool500_100tb_ck{step}'
     (BASE / 'logs').mkdir(parents=True, exist_ok=True)
@@ -117,20 +131,20 @@ def evaluate(step: int, gpus: list[int], target_per_gpu: int, host: str) -> None
         return
     if not checkpoint_ready(step):
         raise FileNotFoundError(f'Checkpoint {step} is not complete yet')
-    teacher = RUN / f'eval/training_{step}/teacher_checkpoint.pth'
+    teacher = run / f'eval/training_{step}/teacher_checkpoint.pth'
     if not teacher.is_file():
         command = [EVAL_PYTHON, '-u', str(REPO / 'scripts/export_hs6_fullpool_teacher_from_ckpt_20261013.py'),
-                   '--run', str(RUN), '--step', str(step)]
+                   '--run', str(run), '--step', str(step)]
         subprocess.run(command, cwd=REPO, check=True)
     if not (campaign / 'prepared.json').is_file():
         subprocess.run([EVAL_PYTHON, '-u', str(REPO / 'scripts/prepare_hs6_long_v4_id_20261009.py'),
-                        '--arm', '100tb', '--step', str(step), '--train-root', str(RUN),
+                        '--arm', '100tb', '--step', str(step), '--train-root', str(run),
                         '--eval-base', str(EVAL_BASE), '--label-tag', 'fullpool500', '--allow-partial'],
                        cwd=REPO, check=True)
     status = campaign / 'driver_status.json'
     if status.is_file() and json.loads(status.read_text()).get('state') == 'COMPLETE':
         return
-    command = [EVAL_PYTHON, '-u', str(REPO / 'scripts/run_data_quality_v4_id_20261002.py'),
+    command = [EVAL_PYTHON, '-u', str(CONTROL / 'v4_busy_gpu_entry_20261015.py'),
                '--arm', label, '--eval-root', str(campaign), '--gpus', *map(str, gpus),
                '--target-per-gpu', str(target_per_gpu)]
     log = CONTROL / 'logs' / f'{host}_ck{step}.log'
@@ -151,9 +165,10 @@ def worker(args: argparse.Namespace) -> None:
     BASE.mkdir(parents=True, exist_ok=True)
     state = CONTROL / 'workers' / f'{args.host}.json'
     attempts: dict[int, int] = {}
+    steps = tuple(args.steps) if args.steps else STEPS
     while True:
         did_work = False
-        for step in STEPS:
+        for step in steps:
             if completed(step) or not checkpoint_ready(step):
                 continue
             claim = BASE / 'claims' / f'ck{step}'
@@ -188,9 +203,10 @@ def worker(args: argparse.Namespace) -> None:
                 claim.rmdir()
             break
         if not did_work:
-            remaining = [step for step in STEPS if not completed(step)]
+            remaining = [step for step in steps if not completed(step)]
             save(state, dict(host=args.host, gpus=args.gpus, state='WAITING_FOR_CHECKPOINTS',
-                             latest_optimizer_checkpoint=max((int(p.parent.name) for p in (RUN / 'ckpt').glob('*/checkpoint.pth')), default=None),
+                             latest_optimizer_checkpoint=max((int(p.parent.name) for source in (RUN, CONTINUATION_RUN)
+                                                              for p in (source / 'ckpt').glob('*/checkpoint.pth')), default=None),
                              remaining=len(remaining), time_unix=time.time()))
             if args.exit_when_done and not remaining:
                 return
@@ -203,6 +219,7 @@ def main() -> None:
     parser.add_argument('--host', required=True)
     parser.add_argument('--gpus', type=int, nargs='+', required=True)
     parser.add_argument('--target-per-gpu', type=int, default=5)
+    parser.add_argument('--steps', type=int, nargs='+', help='Prioritize only these saved checkpoints')
     parser.add_argument('--python-bin', default=sys.executable)
     parser.add_argument('--poll-seconds', type=int, default=180)
     parser.add_argument('--exit-when-done', action='store_true')
@@ -213,6 +230,9 @@ def main() -> None:
         raise SystemExit('Run with --worker on an evaluation host')
     if len(set(args.gpus)) != len(args.gpus):
         raise ValueError('GPU ids must be unique')
+    if args.steps and (len(set(args.steps)) != len(args.steps) or
+                       any(step not in STEPS for step in args.steps)):
+        raise ValueError('Steps must be unique 500-update checkpoint IDs')
     worker(args)
 
 

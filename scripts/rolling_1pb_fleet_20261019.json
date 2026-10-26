@@ -1,0 +1,25 @@
+{
+  "hosts": {
+    "cpu1": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu4": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu5": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu7": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu8": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu9": {"workers": 4, "python": "/home/inspur/miniconda3/envs/dinov3/bin/python"},
+    "cpu10": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu11": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu12": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python", "queue_root": "/mnt/huawei_blm_1pb/rolling_1pb_wds_v1/queue"},
+    "cpu15": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu18": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu19": {"workers": 4, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"},
+    "cpu20": {"workers": 2, "python": "/home/inspur/anaconda3/envs/dinov3/bin/python"}
+  },
+  "root_hosts": {
+    "/mnt/deepcad_nfs": ["cpu1", "cpu4", "cpu5", "cpu7", "cpu8", "cpu9", "cpu10", "cpu11", "cpu12", "cpu18", "cpu19", "cpu20"],
+    "/slfm": ["cpu1", "cpu5", "cpu7", "cpu8", "cpu10", "cpu11", "cpu15", "cpu18", "cpu20"],
+    "/home/inspur/as13000_sam2p": ["cpu1", "cpu5", "cpu7", "cpu8", "cpu10", "cpu11", "cpu18"],
+    "/home/inspur/huaweimount_sam2p": ["cpu1", "cpu5", "cpu7", "cpu8", "cpu10", "cpu11", "cpu18"],
+    "/mnt/mount_100t_zzf_2": ["cpu1", "cpu19"],
+    "/mnt/mount_100t_zzf_3": ["cpu1", "cpu19"]
+  }
+}

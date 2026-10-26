@@ -192,6 +192,8 @@ def collate_data_and_cast(
     }
     if sample_channel_ids is not None:
         out["sample_channel_ids"] = sample_channel_ids
+    if "teacher_domain" in samples_list[0][0]:
+        out["teacher_domains"] = [s[0]["teacher_domain"] for s in samples_list]
     if mixture_domain_indices is not None:
         out["mixture_domain_indices"] = mixture_domain_indices
         out["mixture_domain_names"] = mixture_domain_names
@@ -283,6 +285,8 @@ def get_batch_subset(collated_data_batch, divide_by):
         new_batch["global_batch_size"] = collated_data_batch["global_batch_size"] // divide_by
     if "sample_keys" in collated_data_batch:
         new_batch["sample_keys"] = collated_data_batch["sample_keys"][:target_bs]
+    if "teacher_domains" in collated_data_batch:
+        new_batch["teacher_domains"] = collated_data_batch["teacher_domains"][:target_bs]
     if "sample_channel_ids" in collated_data_batch:
         new_batch["sample_channel_ids"] = collated_data_batch["sample_channel_ids"][:target_bs]
     if "mixture_domain_indices" in collated_data_batch:

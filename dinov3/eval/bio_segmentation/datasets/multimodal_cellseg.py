@@ -1,11 +1,9 @@
 """NeurIPS 2022 Multimodal CellSeg loader.
 
-The local mirror stores split CSVs with image/mask paths relative to the
-``neurips22_cellseg`` root.  Masks are instance-label images; the linear probe
-uses a binary foreground mask like the other semantic segmentation benchmarks.
-Very large WSI tiles are skipped here because the frozen-feature pipeline works
-on fixed-size resized images and loading those whole-slide files can dominate or
-exhaust memory in quick benchmark sweeps.
+Certified manifests preserve the author's 1000 training, 101 tuning and all52
+public test images, including both WSI images. Masks are paired within their
+own release split. The existing probe evaluates binary semantic foreground;
+these are not official instance-segmentation leaderboard scores.
 """
 
 from __future__ import annotations
@@ -55,61 +53,25 @@ def get_multimodal_cellseg_paths(
     data_root: str,
     split: str = "train",
     max_pixels: int = 50_000_000,
+    split_protocol: str = "legacy",
 ) -> Tuple[List[str], List[str]]:
-    """Read image/mask pairs from the prepared split CSVs.
+    """Read checksum-pinned author splits; retain every image, including WSI.
 
-    Args:
-        data_root: ``.../Multimodal_CellSeg/neurips22_cellseg``.
-        split: ``train``, ``val`` or ``test``.  ``test`` maps to the local
-            source-heldout split.
-        max_pixels: skip huge WSI files above this pixel count.
+    ``max_pixels`` is retained for caller compatibility and does not filter data.
+    The previous global basename-joined split is explicitly rejected.
     """
 
     root = Path(data_root)
-    split_file = {
-        "train": root / "splits" / "train.csv",
-        "val": root / "splits" / "val.csv",
-        "test": root / "splits" / "test_source_heldout.csv",
-    }.get(split)
-    if split_file is None:
-        raise ValueError(f"Unsupported Multimodal_CellSeg split: {split}")
-    if not split_file.exists():
-        raise FileNotFoundError(f"Multimodal_CellSeg split file not found: {split_file}")
-
-    img_paths: List[str] = []
-    mask_paths: List[str] = []
-    skipped_missing = 0
-    skipped_large = 0
-    with split_file.open(newline="", encoding="utf-8", errors="replace") as f:
-        for row in csv.DictReader(f):
-            if str(row.get("has_mask", "1")) not in {"1", "True", "true"}:
-                continue
-            image_rel = row.get("image_path") or ""
-            mask_rel = row.get("mask_path") or ""
-            if not image_rel or not mask_rel:
-                continue
-            image_path = root / image_rel
-            mask_path = root / mask_rel
-            if not image_path.exists() or not mask_path.exists():
-                skipped_missing += 1
-                continue
-            if row.get("source_dataset") == "WSI" or "WSI" in image_rel or "WSI" in mask_rel:
-                skipped_large += 1
-                continue
-            n_pixels = _image_num_pixels(image_path)
-            if n_pixels is None or n_pixels > max_pixels:
-                skipped_large += 1
-                continue
-            img_paths.append(str(image_path))
-            mask_paths.append(str(mask_path))
-
-    logger.info(
-        "[Multimodal_CellSeg %s] Found %d pairs (skipped_missing=%d, skipped_large=%d)",
-        split,
-        len(img_paths),
-        skipped_missing,
-        skipped_large,
-    )
-    if not img_paths:
-        raise ValueError(f"No Multimodal_CellSeg pairs found for split={split} under {root}")
-    return img_paths, mask_paths
+    if split_protocol != 'neurips22-author-public52-v2':
+        raise ValueError('Withdrawn Multimodal CellSeg basename-joined split: Tuning images were paired to Training masks. Use certified neurips22-author-public52-v2.')
+    import hashlib,json
+    project = Path(__file__).resolve().parents[4]
+    readiness = json.loads((project/'outputs/02_eval_runs/unified_paper/multimodal_official_readiness.json').read_text())
+    manifest = Path(readiness['manifests'][split])
+    assert hashlib.sha256(manifest.read_bytes()).hexdigest() == readiness['manifest_sha256'][split]
+    with manifest.open() as stream:rows = list(csv.DictReader(stream))
+    images = [str(root/r['image_path']) for r in rows]
+    masks = [str(root/r['mask_path']) for r in rows]
+    assert len(images) == readiness['counts'][split]
+    assert all(Path(p).is_file() for p in images+masks)
+    return images,masks

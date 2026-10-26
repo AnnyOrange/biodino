@@ -310,7 +310,8 @@ def run(args) -> Dict:
     # Datasets: native resolution; training random-crops + augments, eval tiles.
     # Train images are un-normalized ([0,1]) so intensity aug runs before MICRO-norm.
     base_train = _build_instance_dataset(args, "train", do_normalize=False)
-    base_val = _build_instance_dataset(args, "val", do_normalize=True)
+    final_epoch_selection = getattr(args, "selection_mode", "best_val") == "final_epoch"
+    base_val = None if final_epoch_selection else _build_instance_dataset(args, "val", do_normalize=True)
     train_ds = RandomCropHoVerDataset(base_train, args.crop_size, num_types, seed=args.seed,
                                       aug=args.aug, mosaic_prob=args.mosaic_prob)
     loader_generator = torch.Generator()
@@ -448,7 +449,7 @@ def run(args) -> Dict:
             nb += 1
             pbar.set_postfix(loss=f"{comps['total']:.3f}")
 
-        if epoch % eval_every == 0 or epoch == args.epochs:
+        if not final_epoch_selection and (epoch % eval_every == 0 or epoch == args.epochs):
             validation_started = time.perf_counter()
             val = evaluate(
                 model, base_val, device, num_types,
@@ -468,14 +469,16 @@ def run(args) -> Dict:
                 _save_best(model, best_path)
 
     # ---- final test ----
-    if os.path.exists(best_path):
+    if final_epoch_selection:
+        _save_best(model, best_path)
+    elif os.path.exists(best_path):
         _load_best(model, best_path, device)
 
     if device.type == "cuda":
         torch.cuda.synchronize(device)
     training_seconds = time.perf_counter() - training_started - validation_seconds
     final_inference_started = time.perf_counter()
-    val_results = evaluate(
+    val_results = {} if final_epoch_selection else evaluate(
         model, base_val, device, num_types,
         crop_size=args.crop_size, stride=args.stride, patch_size=patch_size,
         max_images=args.max_eval_images, tta=args.tta,
@@ -529,6 +532,7 @@ def run(args) -> Dict:
             "amp_dtype": args.amp_dtype,
             "seed": args.seed,
             "select_metric": sel_key,
+            "selection_mode": "final_epoch" if final_epoch_selection else "best_val",
             "warmup_ratio": args.warmup_ratio,
             "warmup_steps": warmup_steps,
             "total_steps": total_steps,
@@ -568,7 +572,7 @@ def run(args) -> Dict:
     return results
 
 
-def main():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description="DINOHoVerNet instance-seg train/eval")
     p.add_argument("--dataset", required=True, choices=list(DATASET_NUM_TYPES.keys()))
     p.add_argument("--data-root", required=True)
@@ -624,6 +628,8 @@ def main():
     p.add_argument("--grad-clip-norm", type=float, default=None)
     p.add_argument("--select-metric", type=str, default=None,
                    help="Validation metric used for best checkpoint selection. Default mPQ for typed datasets, bPQ otherwise.")
+    p.add_argument("--selection-mode", choices=["best_val", "final_epoch"], default="best_val",
+                   help="Use final_epoch only for a predeclared fixed-budget protocol without validation selection.")
     p.add_argument("--amp-dtype", choices=["none", "bf16", "fp16"], default="none")
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--eval-every", type=int, default=5)
@@ -645,7 +651,7 @@ def main():
     p.add_argument("--focal-gamma", type=float, default=2.0)
     p.add_argument("--tversky-alpha", type=float, default=0.3)
     p.add_argument("--tversky-beta", type=float, default=0.7)
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     if args.freeze_backbone and args.unfreeze_last_blocks is not None:
         p.error("--unfreeze-last-blocks requires --finetune")
@@ -682,7 +688,11 @@ def main():
         # Resolve even-4 from backbone depth lazily inside build; here pick a
         # sensible default for vit_large; the pipeline script passes --layers.
         args.layers = [4, 11, 17, 23]
-    run(args)
+    return args
+
+
+def main():
+    run(parse_args())
 
 
 if __name__ == "__main__":

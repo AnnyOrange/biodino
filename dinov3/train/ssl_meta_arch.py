@@ -2565,6 +2565,7 @@ class SSLMetaArch(nn.Module):
                 student_patches=student_global["patch_pre_head"],
                 images=global_crops.unflatten(0, (n_global_crops, B)),
                 teacher_cls_bottleneck=teacher_global.get("cls_bottleneck"),
+                teacher_domains=data.get("teacher_domains"),
             )
         # Compute losses and backprop
         loss_accumulator, loss_dict = self.compute_losses(

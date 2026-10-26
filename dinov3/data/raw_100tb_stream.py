@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import csv
+import io
 import itertools
 import json
 import logging
+import math
 import os
 import random
 import tarfile
@@ -14,10 +16,12 @@ from pathlib import Path
 from typing import Callable
 
 import torch
+import tifffile
 
 from .wds_decoder import _robust_per_channel, _to_float_tensor
 
 logger = logging.getLogger("dinov3")
+MAX_FULL_POOL_DECODED_BYTES = 512 * 1024 * 1024
 
 
 def decode_raw_item(data: bytes, item_id: int, channel_hint: int, target_channels: int) -> torch.Tensor:
@@ -278,14 +282,30 @@ class Raw100TBFullPoolStream(torch.utils.data.IterableDataset):
                         if item_id not in remaining:
                             continue
                         hint = remaining.pop(item_id)
+                        if member.size > MAX_FULL_POOL_DECODED_BYTES:
+                            record_failure(item_id, path, f"raw_item_too_large:{member.size}")
+                            continue
                         try:
                             payload = source.extractfile(member)
                             if payload is None:
                                 raise OSError(f"Cannot extract {item_id} from {path}")
-                            yield item_id, hint, payload.read(), path
+                            data = payload.read()
                         except (OSError, tarfile.TarError, EOFError):
                             remaining[item_id] = hint
                             raise
+                        try:
+                            with tifffile.TiffFile(io.BytesIO(data)) as tiff:
+                                series = tiff.series[0]
+                                decoded_bytes = math.prod(series.shape) * series.dtype.itemsize
+                            if decoded_bytes > MAX_FULL_POOL_DECODED_BYTES:
+                                raise ValueError(f"decoded_image_too_large:{decoded_bytes}")
+                            image = decode_raw_item(data, item_id, hint, self.target_channels)
+                        except Exception as exc:
+                            record_failure(item_id, path, f"{type(exc).__name__}:{str(exc)[:200]}")
+                            logger.warning("100TB full-pool item %d failed to decode: %s", item_id, exc)
+                            continue
+                        del data, tiff, series
+                        yield item_id, image, path
             except (OSError, tarfile.TarError, EOFError) as exc:
                 logger.warning("100TB full-pool shard %s stopped after read error: %s", path, exc)
                 record_failure(None, path, f"shard_read_error:{type(exc).__name__}:{str(exc)[:160]}",
@@ -297,15 +317,9 @@ class Raw100TBFullPoolStream(torch.utils.data.IterableDataset):
 
         def drain_one():
             index = rng.randrange(len(buffer))
-            item_id, hint, data, path = buffer[index]
+            item_id, image, path = buffer[index]
             buffer[index] = buffer[-1]
             buffer.pop()
-            try:
-                image = decode_raw_item(data, item_id, hint, self.target_channels)
-            except Exception as exc:
-                record_failure(item_id, path, f"{type(exc).__name__}:{str(exc)[:200]}")
-                logger.warning("100TB full-pool item %d failed to decode: %s", item_id, exc)
-                return None
             sample = {"image": image, "__key__": str(item_id), "__url__": path}
             if self.transform is None:
                 return sample

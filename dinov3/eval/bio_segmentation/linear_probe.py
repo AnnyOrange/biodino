@@ -366,6 +366,7 @@ def evaluate_cached(
     class_names:   Optional[List[str]] = None,
     ignore_index:  int = 255,
     semantic_only: bool = False,
+    prediction_path: Optional[str] = None,
 ) -> Dict[str, float]:
     """Evaluate on cached features; returns full metric dict."""
     head.eval()
@@ -423,6 +424,10 @@ def evaluate_cached(
         class_names=class_names,
         ignore_index=ignore_index,
     )
+    if prediction_path is not None:
+        temp = prediction_path + '.tmp.npz'
+        np.savez_compressed(temp, prediction=np.stack(all_pred_sem).astype(np.uint8), true_label=np.stack(all_gt_sem).astype(np.uint8), sample_index=np.arange(len(all_pred_sem)))
+        os.replace(temp, prediction_path)
     if semantic_only:
         return sem_metrics
 
@@ -509,6 +514,7 @@ def run_cached_linear_probe(
     seed: int = 0,
     class_weight_mode: str = "none",
     class_weight_beta: float = 0.999,
+    save_predictions: bool = False,
 ) -> Dict[str, float]:
     """Full cached linear probe training pipeline."""
     # Seed all probe-side randomness: head initialization, dropout, and
@@ -708,6 +714,7 @@ def run_cached_linear_probe(
             head, te_loader, num_classes, orig_size, device, class_names,
             ignore_index=ignore_index,
             semantic_only=semantic_only,
+            prediction_path=os.path.join(output_dir, 'test_semantic_predictions.npz') if save_predictions else None,
         )
         results['_meta']['test_evaluations'] = 1
 

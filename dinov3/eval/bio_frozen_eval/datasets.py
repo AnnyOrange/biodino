@@ -578,9 +578,11 @@ class LIVECellCountRegressionDataset(Dataset):
                 data_root = fallback
         samples: list[RegressionSample] = []
         with (self.root / "livecell_cell_count.csv").open(newline="") as handle:
+            self.coco_image_ids = []
             for row in csv.DictReader(handle):
                 if row["split"] != split:
                     continue
+                self.coco_image_ids.append(str(row['image_id']))
                 samples.append(
                     RegressionSample(
                         data_root / row["image_path"],

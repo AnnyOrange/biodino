@@ -1,0 +1,18 @@
+import json
+from pathlib import Path
+root=Path('/mnt/huawei_deepcad/dinov3');out=root/'outputs/02_eval_runs/unified_paper'
+q=json.loads((out/'queue.json').read_text()); protocol=json.loads((root/'Evaluation Rules/protocol_v4.json').read_text());tasks=[]
+for section in ['tier_a','tier_b','union_extension']:
+ for task,datasets in protocol[section].items():
+  for dataset in datasets:
+   row={'task':task,'dataset':dataset,'required_seeds':5 if task in ['segmentation','detection_proxy'] else 0,'seed_semantics':'training_randomness' if task in ['segmentation','detection_proxy'] else 'not_applicable','folds':5 if task=='cell_tracking' else 1,'protocol':'lc25000-clean-original-tile-80-20-seed0-v1' if task=='classification' and dataset=='lc25000' else 'bio-eval-union-v4'}
+   if row not in tasks:tasks.append(row)
+for d in ['nct-crc-he-1k','crc-val-he-7k','hpa-subcellular','rxrx1-cross','rxrx3-core']:
+ tasks.append({'task':'clustering','dataset':d,'required_seeds':5,'seed_semantics':'kmeans_initialization','folds':1,'protocol':'bio-eval-union-v4'})
+for t in tasks:
+ if t['task']=='clustering':t.update(required_seeds=5,seed_semantics='kmeans_initialization')
+ if t['task']=='cell_tracking':t.update(required_seeds=5,seed_semantics='head_training_seeds_separate_from_folds')
+for d,t,reason in [('bbbc038-official','instance_segmentation','native FM adapter missing'),('bbbc041','box_detection','native FM head/metric integration missing'),('bccd','box_detection','native FM head/metric integration missing'),('spheroid_lsfm','centroid_detection_3d','native centroid decoder/evaluator integration missing'),('nucls_qc','nuclei_detection_segmentation','QC download and released folds required'),('xray_chest','box_detection','stage2 test annotation-ID mapping required'),('xray_bone','bone_age_regression','official validation images/labels missing'),('film_age','classification','fixed biological-group split and shared head required'),('allen-cell-volume','regression','existing official split and deterministic probe; result indexing pending')]:
+ tasks.append({'task':t,'dataset':d,'required_seeds':0 if t.endswith('regression') else 5,'folds':1,'protocol':'existing_requested_native_supplement','implementation_status':reason})
+config={'scope':'18 specified public FM plus fixed biodino anchors; no withdrawn 24-domain survey; no historical checkpoint sweep','models':q['models'],'tasks':tasks,'training_seeds':[0,1,2,3,4],'statistics':{'bootstrap_replicates':2000,'permutation_replicates':10000,'random_seed':20261021,'confidence_level':.95,'resampling':'paired independent groups; strata by source for OOD; keep all patches and all seeds together','seed_aggregation':'mean of per-seed metric, never ensemble predictions','primary_comparisons':'each fixed biodino anchor versus each of 18 FM for each matched task','primary_metrics':{'ood':'auroc','classification':'balanced_accuracy','regression':'mae','segmentation':'mDice','detection_proxy':'test_patch_f1','cell_tracking':'TRA'},'multiplicity':'Holm within each dataset/task across the complete predeclared biodino-vs-FM family; pending tests remain pending','checkpoint_selection':'historical retrospective anchors, inference conditional on given weights; no confirmatory claim for datasets used in selection','ood_groups':{'xray':'biological sample_id, preserving volumes/variants/slices','cryo':'project_id (4 groups); limited source diversity','id':'BBBC048 source field prefix; CyclOps source image stem; BloodMNIST image ID (donor mapping unavailable)'}}}
+(out/'config.json').write_text(json.dumps(config,indent=2)+'\n');print(len(tasks),'task definitions')

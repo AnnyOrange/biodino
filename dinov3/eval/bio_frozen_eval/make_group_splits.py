@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.model_selection import GroupShuffleSplit
 
-from .group_keys import GROUP_KEY_RULES, GROUP_SPLIT_DATASETS, group_keys
+from .group_keys import GROUP_KEY_RULES, GROUP_SPLIT_DATASETS, LC25000_GROUPS, LC25000_GROUPS_SHA256, group_keys
 from .registry import build_dataset
 
 SPLIT_DIR = Path(__file__).resolve().parent / "splits"
@@ -50,7 +50,7 @@ def build_split(dataset_name: str, benchmark_root, seed: int = SEED, test_size: 
     dataset, task = build_dataset(dataset_name, "train", None, None, benchmark_root=benchmark_root)
     groups = group_keys(dataset_name, dataset, benchmark_root)
     train_idx, test_idx, test_groups = _partition(groups, seed, test_size)
-    return {
+    result = {
         "dataset": dataset_name,
         "task": task,
         "seed": seed,
@@ -62,6 +62,11 @@ def build_split(dataset_name: str, benchmark_root, seed: int = SEED, test_size: 
         "n_test": int(len(test_idx)),
         "test_groups": test_groups,
     }
+    if dataset_name == "lc25000":
+        result.update(annotation_source="https://github.com/GeorgeBatch/LC25000-clean/blob/912f342fe2a781e847f395d79982dad4d3d425ae/kaggle/lc25000_image_groups.csv",
+                      annotation_path=str(LC25000_GROUPS), annotation_sha256=LC25000_GROUPS_SHA256,
+                      independent_unit="published manually verified original tissue tile; patient/slide IDs unavailable")
+    return result
 
 
 def split_path(dataset_name: str) -> Path:

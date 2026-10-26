@@ -34,9 +34,10 @@ class ProbeResult:
     n_train: int
     n_test: int
     metrics: dict[str, float]
+    predictions: dict | None = None
 
     def to_dict(self):
-        d = asdict(self)
+        d = {"task": self.task, "n_train": self.n_train, "n_test": self.n_test, "metrics": self.metrics}
         d.update(self.metrics)
         d.pop("metrics")
         return d
@@ -83,6 +84,7 @@ def run_bbbc013_compound_oof_probe(
     compound_metrics: dict[str, dict[str, float]] = {}
     all_predictions: list[np.ndarray] = []
     all_targets: list[np.ndarray] = []
+    oof_predictions = np.full(len(targets), np.nan)
     train_samples_per_fold: set[int] = set()
 
     for compound, compound_rows in BBBC013_COMPOUND_ROWS.items():
@@ -105,6 +107,7 @@ def run_bbbc013_compound_oof_probe(
             predictions[test_mask] = reg.predict(features[test_mask])
             train_samples_per_fold.add(int(train_mask.sum()))
 
+        oof_predictions[compound_mask] = predictions[compound_mask]
         compound_predictions = predictions[compound_mask]
         compound_targets = log_targets[compound_mask]
         if not np.isfinite(compound_predictions).all():
@@ -140,6 +143,7 @@ def run_bbbc013_compound_oof_probe(
         n_train=min(train_samples_per_fold),
         n_test=sum(len(values) for values in all_predictions),
         metrics=metrics,
+        predictions={"true_label": log_targets, "prediction": oof_predictions, "fold": rows_array, "test_indices": np.arange(len(targets))},
     )
 
 
@@ -163,6 +167,7 @@ def run_classification_probe(
         task="classification",
         n_train=len(train_idx),
         n_test=len(test_idx),
+        predictions={"true_label": y_test, "prediction": pred, "score": clf.predict_proba(x_test), "classes": clf.classes_, "test_indices": test_idx, "train_indices": train_idx},
         metrics={
             "accuracy": float(accuracy_score(y_test, pred)),
             "balanced_accuracy": float(balanced_accuracy_score(y_test, pred)),
@@ -199,6 +204,7 @@ def run_classification_probe_split(
         task="classification",
         n_train=int(len(y_train)),
         n_test=int(len(y_test)),
+        predictions={"true_label": y_test, "prediction": pred, "score": clf.predict_proba(x_test), "classes": clf.classes_},
         metrics={
             "accuracy": float(accuracy_score(y_test, pred)),
             "balanced_accuracy": float(balanced_accuracy_score(y_test, pred)),
@@ -237,6 +243,7 @@ def run_multilabel_classification_probe(
         task="multilabel_classification",
         n_train=len(train_idx),
         n_test=len(test_idx),
+        predictions={"true_label": y_test, "prediction": pred, "score": prob, "test_indices": test_idx, "train_indices": train_idx},
         metrics={
             "accuracy": float(accuracy_score(y_test, pred)),
             "label_accuracy": float((y_test == pred).mean()),
@@ -268,6 +275,7 @@ def run_regression_probe(
         task="regression",
         n_train=len(train_idx),
         n_test=len(test_idx),
+        predictions={"true_label": y_test, "prediction": pred, "test_indices": test_idx, "train_indices": train_idx},
         metrics={
             "mae": float(mean_absolute_error(y_test, pred)),
             "r2": float(r2_score(y_test, pred)),
@@ -303,6 +311,7 @@ def run_multilabel_classification_probe_split(
         task="multilabel_classification",
         n_train=int(len(y_train)),
         n_test=int(len(y_test)),
+        predictions={"true_label": y_test, "prediction": pred, "score": prob},
         metrics={
             "accuracy": float(accuracy_score(y_test, pred)),
             "label_accuracy": float((y_test == pred).mean()),
@@ -336,6 +345,7 @@ def run_regression_probe_split(
         task="regression",
         n_train=int(len(y_train)),
         n_test=int(len(y_test)),
+        predictions={"true_label": y_test, "prediction": pred},
         metrics={
             "mae": float(mean_absolute_error(y_test, pred)),
             "r2": float(r2_score(y_test, pred)),
