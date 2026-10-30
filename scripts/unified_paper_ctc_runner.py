@@ -104,8 +104,12 @@ def run_ctc(invocation, output):
         manifest_sha, torch.device('cuda:0'), {})
     records = native.training_records(data, fold)
     diameter, n_diameter = native.training_diameter(records, {})
+    from unified_paper_gpu_admission import release_current_reservation
+    test_domains = invocation['dataset']['test_domains']
     domains = [native.evaluate_domain(model, data, name, fold, output, diameter, n_diameter,
-               manifest_sha, head['head_sha256'], torch.device('cuda:0')) for name in invocation['dataset']['test_domains']]
+               manifest_sha, head['head_sha256'], torch.device('cuda:0'),
+               after_inference=release_current_reservation if index == len(test_domains) - 1 else None)
+               for index, name in enumerate(test_domains)]
     return dict(protocol_id=native.PROTOCOL_ID, fold=fold, head=head,
                 domain_rows=domains, macro=native._macro(domains), n_domains=len(domains),
                 feature_grid_policy='published-final-map-to-common-stride16-decoder-grid',

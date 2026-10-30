@@ -1,5 +1,5 @@
 """Monitor AI-resident branch pilots and import outputs, never checkpoints."""
-import argparse, fcntl, hashlib, json, os, shlex, subprocess, time
+import argparse, fcntl, hashlib, json, os, shlex, subprocess, time, threading
 from pathlib import Path
 from admit_unified_paper_20tb_best import ROOT, OUT, read, write
 
@@ -9,6 +9,20 @@ REMOTE_OUT=REMOTE_ROOT+'/outputs/02_eval_runs/unified_paper'
 PY='/data/xuzijing/eval_envs/hs6_protocol_v2/bin/python'
 MODELS=['biodino_20tb_rebalanced_best','biodino_20tb_residual_best']
 SYNC_CHILDREN={}
+SYNC_CHILDREN_LOCK=threading.Lock()
+
+def reap_sync_children():
+    # Poll every owned transfer before network/filesystem work in the next pass.
+    # Keep its Popen for ensure_sync to report the previous exit status.
+    with SYNC_CHILDREN_LOCK:
+        children=list(SYNC_CHILDREN.values())
+    for child in children:
+        child.poll()
+
+def sync_reaper():
+    while True:
+        reap_sync_children()
+        time.sleep(5)
 
 def ensure_sync(kind,mirror):
     """Adopt live transfers across controller restarts; no elapsed-time cutoff."""
@@ -29,7 +43,7 @@ def ensure_sync(kind,mirror):
     argv += [source,str(target)+'/']
     log=OUT/'logs'/f'ai_sync_{kind}.log'
     with log.open('a') as stream:proc=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
-    SYNC_CHILDREN[kind]=proc
+    with SYNC_CHILDREN_LOCK:SYNC_CHILDREN[kind]=proc
     write(state_path,dict(updated=time.time(),status='transfer_started',pid=proc.pid,previous_exit_code=exit_code,source=source,log=str(log)))
 
 def remote_snapshot():
@@ -233,7 +247,9 @@ def main():
     with (OUT/'locks/ai_branch_manager.lock').open('a') as lock:
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:return
+        threading.Thread(target=sync_reaper,daemon=True,name='sync-reaper').start()
         while True:
+            reap_sync_children()
             try:run()
             except Exception as e:
                 write(OUT/'states/ai_branch_manager.json',{'pid':os.getpid(),'updated':time.time(),'status':'error','error':repr(e)});print('ERROR',repr(e),flush=True)

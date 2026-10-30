@@ -67,7 +67,7 @@ def get_multimodal_cellseg_paths(
     import hashlib,json
     project = Path(__file__).resolve().parents[4]
     readiness = json.loads((project/'outputs/02_eval_runs/unified_paper/multimodal_official_readiness.json').read_text())
-    manifest = Path(readiness['manifests'][split])
+    manifest = project / 'outputs/02_eval_runs/unified_paper/manifests' / split_protocol / f'{split}.csv'
     assert hashlib.sha256(manifest.read_bytes()).hexdigest() == readiness['manifest_sha256'][split]
     with manifest.open() as stream:rows = list(csv.DictReader(stream))
     images = [str(root/r['image_path']) for r in rows]

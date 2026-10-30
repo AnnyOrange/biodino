@@ -88,7 +88,8 @@ def job(task):
   dump(target,payload);return dict(task=task,status='complete')
  except Exception as e:return dict(task=task,status='error',error=repr(e),traceback=traceback.format_exc())
 
-def run(workers=32):
+def run(workers=4):
+ workers=min(workers,4)
  global FRAMES,META,SETTINGS
  cfg=json.loads((OUT/'config.json').read_text());SETTINGS=cfg['statistics'];FRAMES={};META={};errors=[]
  models={m['model']:m for m in cfg['models']};store=OUT/'statistics/ood_groupfix_v3';store.mkdir(exist_ok=True,parents=True)
@@ -112,7 +113,8 @@ def run(workers=32):
  state=dict(pid=os.getpid(),updated=time.time(),workers=workers,available_predictions=len(FRAMES),scheduled=len(jobs),completed_this_pass=0,errors=errors,status='running')
  statepath=OUT/'states/ood_statistics.json';dump(statepath,state);print('OOD STATISTICS',len(FRAMES),'results',len(jobs),'jobs',flush=True)
  if jobs:
-  with multiprocessing.get_context('fork').Pool(workers) as pool:
+  from unified_paper_statistics_resources import pool as bounded_pool
+  with bounded_pool(workers) as pool:
    for result in pool.imap_unordered(job,jobs,chunksize=1):
     if result['status']=='error':state['errors'].append(result)
     else:state['completed_this_pass']+=1
@@ -121,7 +123,7 @@ def run(workers=32):
 
 if __name__=='__main__':
  import fcntl
- parser=argparse.ArgumentParser();parser.add_argument('--watch',action='store_true');parser.add_argument('--workers',type=int,default=32);args=parser.parse_args()
+ parser=argparse.ArgumentParser();parser.add_argument('--watch',action='store_true');parser.add_argument('--workers',type=int,default=4);args=parser.parse_args()
  with (OUT/'locks/ood_inputfix_statistics.lock').open('a') as lock:
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:raise SystemExit(0)

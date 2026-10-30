@@ -150,6 +150,23 @@ def _make_shard_source(wds, config: WdsConfig):
         else:
             random.Random(config.resample_seed).shuffle(shards)
             assigned = shards[rank::world_size]
+        per_shard = int(os.environ.get("DQ_FINITE_RESUME_SAMPLES_PER_SHARD", "0"))
+        if config.skip_samples and per_shard:
+            if not os.environ.get("DQ_FINITE_FAST_SKIP_AUDIT_DIR"):
+                raise ValueError("Approximate shard resume requires audited-key filtering")
+            slack = int(os.environ.get("DQ_FINITE_RESUME_SLACK_SAMPLES", "50000"))
+            if slack < config.shuffle_buffer:
+                raise ValueError("Finite resume slack must cover the WDS shuffle buffer")
+            skipped_shards = max(0, (config.skip_samples - slack) // per_shard)
+            if skipped_shards >= len(assigned):
+                raise ValueError("Finite resume shard offset exhausts the assigned pool")
+            if skipped_shards:
+                logger.warning(
+                    "Finite WDS approximate shard resume: rank=%d skipping %d full shards; "
+                    "audited-key filtering remains active for the boundary",
+                    rank, skipped_shards,
+                )
+                assigned = assigned[skipped_shards:]
         if not assigned:
             raise ValueError(f"No finite WDS shards assigned to rank {rank}/{world_size}")
         logger.info(
@@ -176,6 +193,34 @@ def _make_sample_shuffle(wds, config: WdsConfig):
         # otherwise seeds from wall-clock time.
         return wds.shuffle(config.shuffle_buffer, seed=config.resample_seed + 1_000_003)
     return wds.shuffle(config.shuffle_buffer)
+
+
+def _finite_consumed_keys(config: WdsConfig):
+    audit_dir = os.environ.get("DQ_FINITE_FAST_SKIP_AUDIT_DIR")
+    if not (config.finite_once and config.skip_samples and audit_dir):
+        return None
+    rank = torch.distributed.get_rank() if torch.distributed.is_available() and torch.distributed.is_initialized() else 0
+    audit_path = Path(audit_dir) / f"consumed_sample_keys_rank{rank:02d}.jsonl"
+    consumed = set()
+    count = 0
+    with audit_path.open(encoding="utf-8") as source:
+        for line in source:
+            keys = json.loads(line)
+            count += len(keys)
+            consumed.update(keys)
+            if count >= config.skip_samples:
+                break
+    if count != config.skip_samples or len(consumed) != count:
+        raise ValueError(f"Finite WDS audit cannot cover {config.skip_samples} unique consumed samples: {audit_path}")
+    logger.info("Finite WDS fast resume: rank=%d filtering %d audited sample keys", rank, count)
+    return consumed
+
+
+def _packed_sample_key(sample: dict) -> str:
+    key = str(sample.get("__key__", ""))
+    url = str(sample.get("__url__", ""))
+    shard = url.rsplit("/", 1)[-1] if url else ""
+    return f"{shard}::{key}" if shard else key
 
 
 def build_packed_wds_pipeline(
@@ -355,8 +400,11 @@ def build_packed_robust_wds_pipeline(
     if pair_prob > 0:
         stages.append(_make_specimen_pairing(pair_prob, config.resample_seed))
     stages.append(_make_sample_shuffle(wds, config))
+    consumed_keys = _finite_consumed_keys(config)
+    if consumed_keys is not None:
+        stages.append(wds.select(lambda sample: _packed_sample_key(sample) not in consumed_keys))
     stages.extend([wds.map(decode_sample), wds.select(lambda x: x is not None)])
-    if config.finite_once and config.skip_samples:
+    if config.finite_once and config.skip_samples and consumed_keys is None:
         if config.skip_samples < 0:
             raise ValueError("Finite WDS skip_samples must be nonnegative")
         stages.append(lambda samples: itertools.islice(samples, config.skip_samples, None))

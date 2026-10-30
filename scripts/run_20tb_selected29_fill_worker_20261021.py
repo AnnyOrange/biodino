@@ -200,6 +200,13 @@ def main():
         policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
         if policy.get('hold_new_tasks'):
             return False
+        if a.host.split(':')[0] == 'deepcad' and 'min_host_available_gib' in policy:
+            available_kib = next(int(line.split()[1]) for line in Path('/proc/meminfo').read_text().splitlines()
+                                 if line.startswith('MemAvailable:'))
+            reserve_gib = int(policy.get('host_ram_reserve_gib', 0))
+            required_kib = (int(policy['min_host_available_gib']) + reserve_gib) * 1024**2
+            if available_kib < required_kib:
+                return False
         if time.time() - cache['time'] > 3:
             processes = subprocess.check_output(['nvidia-smi', '--query-compute-apps=gpu_uuid,pid,used_gpu_memory',
                 '--format=csv,noheader,nounits'], text=True)

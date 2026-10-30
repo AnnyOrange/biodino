@@ -128,11 +128,13 @@ def reserve_for_current_command():
     if job.get('selection_locked_sha256'):
         if hashlib.sha256(Path(job['selection_locked']).read_bytes()).hexdigest()!=job['selection_locked_sha256']:
             raise ValueError('Locked validation selection changed before independent fit')
+    from unified_paper_host_admission import reserve_for_current_command as reserve_host, launch_ready as host_ready
+    reserve_host(job)
     if device is None or device.strip() in ['', '-1']:return
     if ',' in device:raise ValueError('Unified single-GPU queue expected one visible device')
-    shared_deepcad_gpu=host=='deepcad' and int(device) in (1,4)
-    limit_fraction=.35 if shared_deepcad_gpu else .80
-    max_active=3 if shared_deepcad_gpu else 8
+    paired_deepcad_gpu=host=='deepcad'
+    limit_fraction=.35 if paired_deepcad_gpu else .80
+    max_active=2 if paired_deepcad_gpu else 8
     values=subprocess.check_output(['nvidia-smi',f'--id={device}','--query-gpu=uuid,memory.total','--format=csv,noheader,nounits'],text=True).strip().split(',')
     uuid,total=values[0].strip(),int(values[1]);directory=OUT/'gpu_reservations';directory.mkdir(exist_ok=True)
     path=directory/f'{uuid}.json';lock_path=directory/f'{uuid}.lock';pid=os.getpid();last_notice=0
@@ -160,6 +162,10 @@ def reserve_for_current_command():
                 except (FileNotFoundError,ProcessLookupError):continue
                 if b'run_unified_paper_' in cmd or b'run_new_fm_v4_segmentation_' in cmd:active.add(other_pid)
             fits=fits and len(active|{pid})<=max_active
+            # A job may have waited for its GPU for hours after reserving RAM.
+            # Recheck system headroom before it actually starts loading.
+            host_fits,host_details=host_ready(job,pid=pid)
+            fits=fits and host_fits
             record={'pid':pid,'start_ticks':start_ticks(pid),'host':socket.gethostname(),'gpu_uuid':uuid,'task':job['key'],'expected_peak_mib':expected,'current_used_mib':used,'other_loading_reserve_mib':reserve,'total_mib':total,'updated':time.time()}
             write(directory/f'process_{socket.gethostname()}_{pid}.json',{**record,'status':'admitted' if fits else 'waiting_for_capacity'})
             if fits:
@@ -167,7 +173,7 @@ def reserve_for_current_command():
             else:write(path,{'reservations':reservations,'updated':time.time()})
         if fits:break
         if time.monotonic()-last_notice>60:
-            print(f"GPU ADMISSION WAIT {job['key']} used={used:.0f} pending_reserve={reserve:.0f} requested_peak={expected:.0f} limit={limit_fraction*total:.0f} MiB",flush=True);last_notice=time.monotonic()
+            print(f"GPU ADMISSION WAIT {job['key']} used={used:.0f} pending_reserve={reserve:.0f} requested_peak={expected:.0f} limit={limit_fraction*total:.0f} MiB host_ram={host_details}",flush=True);last_notice=time.monotonic()
         time.sleep(10)
     print(f"GPU ADMITTED {job['key']} reserved_peak={expected:.0f} MiB; limit={limit_fraction*total:.0f} MiB; live loading peers counted",flush=True)
     def release(status='exited'):

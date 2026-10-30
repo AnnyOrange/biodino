@@ -1,0 +1,3 @@
+include README.md LICENSE.md MODEL_CARD.md
+include requirements.txt requirement.txt requirements-dev.txt
+recursive-include dinov3 *.yaml

@@ -6,6 +6,17 @@ ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'outputs/02_eval_runs/unified_
 def read(p):
  try:return json.loads(p.read_text())
  except (FileNotFoundError,json.JSONDecodeError):return {}
+def completed_segmentation_recovery(job):
+ if job.get('task')!='segmentation_cache_recovery' or not job['key'].endswith('__recipe16'):return []
+ split=Path(job['result']).parents[3].name
+ for family in ('segmentation','segmentation_refit'):
+  base=OUT/'results'/job['model']/family/job['dataset']/split
+  outputs=[base/f'E{budget}'/f'seed{seed}'/'component_result.json'
+           for budget in (20,50) for seed in range(5)]
+  if all(path.is_file() and read(path).get('split')==split and
+         Path(read(path).get('prediction_path','')).is_file() for path in outputs):
+   return outputs
+ return []
 def queue_frame():
  health=read(OUT/'resource_snapshot.json');live=health.get('live_tasks',{}) if time.time()-health.get('observed_at_controller',0)<180 else {};models={x['model']:x for x in read(OUT/'config.json')['models']};rows=[]
  remote=read(OUT/'remote_resource_snapshot.json')
@@ -32,6 +43,11 @@ def queue_frame():
     if stale or (node.get('error')and not node.get('gpus')):
      row.update(execution_status='状态未知',job_id=f"{previous['host']}:{previous['child_pid']}",reason='Previous claimed child retained; current process/GPU state cannot be verified. '+('Resource snapshot stale'if stale else str(node['error']).strip())+'. Not counted as running or queued; do not reclaim on network failure.')
    row['artifact_sync_complete']=complete
+   recovered=completed_segmentation_recovery(j) if not complete else []
+   if recovered:
+    row.update(execution_status='已完成',metric_run_complete=True,artifact_sync_complete=True,
+               result=str(recovered[0]),result_set=json.dumps([str(path) for path in recovered]),
+               reason='All 10 final E20/E50 x five-seed results and predictions verified; temporary feature cache was pruned')
    if name=='remote_queue.json' and j.get('remote_result_verified') and not complete:
     row.update(execution_status='已完成',metric_run_complete=True,reason='Resident evaluation and prediction files verified complete; transfer to unified report mirror still running; paper statistics not complete',remote_result=j.get('remote_result_path',''),remote_result_sha256=j.get('remote_result_sha256',''))
    if j.get('blocked_reason'):

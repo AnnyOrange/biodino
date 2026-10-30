@@ -2,12 +2,12 @@
 """Persistent report/statistics maintenance and safe dead-owner queue recovery."""
 import json,os,socket,subprocess,time,shutil,fcntl,csv,collections,concurrent.futures,shlex,traceback
 from pathlib import Path
-from unified_paper_transport import ssh
+from unified_paper_transport import local_host,ssh
 ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'outputs/02_eval_runs/unified_paper'
 PY='/home/lxy/miniconda3/envs/dinov3/bin/python'
 def alive(host,pid):
  cmd=['python3','-c',f'import pathlib; p=pathlib.Path("/proc/{int(pid)}/cmdline"); print(int(p.exists() and b"unified_paper" in p.read_bytes()))']
- if host not in ('server',socket.gethostname()):
+ if not local_host(host):
   import shlex
   cmd=ssh(host,5)+[shlex.join(cmd)]
  try:
@@ -30,7 +30,7 @@ def recover():
   host,pids=item
   code='import pathlib,json,sys; result={}\nfor pid in json.loads(sys.argv[1]):\n try:\n  cmd=pathlib.Path(f"/proc/{pid}/cmdline").read_bytes();result[str(pid)]=b"unified_paper"in cmd or b"repair_unified_duplicate_executions.py"in cmd\n except FileNotFoundError:result[str(pid)]=False\nprint(json.dumps(result))'
   cmd=['python3','-c',code,json.dumps(sorted(pids))]
-  if host not in ('server',socket.gethostname()):cmd=ssh(host,5)+[shlex.join(cmd)]
+  if not local_host(host):cmd=ssh(host,5)+[shlex.join(cmd)]
   try:
    r=subprocess.run(cmd,capture_output=True,text=True,timeout=10)
    return host,json.loads(r.stdout) if r.returncode==0 else {}
@@ -120,7 +120,7 @@ def full_audit():
    waiting_for_gpu_admission=[{'task':key,'host':value['host'],'gpu':value.get('gpu'),'pid':value.get('child_pid'),'log':value.get('log')}for key,value in live.items() if value.get('execution_phase')=='waiting_for_capacity'],
    gpu_snapshot=load(report/'gpu_memory_monitor.json').get('summary',{}),
    clustering_ci_v2_publication=load(OUT/'validation/clustering_ci_v2_publication.json'),
-   gpu_reserved_cards={'deepcad':[2,3]})
+   gpu_reserved_cards={'deepcad':[0,2,3,5]})
   save(delivery_path,delivery)
  with (OUT/'logs/full_scope_monitor_history.jsonl').open('a') as f:f.write(json.dumps({k:v for k,v in audit.items() if k not in ['model_domain_coverage','failed_jobs','missing_table_cells']})+'\n')
 
@@ -139,14 +139,14 @@ def publish_gpu_snapshot():
    phases=collections.Counter(w.get('execution_phase','unknown')for w in jobs)
    observed=health.get('observed_at_controller')if host in health.get('nodes',{})else remote.get('observed_at_controller')
    row={**card,'host':host,'observed_at_controller':observed,'registered_test_gpu':(host,gpu)in allocated,'verified_evaluation_jobs':len(jobs),'waiting_for_capacity_jobs':phases['waiting_for_capacity'],'cpu_only_jobs':phases['cpu_only'],'admitted_or_loading_jobs':sum(v for k,v in phases.items()if k not in ['waiting_for_capacity','cpu_only','exited']),'gpu_allocated_job_owner_pids':[w['child_pid']for w in jobs if node.get('gpu_process_memory_mib',{}).get(str(w.get('child_pid')),0)>0],'live_job_pids':[w['child_pid']for w in jobs],'live_tasks':[w['task']for w in jobs]}
-   if host=='deepcad' and gpu in (1,4):
-    row.update(policy_target_fraction=.35,policy_admission_fraction=.35,policy_max_active=3,above_user_memory_cap=card['vram_fraction']>.40)
+   if host=='deepcad':
+    row.update(policy_target_fraction=.35,policy_admission_fraction=.35,policy_max_active=2,above_user_memory_cap=card['vram_fraction']>.40)
    machines[host].append(row);flat.append(row)
  registered=[r for r in flat if r['registered_test_gpu']]
  observed_cards={(r['host'],r['gpu'])for r in flat}
  unobserved=[dict(host=host,gpu=gpu,error=nodes.get(host,{}).get('error')or 'No GPU observation returned')for host,gpu in sorted(allocated-observed_cards)]
  host_errors={host:node['error']for host,node in nodes.items()if node.get('error')}
- save(report/'gpu_memory_monitor.json',{'updated':time.time(),'main_observed_at':health.get('observed_at_controller'),'remote_observed_at':remote.get('observed_at_controller'),'machines':machines,'unobserved_registered_test_cards':unobserved,'host_errors':host_errors,'summary':{'monitored_cards':len(flat),'configured_test_cards':len(allocated),'registered_test_cards':len(registered),'unobserved_registered_test_cards':len(unobserved),'registered_test_cards_at_60pct':sum(r['target_met']for r in registered if not (r['host']=='deepcad' and r['gpu'] in (1,4))),'deepcad_shared_cards_above_40pct':sum(r['above_user_memory_cap']for r in flat if r['host']=='deepcad' and r['gpu'] in (1,4))},'target_fraction':.60,'admission_limit_fraction':.80,'deepcad_gpu_1_4_override':{'target_fraction':.35,'admission_limit_fraction':.35,'hard_memory_limit_fraction':.40,'max_active_tests':3},'loading_reservations':str(OUT/'gpu_reservations'),'topup_actions':load(OUT/'states/automatic_gpu_topup.json'),'counting_note':'GPU memory includes existing other workloads. Deepcad GPUs 1 and 4 use their separate override. Configured test cards include currently unobservable hosts; registered_test_cards counts observed registered cards only. SSH failures are unknown states, not zero memory or exited jobs. Evaluation jobs require verified live child processes; capacity waits and CPU stages are separate. Owner PID allocation is not a count of CUDA subprocesses.'})
+ save(report/'gpu_memory_monitor.json',{'updated':time.time(),'main_observed_at':health.get('observed_at_controller'),'remote_observed_at':remote.get('observed_at_controller'),'machines':machines,'unobserved_registered_test_cards':unobserved,'host_errors':host_errors,'summary':{'monitored_cards':len(flat),'configured_test_cards':len(allocated),'registered_test_cards':len(registered),'unobserved_registered_test_cards':len(unobserved),'registered_test_cards_at_60pct':sum(r['target_met']for r in registered)},'target_fraction':.60,'admission_limit_fraction':.80,'deepcad_gpu_policy':{'allowed_gpus':[1,4,6,7],'excluded_gpus':[0,2,3,5],'target_fraction':.35,'admission_limit_fraction':.35,'hard_memory_limit_fraction':.40,'max_active_tests':2},'loading_reservations':str(OUT/'gpu_reservations'),'topup_actions':load(OUT/'states/automatic_gpu_topup.json'),'counting_note':'GPU memory includes existing other workloads. Deepcad GPUs 1, 4, 6 and 7 admit at most two tests each, with a 35% admission limit and 40% user cap. Configured test cards include currently unobservable hosts; registered_test_cards counts observed registered cards only. SSH failures are unknown states, not zero memory or exited jobs. Evaluation jobs require verified live child processes; capacity waits and CPU stages are separate. Owner PID allocation is not a count of CUDA subprocesses.'})
  if flat:
   tmp=report/f'gpu_memory_audit.{os.getpid()}.tmp.csv'
   with tmp.open('w',newline='')as f:
@@ -176,10 +176,10 @@ def top_up():
   from unified_paper_gpu_policy import excluded
   if excluded(host,gpu):continue
   card=next((g for g in health.get('nodes',{}).get(host,{}).get('gpus',[]) if g['gpu']==gpu),None)
-  shared_deepcad_gpu=host=='deepcad' and gpu in (1,4)
+  shared_deepcad_gpu=host=='deepcad'
   limit_fraction=.35 if shared_deepcad_gpu else .80
   target_fraction=.35 if shared_deepcad_gpu else .60
-  max_active=3 if shared_deepcad_gpu else 8
+  max_active=2 if shared_deepcad_gpu else 8
   if not card or card['vram_fraction']>=target_fraction:continue
   own=[w for w in live.values() if w['host']==host and w['gpu']==gpu and w.get('execution_phase') not in {'cpu_only','waiting_for_capacity'}]
   if len(own)>=max_active:
@@ -223,7 +223,8 @@ def main():
     if time.monotonic()-last_topup>=120 and phase('gpu_topup',top_up):last_topup=time.monotonic()
     if time.monotonic()-last_audit>=300 and phase('full_scope_audit',full_audit):last_audit=time.monotonic()
     # Only the full validated table builder publishes canonical paper files.
-    if (report_proc is None or report_proc.poll() is not None) and time.monotonic()-last_report>=600:
+    builder=ROOT/'plot/build_paper_figure_tables.py'
+    if builder.stat().st_size and (report_proc is None or report_proc.poll() is not None) and time.monotonic()-last_report>=600:
      existing=False
      for p in Path('/proc').glob('[0-9]*/cmdline'):
       try:parts=p.read_bytes().split(b'\0')
@@ -232,9 +233,10 @@ def main():
      if not existing:
       if report_log:report_log.close()
       report_log=(OUT/'logs/periodic_paper_report.log').open('a');env=os.environ.copy();env.update(OMP_NUM_THREADS='2',OPENBLAS_NUM_THREADS='2',MKL_NUM_THREADS='2')
-      report_proc=subprocess.Popen([PY,str(ROOT/'plot/build_paper_figure_tables.py')],cwd=ROOT,env=env,stdout=report_log,stderr=subprocess.STDOUT,start_new_session=True);last_report=time.monotonic()
+      report_proc=subprocess.Popen([PY,str(builder)],cwd=ROOT,env=env,stdout=report_log,stderr=subprocess.STDOUT,start_new_session=True);last_report=time.monotonic()
     save(OUT/'states/maintenance.json',{'pid':os.getpid(),'host':socket.gethostname(),'report_pid':report_proc.pid if report_proc else None,'updated':time.time(),'status':'degraded'if phase_errors else'live','phase_errors':phase_errors,'intervals':{'GPU_seconds':60,'all_model_ID_OOD_seconds':300,'paper_tables_seconds':600}})
    except Exception as e:
+    traceback.print_exc()
     save(OUT/'states/maintenance.json',{'pid':os.getpid(),'updated':time.time(),'status':'error','error':repr(e)});print('MAINTENANCE ERROR',repr(e),flush=True)
    time.sleep(max(1,60-(time.monotonic()-cycle_started)))
 if __name__=='__main__':main()

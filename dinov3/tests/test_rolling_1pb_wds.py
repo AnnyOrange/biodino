@@ -2,6 +2,7 @@ import csv
 import importlib.util
 import json
 import os
+import random
 import sqlite3
 import sys
 import tempfile
@@ -37,6 +38,22 @@ TRAIN_SPEC.loader.exec_module(trainer)
 
 
 class Rolling1PBQueueTests(unittest.TestCase):
+    def test_audited_resume_skips_only_configured_full_shard_prefix(self):
+        import webdataset as wds
+        from dinov3.data.wds_pipeline import WdsConfig, _make_shard_source
+
+        shards = [f"/unused/shard-{index:02d}.tar" for index in range(10)]
+        expected = shards.copy()
+        random.Random(7).shuffle(expected)
+        config = WdsConfig(shard_urls=shards, finite_once=True,
+                           resample_seed=7, shuffle_buffer=4, skip_samples=10)
+        with mock.patch.dict(os.environ, {
+                "DQ_FINITE_FAST_SKIP_AUDIT_DIR": "/unused/audit",
+                "DQ_FINITE_RESUME_SAMPLES_PER_SHARD": "2",
+                "DQ_FINITE_RESUME_SLACK_SAMPLES": "4"}):
+            selected = [item["url"] for item in _make_shard_source(wds, config)]
+        self.assertEqual(selected, expected[3:])
+
     def test_weighted_tar_source_mix_and_read_alias(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -197,6 +214,40 @@ class Rolling1PBQueueTests(unittest.TestCase):
             state = rolling.status(queue_root)
             self.assertEqual(state["live_limit_count"], 0)
             self.assertEqual(len(state["groups"]["completed"]), 1)
+
+    def test_finite_resume_filters_audited_samples_before_decode(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            source.mkdir()
+            rows = []
+            for index in range(4):
+                path = source / f"image_{index}.tif"
+                tifffile.imwrite(path, np.full((48, 64), index + 1, dtype=np.uint16))
+                rows.append((str(path), 1, 0, str(index), "test"))
+            batch = rolling.produce_batch(
+                root / "unused.sqlite", root / "queue", batch_samples=8,
+                max_live_batches=1, workers=1, samples_per_shard=2,
+                file_block=2, seed=21, inventory_rows=rows)
+            shards = sorted(str(path.resolve()) for path in
+                            (root / "queue" / "ready" / batch / "shards").glob("*.tar"))
+            from dinov3.data.wds_pipeline import WdsConfig, build_packed_robust_wds_pipeline
+            common = dict(shard_urls=shards, target_channels=3, finite_once=True,
+                          shuffle_buffer=4, deterministic_resampling=True,
+                          resample_seed=7)
+            original = list(build_packed_robust_wds_pipeline(WdsConfig(**common)))
+            keys = [f"{Path(item['__url__']).name}::{item['__key__']}" for item in original]
+            (root / "consumed_sample_keys_rank00.jsonl").write_text(
+                json.dumps(keys[:2]) + "\n" + json.dumps(keys[2:4]) + "\n")
+            from dinov3.data import wds_decoder
+            with mock.patch.dict(os.environ, {"DQ_FINITE_FAST_SKIP_AUDIT_DIR": str(root)}):
+                with mock.patch.object(wds_decoder, "decode_packed_sample_robust",
+                                       wraps=wds_decoder.decode_packed_sample_robust) as decode:
+                    resumed = list(build_packed_robust_wds_pipeline(
+                        WdsConfig(**common, skip_samples=4)))
+            self.assertEqual([f"{Path(item['__url__']).name}::{item['__key__']}"
+                              for item in resumed], keys[4:])
+            self.assertEqual(decode.call_count, 4)
 
     def test_finite_rank_assignment_and_segment_config(self):
         with tempfile.TemporaryDirectory() as temp:

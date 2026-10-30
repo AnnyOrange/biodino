@@ -121,7 +121,8 @@ def compute_job(job):
   return {'job':job,'status':'complete','result':str(path)}
  except Exception as e:return {'job':job,'status':'error','error':repr(e),'traceback':traceback.format_exc()}
 
-def run(workers=32):
+def run(workers=4):
+ workers=min(workers,4)
  global DATA,SETTINGS
  cfg=json.loads((OUT/'config.json').read_text());SETTINGS=cfg['statistics'];DATA={};errors=[];deferred=[]
  models={x['model']:x for x in cfg['models']}
@@ -150,7 +151,8 @@ def run(workers=32):
  state_path=OUT/'states/global_statistics.json';dump(state_path,state)
  print('GLOBAL STATISTICS',len(DATA),'results',len(jobs),'jobs',workers,'workers',flush=True)
  if jobs:
-  with multiprocessing.get_context('fork').Pool(workers) as pool:
+  from unified_paper_statistics_resources import pool as bounded_pool
+  with bounded_pool(workers) as pool:
    for result in pool.imap_unordered(compute_job,jobs,chunksize=1):
     if result['status']=='error':state['errors'].append(result);print('GLOBAL ERROR',result,flush=True)
     else:state['completed_this_pass']+=1;print('GLOBAL',result['status'],result['job'],flush=True)
@@ -158,7 +160,7 @@ def run(workers=32):
  state.update(status='watching',updated=time.time());dump(state_path,state)
 
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('--watch',action='store_true');p.add_argument('--workers',type=int,default=32);a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--watch',action='store_true');p.add_argument('--workers',type=int,default=4);a=p.parse_args()
  with (OUT/'locks/global_statistics.local.lock').open('a') as lock:
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:raise SystemExit(0)

@@ -625,6 +625,7 @@ def main() -> None:
             "formal-v1",
             "legacy",
             STATIC_FORMAL_SPLIT,
+            "neurips22-author-public52-v2",
             CONIC_FORMAL_SPLIT,
             *PANNUKE_FORMAL_SPLITS,
         ],

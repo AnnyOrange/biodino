@@ -134,12 +134,13 @@ def run():
     if target.exists() and json.loads(target.read_text()).get('prediction_sha256')==hashes:continue
     if a['ids']!=b['ids'] or a['groups']!=b['groups'] or a['target_sha256']!=b['target_sha256']:raise ValueError('Native comparison targets differ')
     jobs.append(('pair',candidate,reference,dataset,str(target),s))
- PAIR_BANK=available;workers=min(32,max(1,(os.cpu_count() or 2)//2));state=OUT/'states/native_statistics_parallel.json';done=[];errors=[]
+ PAIR_BANK=available;workers=min(4,max(1,(os.cpu_count() or 2)//2));state=OUT/'states/native_statistics_parallel.json';done=[];errors=[]
  dump(state,dict(pid=os.getpid(),updated=time.time(),workers=workers,scheduled=len(jobs),completed=0,errors=[]))
  if not jobs:return
  # Fork only CPU state. Each process reads immutable validated COCO matches;
  # every comparison retains its original RNG seed and complete resampling budget.
- with concurrent.futures.ProcessPoolExecutor(max_workers=workers,mp_context=multiprocessing.get_context('fork')) as pool:
+ from unified_paper_statistics_resources import initialize_worker
+ with concurrent.futures.ProcessPoolExecutor(max_workers=workers,mp_context=multiprocessing.get_context('fork'),initializer=initialize_worker) as pool:
   futures={pool.submit(compute_job,job):job for job in jobs}
   for future in concurrent.futures.as_completed(futures):
    job=futures[future]

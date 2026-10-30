@@ -99,6 +99,7 @@ def pair_job(job):
  except Exception as e:return dict(job=job,status='error',error=repr(e),traceback=traceback.format_exc())
 
 def run(workers):
+ workers=min(workers,4)
  global DATA,SETTINGS
  cfg=json.loads((OUT/'config.json').read_text());SETTINGS={**cfg['statistics'],**json.loads(METHOD_CONFIG.read_text())};models={m['model']:m for m in cfg['models']};DATA={};errors=[]
  for dataset in ['nct-crc-he-1k','crc-val-he-7k','nct-crc-he-100','lc25000','hpa-subcellular','rxrx3-core','rxrx1-cross']:
@@ -108,7 +109,8 @@ def run(workers):
     if a is not None:DATA[m,dataset]=a
    except Exception as e:errors.append(dict(model=m,dataset=dataset,error=repr(e)))
  state=dict(pid=os.getpid(),updated=time.time(),models_datasets=len(DATA),workers=workers,errors=errors,status='running',draw_sets_completed=0,pairs_completed=0);statepath=OUT/'states/clustering_paired_statistics.json';common.dump(statepath,state)
- with multiprocessing.get_context('fork').Pool(workers) as pool:
+ from unified_paper_statistics_resources import pool as bounded_pool
+ with bounded_pool(workers) as pool:
   good=set()
   for result in pool.imap_unordered(model_job,list(DATA)):
    print('CLUSTER BOOTSTRAP',result,flush=True)
@@ -125,7 +127,7 @@ def run(workers):
  state.update(status='watching',updated=time.time());common.dump(statepath,state)
 
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('--watch',action='store_true');p.add_argument('--workers',type=int,default=16);args=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--watch',action='store_true');p.add_argument('--workers',type=int,default=4);args=p.parse_args()
  STORE.mkdir(exist_ok=True)
  with (OUT/'locks/clustering_paired_statistics.lock').open('a') as lock:
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)

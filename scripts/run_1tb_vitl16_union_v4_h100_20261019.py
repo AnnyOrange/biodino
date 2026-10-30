@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Queue the complete Union-v4 inventory against pinned 1TB ViT-L checkpoints."""
+"""Queue complete Union-v4 inventories against pinned ViT-L checkpoints."""
 
 import argparse
 import csv
@@ -24,6 +24,8 @@ if PROFILE == 'biosafe256':
     FULL_CHECKPOINTS = (15374, 19999, 29999, 39999, 49999, 59999, 69999, 79999)
     CHECKPOINTS = (15374, *range(15999, 80000, 1000))
     PARALLEL_SLOTS = {'0': 14, '1': 4}
+    EVAL_GPUS = (0, 1)
+    MODEL_TAG = 'hs6_l_1tb'
 elif PROFILE == 'legacy':
     RUN = Path('/data_2/suxin/runs/HS6_L_1TB_40000_to80000_2xH100_DDP_20261019')
     SOURCE = Path('/data_2/suxin/runs/HS6_L_1TB_ep15_to40000_2xH100_20261015')
@@ -31,9 +33,25 @@ elif PROFILE == 'legacy':
     FULL_CHECKPOINTS = (39999, 49999, 59999, 69999, 79999)
     CHECKPOINTS = (15374, *range(25999, 80000, 1000))
     PARALLEL_SLOTS = {'0': 12, '1': 4}
+    EVAL_GPUS = (0, 1)
+    MODEL_TAG = 'hs6_l_1tb'
+elif PROFILE == '5tb_nogram':
+    RUN = Path('/data_2/suxin/runs/HS6_L_5TB_nogram_41479_to80000_4xH100_20261026')
+    SOURCE = RUN
+    START_CHECKPOINT = 41479
+    CHECKPOINTS = (41479, *(step - 1 for step in range(41663, 61471, 683)),
+                   *range(61999, 80000, 1000))
+    FULL_CHECKPOINTS = (41479, 61469, 79999)
+    EVAL_GPUS = (0, 1, 4, 5, 6, 7)
+    PARALLEL_SLOTS = {'0': 1, '1': 1, '4': 2, '5': 2, '6': 2, '7': 2}
+    MODEL_TAG = 'hs6_l_5tb_nogram'
 else:
     raise ValueError(f'Unknown DINOV3_1TB_EVAL_PROFILE: {PROFILE}')
+PROFILE_PREFIX = ('--profile-token', PROFILE) if PROFILE == '5tb_nogram' else ()
 ROOT = RUN / 'eval/union_v4'
+MULTIMODAL_V2_PROTOCOL = 'neurips22-author-public52-v2'
+MULTIMODAL_V2_ROOT = ROOT / MULTIMODAL_V2_PROTOCOL
+MULTIMODAL_V2_READINESS = REPO / 'outputs/02_eval_runs/unified_paper/multimodal_official_readiness.json'
 BENCHMARK = Path('/data_2/suxin/test-dataset')
 PYTHON = '/data_2/suxin/envs/dinov3/bin/python'
 PROTOCOL = REPO / 'Evaluation Rules/protocol_v4.json'
@@ -68,6 +86,20 @@ def digest(path):
         for chunk in iter(lambda: stream.read(8 << 20), b''):
             value.update(chunk)
     return value.hexdigest()
+
+
+def child_args(mode, *args):
+    return (*PROFILE_PREFIX, mode, *args)
+
+
+def gpu_ready(gpu):
+    if PROFILE != '5tb_nogram':
+        return True
+    result = subprocess.run(
+        ['nvidia-smi', f'--id={gpu}', '--query-gpu=memory.free',
+         '--format=csv,noheader,nounits'], capture_output=True, text=True, check=True)
+    free_mib = int(result.stdout.strip())
+    return free_mib >= (16000 if gpu in (0, 1) else 20000)
 
 
 def write_json(path, value):
@@ -105,6 +137,15 @@ def inventory(protocol):
                 BENCHMARK / 'segmentation/monuseg/extracted' / MONUSEG_MANIFEST).is_file():
             task['blocker'] = 'Active 2026-10-12 MoNuSeg 30/7/14 manifest absent on H100'
         task['id'] = task['family'] + '__' + task['dataset'] + ('__' + task['split'] if task.get('split') else '')
+    if PROFILE == '5tb_nogram':
+        light = [task for task in tasks if task['family'] in ('classification', 'regression')]
+        heavy = [task for task in tasks if task['family'] not in ('classification', 'regression')]
+        for index, task in enumerate(light):
+            task['gpu'] = EVAL_GPUS[index % len(EVAL_GPUS)]
+        for index, task in enumerate(heavy):
+            task['gpu'] = (4, 5, 6, 7)[index % 4]
+            if task['id'] == 'segmentation__multimodal_cellseg':
+                task['blocker'] = 'Corrected Multimodal-v2 campaign owns this task'
     counts = protocol['expected_unique_dataset_counts']
     assert len([t for t in tasks if t['family'] == 'classification']) == counts['classification']
     assert len([t for t in tasks if t['family'] == 'regression']) == counts['regression']
@@ -122,9 +163,9 @@ def prepare():
     if path.exists():
         raise RuntimeError(f'Campaign already exists: {path}')
     tasks = inventory(protocol)
-    source_checkpoint = (RUN / 'ckpt/15374/checkpoint.pth' if PROFILE == 'biosafe256'
-                         else SOURCE / 'ckpt/39999/checkpoint.pth')
-    source_config = (RUN / 'source_config.yaml' if PROFILE == 'biosafe256'
+    source_checkpoint = (RUN / f'ckpt/{START_CHECKPOINT}/checkpoint.pth'
+                         if PROFILE != 'legacy' else SOURCE / 'ckpt/39999/checkpoint.pth')
+    source_config = (RUN / 'source_config.yaml' if PROFILE != 'legacy'
                      else SOURCE / 'config.yaml')
     manifest = dict(protocol_id=protocol['protocol_id'], protocol_sha256=digest(PROTOCOL),
                     training_profile=PROFILE,
@@ -187,6 +228,11 @@ def pin():
         if PROFILE == 'biosafe256':
             source = RUN / f'ckpt/{iteration}/checkpoint.pth'
             config = RUN / ('source_config.yaml' if iteration == 15374 else 'config.yaml')
+        elif PROFILE == '5tb_nogram':
+            source = RUN / f'ckpt/{iteration}/checkpoint.pth'
+            config = (RUN / 'source_config.yaml' if iteration == START_CHECKPOINT else
+                      ROOT / 'config_original_ddp.yaml' if iteration <= 61469 else
+                      RUN / 'config.yaml')
         elif iteration == 15374:
             source = SOURCE / 'source/checkpoint_15374.pth'
             config = SOURCE / 'source/original_config.yaml'
@@ -224,7 +270,7 @@ def command(task, iteration, output):
     family, dataset = task['family'], task['dataset']
     if family in ('classification', 'regression'):
         return [PYTHON, '-u', '-m', 'dinov3.eval.bio_frozen_eval.run_classification', *common,
-                '--datasets', dataset, '--output-dir', str(output), '--model-name', f'hs6_l_1tb_ck{iteration}',
+                '--datasets', dataset, '--output-dir', str(output), '--model-name', f'{MODEL_TAG}_ck{iteration}',
                 '--batch-size', '64', '--num-workers', '2', '--seed', '0', '--n-last-blocks', '1',
                 '--autocast-dtype', 'bf16', '--channel-policy', 'auto', '--channel-tta-samples', '8',
                 '--resolution-protocol', 'best', '--split-protocol', 'current', '--save-paths',
@@ -232,12 +278,12 @@ def command(task, iteration, output):
     if family == 'retrieval_clustering':
         if dataset == 'rxrx3-core':
             return [PYTHON, '-u', str(REPO / 'scripts/run_external4_fixedbudget_model.py'),
-                    '--model', f'hs6_l_1tb_ck{iteration}', '--campaign', str(output),
+                    '--model', f'{MODEL_TAG}_ck{iteration}', '--campaign', str(output),
                     '--cache-root', str(RXRX3_CACHE.parent), '--datasets', 'rxrx3',
                     '--checkpoint', str(checkpoint), '--train-config', str(config),
                     '--device', 'cuda:0', '--batch-size', '64']
         return [PYTHON, '-u', '-m', 'dinov3.eval.bio_frozen_eval.run_retrieval_clustering', *common,
-                '--datasets', dataset, '--output-dir', str(output), '--model-name', f'hs6_l_1tb_ck{iteration}',
+                '--datasets', dataset, '--output-dir', str(output), '--model-name', f'{MODEL_TAG}_ck{iteration}',
                 '--batch-size', '64', '--num-workers', '2', '--seed', '0', '--n-last-blocks', '1',
                 '--autocast-dtype', 'bf16', '--channel-policy', 'auto', '--channel-tta-samples', '8',
                 '--metric-device', 'cpu', '--no-save-features']
@@ -249,7 +295,9 @@ def command(task, iteration, output):
                 '--max-samples-per-split', '0', '--conic-split-protocol', 'official-baseline-fold0-nested-v1']
     if family == 'segmentation':
         recipe = json.loads(PROTOCOL.read_text())['segmentation'][dataset]
-        split = task.get('split') or ('official-baseline-fold0-nested-v1' if dataset == 'conic' else 'formal-v1')
+        split = task.get('split_protocol') or task.get('split') or (
+            'official-baseline-fold0-nested-v1' if dataset == 'conic' else 'formal-v1')
+        seeds = task.get('seeds', (0, 1, 2))
         return [PYTHON, '-u', '-m', 'dinov3.eval.bio_segmentation.scripts.run_linear_probe_pipeline',
                 '--datasets', dataset, '--checkpoint-file', str(checkpoint), '--checkpoint-id', str(iteration),
                 '--train-config', str(config), '--data-root-base', str(BENCHMARK / 'segmentation'),
@@ -257,19 +305,19 @@ def command(task, iteration, output):
                 '--feature-img-size', str(recipe['resolution']), '--resize-mode', recipe['resize'],
                 '--layer-preset', 'last1', '--feature-batch-size', '32', '--feature-num-workers', '2',
                 '--autocast-dtype', 'bf16', '--channel-policy', 'auto', '--channel-tta-samples', '8',
-                '--probe-epoch-grid', '20', '50', '--probe-seeds', '0', '1', '2',
+                '--probe-epoch-grid', '20', '50', '--probe-seeds', *[str(seed) for seed in seeds],
                 '--probe-batch-size', '32', '--probe-lr', '0.001', '--probe-weight-decay', '0.0001',
                 '--probe-eval-every', '1', '--probe-num-workers', '0', '--gpu', '0',
                 '--probe-class-weight-mode', recipe['class_weight'], '--chunked-cache', '--no-compress-cache',
                 '--cache-root', str(output / 'cache'), '--output-root', str(output / 'results'),
-                '--run-name', f'hs6_l_1tb_ck{iteration}_v4']
+                '--run-name', f'{MODEL_TAG}_ck{iteration}_v4']
     raise ValueError(f'No command for {family}')
 
 
 def validate(task, output):
     family, dataset = task['family'], task['dataset']
     if family == 'retrieval_clustering' and dataset == 'rxrx3-core':
-        path = output / 'models' / output.parent.name.replace('ck', 'hs6_l_1tb_ck') / 'results.json'
+        path = output / 'models' / output.parent.name.replace('ck', f'{MODEL_TAG}_ck') / 'results.json'
         result = json.loads(path.read_text())
         row = result['tests']['rxrx3']
         if result['status'] != 'VALID_COMPLETE' or result['batch_size'] != 64 or result['teacher_branch'] != 'teacher':
@@ -391,7 +439,7 @@ def refresh_curves(manifest):
             ax.grid(alpha=0.25)
             if series:
                 ax.legend(fontsize=7)
-        fig.suptitle('1TB ViT-L representative validation curves', fontsize=14)
+        fig.suptitle(f'{MODEL_TAG} representative validation curves', fontsize=14)
         temp_png = ROOT / 'curves.tmp.png'
         fig.savefig(temp_png, dpi=140)
         plt.close(fig)
@@ -442,24 +490,351 @@ def evaluate_task(gpu, task, iteration, manifest, checkpoint, state_path):
         shutil.rmtree(output / 'cache', ignore_errors=True)
 
 
+def multimodal_v2_manifest():
+    readiness = json.loads(MULTIMODAL_V2_READINESS.read_text())
+    if readiness['protocol'] != MULTIMODAL_V2_PROTOCOL or readiness['counts'] != {
+            'train': 1000, 'val': 101, 'test': 52}:
+        raise ValueError('Corrected Multimodal author split identity mismatch')
+    manifest_dir = MULTIMODAL_V2_READINESS.parent / 'manifests' / MULTIMODAL_V2_PROTOCOL
+    for split in ('train', 'val', 'test'):
+        if digest(manifest_dir / f'{split}.csv') != readiness['manifest_sha256'][split]:
+            raise ValueError(f'Corrected Multimodal {split} manifest hash mismatch')
+    return dict(protocol_id='bio-eval-union-v4-multimodal-' + MULTIMODAL_V2_PROTOCOL,
+                split_protocol=MULTIMODAL_V2_PROTOCOL, source_protocol_sha256=digest(PROTOCOL),
+                readiness_sha256=digest(MULTIMODAL_V2_READINESS),
+                manifest_sha256=readiness['manifest_sha256'], counts=readiness['counts'],
+                budgets=[20, 50], seeds=list(range(5)),
+                parallel_slots=({'4': 1, '5': 1, '6': 1, '7': 1} if PROFILE == '5tb_nogram'
+                                else {'0': 1, '1': 2}),
+                legacy_results=str(ROOT / 'ck{checkpoint}/segmentation__multimodal_cellseg'))
+
+
+def prepare_multimodal_v2():
+    from dinov3.eval.bio_segmentation.datasets.multimodal_cellseg import get_multimodal_cellseg_paths
+    root = BENCHMARK / 'segmentation/Multimodal_CellSeg/neurips22_cellseg'
+    manifest = multimodal_v2_manifest()
+    for split, count in manifest['counts'].items():
+        images, masks = get_multimodal_cellseg_paths(
+            str(root), split=split, split_protocol=MULTIMODAL_V2_PROTOCOL)
+        if (len(images), len(masks)) != (count, count):
+            raise ValueError(f'Corrected Multimodal {split} count mismatch')
+    MULTIMODAL_V2_ROOT.mkdir(parents=True, exist_ok=True)
+    path = MULTIMODAL_V2_ROOT / 'manifest.json'
+    if path.exists():
+        old = json.loads(path.read_text())
+        slots = old.pop('parallel_slots')
+        expected = dict(manifest)
+        expected.pop('parallel_slots')
+        if old != expected:
+            raise ValueError('Existing corrected campaign manifest differs from locked protocol')
+        manifest['parallel_slots'] = slots
+    write_json(path, manifest)
+    original_path = ROOT / 'manifest.json'
+    original = json.loads(original_path.read_text())
+    overrides = original.setdefault('task_protocol_overrides', {})
+    overrides['segmentation__multimodal_cellseg'] = {
+        'split_protocol': MULTIMODAL_V2_PROTOCOL,
+        'counts': manifest['counts'],
+        'corrected_campaign': str(MULTIMODAL_V2_ROOT),
+    }
+    write_json(original_path, original)
+    print(f'Corrected Multimodal ready: {manifest["counts"]}; slots={manifest["parallel_slots"]}', flush=True)
+
+
+def validate_multimodal_v2(output):
+    paths = list((output / 'results').rglob('results.json'))
+    signatures = set()
+    scores = {}
+    for path in paths:
+        if '_spneurips22_author_public52_v2/' not in str(path):
+            raise ValueError(f'Unexpected Multimodal split in {path}')
+        row = json.loads(path.read_text())
+        meta = row['_meta']
+        signature = (meta['probe_epochs'], meta['seed'])
+        if signature in signatures:
+            raise ValueError(f'Duplicate Multimodal fit {signature}')
+        if (meta['full_train_samples'], meta['used_train_samples']) != (1000, 1000):
+            raise ValueError('Corrected Multimodal must use all 1000 author training images')
+        if meta['probe_batch_size'] != 32 or meta['probe_eval_every'] != 1 or meta['test_evaluations'] != 1:
+            raise ValueError('Corrected Multimodal probe recipe mismatch')
+        if len(meta['validation_history']) != meta['probe_epochs']:
+            raise ValueError('Corrected Multimodal validation history incomplete')
+        score = float(row['test']['mDice'])
+        if not math.isfinite(score):
+            raise ValueError('Corrected Multimodal test mDice is non-finite')
+        signatures.add(signature)
+        scores[f'E{signature[0]}_seed{signature[1]}'] = score
+    expected = {(budget, seed) for budget in (20, 50) for seed in range(5)}
+    if signatures != expected:
+        raise ValueError(f'Corrected Multimodal fits incomplete: {sorted(signatures)}')
+    return dict(fits=10, test_samples=52, scores=scores,
+                E20_mean=sum(scores[f'E20_seed{s}'] for s in range(5)) / 5,
+                E50_mean=sum(scores[f'E50_seed{s}'] for s in range(5)) / 5,
+                mDice=sum(scores.values()) / 10)
+
+
+def promote_multimodal_v2(iteration):
+    corrected_path = MULTIMODAL_V2_ROOT / f'states/ck{iteration}.json'
+    corrected = json.loads(corrected_path.read_text())
+    if corrected['status'] != 'VALID_COMPLETE':
+        return
+    task_id = 'segmentation__multimodal_cellseg'
+    lock_path = ROOT / f'task_locks/ck{iteration}/{task_id}.lock'
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        original_path = ROOT / f'states/ck{iteration}/{task_id}.json'
+        original_path.parent.mkdir(parents=True, exist_ok=True)
+        previous = json.loads(original_path.read_text()) if original_path.exists() else None
+        if previous and previous.get('split_protocol') == MULTIMODAL_V2_PROTOCOL:
+            return
+        backup = MULTIMODAL_V2_ROOT / f'ck{iteration}/superseded_legacy_state.json'
+        if previous and not backup.exists():
+            write_json(backup, previous)
+        metrics = dict(corrected['metrics'])
+        metrics['mDice'] = (metrics['E20_mean'] + metrics['E50_mean']) / 2
+        write_json(original_path, dict(status='VALID_COMPLETE', gpu=corrected['gpu'],
+                                       split_protocol=MULTIMODAL_V2_PROTOCOL,
+                                       metrics=metrics, output=corrected['output'],
+                                       superseded_legacy_state=str(backup) if previous else None))
+
+
+def run_multimodal_v2(gpu, iteration, checkpoint, state_path, manifest):
+    output = MULTIMODAL_V2_ROOT / f'ck{iteration}'
+    if output.exists():
+        try:
+            metrics = validate_multimodal_v2(output)
+            write_json(state_path, dict(status='VALID_COMPLETE', gpu=gpu, metrics=metrics,
+                                        output=str(output), reason='adopted verified corrected output'))
+            return
+        except (FileNotFoundError, KeyError, ValueError):
+            pass
+    output.mkdir(parents=True, exist_ok=True)
+    task = dict(family='segmentation', dataset='multimodal_cellseg',
+                split_protocol=MULTIMODAL_V2_PROTOCOL, seeds=list(range(5)))
+    args = command(task, iteration, output)
+    identity = json.loads((checkpoint.parent / 'identity.json').read_text())
+    write_json(output / 'invocation.json', dict(protocol_id=manifest['protocol_id'],
+               readiness_sha256=manifest['readiness_sha256'],
+               split_manifest_sha256=manifest['manifest_sha256'], checkpoint=str(checkpoint),
+               checkpoint_sha256=identity['sha256'], config_sha256=identity['config_sha256'],
+               command=args, gpu=gpu, started_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())))
+    write_json(state_path, dict(status='RUNNING', gpu=gpu, output=str(output)))
+    env = os.environ.copy()
+    env.update(CUDA_VISIBLE_DEVICES=str(gpu), PYTHONPATH=str(REPO), PYTHONUNBUFFERED='1',
+               OMP_NUM_THREADS='2', OPENBLAS_NUM_THREADS='2', MKL_NUM_THREADS='2')
+    print(f'START corrected Multimodal ck{iteration} gpu{gpu}', flush=True)
+    with (output / 'task.log').open('a') as log:
+        result = subprocess.run(args, cwd=REPO, env=env, stdout=log, stderr=subprocess.STDOUT)
+    try:
+        metrics = validate_multimodal_v2(output)
+        status = 'VALID_COMPLETE' if result.returncode == 0 else 'FAILED'
+        reason = '' if result.returncode == 0 else f'exit code {result.returncode}'
+    except Exception as error:
+        metrics, status, reason = {}, 'FAILED', f'{type(error).__name__}: {error}'
+    write_json(state_path, dict(status=status, gpu=gpu, returncode=result.returncode,
+                                reason=reason, metrics=metrics, output=str(output)))
+    print(f'{status} corrected Multimodal ck{iteration}: {reason}', flush=True)
+    if status == 'VALID_COMPLETE':
+        shutil.rmtree(output / 'cache', ignore_errors=True)
+
+
+def multimodal_v2_worker(gpu, slot, once=False):
+    path = MULTIMODAL_V2_ROOT / f'gpu{gpu}_slot{slot}.lock'
+    with path.open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        manifest = json.loads((MULTIMODAL_V2_ROOT / 'manifest.json').read_text())
+        if manifest['readiness_sha256'] != digest(MULTIMODAL_V2_READINESS):
+            raise ValueError('Corrected Multimodal readiness changed after campaign preparation')
+        while True:
+            if not gpu_ready(gpu):
+                time.sleep(10)
+                continue
+            claimed = False
+            for iteration in reversed(CHECKPOINTS):
+                checkpoint = ROOT / f'checkpoints/{iteration}/checkpoint.pth'
+                if not checkpoint.is_file() or not (checkpoint.parent / 'identity.json').is_file():
+                    continue
+                state_path = MULTIMODAL_V2_ROOT / f'states/ck{iteration}.json'
+                state = json.loads(state_path.read_text())['status'] if state_path.exists() else 'PENDING'
+                if state in ('VALID_COMPLETE', 'FAILED'):
+                    continue
+                task_lock_path = MULTIMODAL_V2_ROOT / f'task_locks/ck{iteration}.lock'
+                task_lock_path.parent.mkdir(parents=True, exist_ok=True)
+                with task_lock_path.open('a') as task_lock:
+                    try:
+                        fcntl.flock(task_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        continue
+                    state = json.loads(state_path.read_text())['status'] if state_path.exists() else 'PENDING'
+                    if state in ('VALID_COMPLETE', 'FAILED'):
+                        continue
+                    claimed = True
+                    run_multimodal_v2(gpu, iteration, checkpoint, state_path, manifest)
+                    break
+            if claimed and once:
+                return
+            if not claimed:
+                time.sleep(10)
+
+
+def supervise_multimodal_v2():
+    MULTIMODAL_V2_ROOT.mkdir(parents=True, exist_ok=True)
+    with (MULTIMODAL_V2_ROOT / 'supervisor.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        script = str(Path(__file__).resolve())
+        while True:
+            manifest = json.loads((MULTIMODAL_V2_ROOT / 'manifest.json').read_text())
+            running = set()
+            for entry in Path('/proc').iterdir():
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    argv = (entry / 'cmdline').read_bytes().decode().strip('\0').split('\0')
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if len(argv) > 2 and argv[1] == '-u' and Path(argv[2]).name == Path(script).name:
+                    running.add(tuple(argv[3:]))
+            started = []
+            for gpu in sorted(map(int, manifest['parallel_slots'])):
+                for slot in range(manifest['parallel_slots'][str(gpu)]):
+                    args = child_args('multimodal_v2_worker', '--gpu', str(gpu), '--slot', str(slot))
+                    if any(command_line[:len(args)] == args for command_line in running):
+                        continue
+                    name = f'gpu{gpu}_slot{slot}'
+                    env = os.environ.copy()
+                    env['DINOV3_1TB_EVAL_PROFILE'] = PROFILE
+                    with (MULTIMODAL_V2_ROOT / f'{name}.log').open('a') as log:
+                        subprocess.Popen([PYTHON, '-u', script, *args], cwd=REPO, env=env,
+                                         stdin=subprocess.DEVNULL, stdout=log,
+                                         stderr=subprocess.STDOUT, start_new_session=True)
+                    started.append(name)
+            gpu_rows = subprocess.run(
+                ['nvidia-smi', '--query-gpu=index,memory.used,memory.total,utilization.gpu',
+                 '--format=csv,noheader,nounits'], capture_output=True, text=True, check=True).stdout
+            gpu_status = {}
+            for row in gpu_rows.splitlines():
+                index, used, total, utilization = (value.strip() for value in row.split(','))
+                if int(index) in EVAL_GPUS:
+                    gpu_status[index] = dict(used_mib=int(used), total_mib=int(total),
+                                             utilization_percent=int(utilization))
+            states = {}
+            for iteration in CHECKPOINTS:
+                if not (ROOT / f'checkpoints/{iteration}/checkpoint.pth').is_file():
+                    continue
+                path = MULTIMODAL_V2_ROOT / f'states/ck{iteration}.json'
+                states[str(iteration)] = json.loads(path.read_text())['status'] if path.exists() else 'PENDING'
+            health = dict(checked_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                          started=started, slots=manifest['parallel_slots'], gpu=gpu_status,
+                          checkpoint_states=states)
+            write_json(MULTIMODAL_V2_ROOT / 'supervisor_status.json', health)
+            for step, state in states.items():
+                if state == 'VALID_COMPLETE':
+                    promote_multimodal_v2(int(step))
+            refresh_multimodal_v2_curves(states)
+            print(json.dumps(health), flush=True)
+            time.sleep(60)
+
+
+def refresh_multimodal_v2_curves(states):
+    rows = []
+    for step, status in states.items():
+        if status != 'VALID_COMPLETE':
+            continue
+        state = json.loads((MULTIMODAL_V2_ROOT / f'states/ck{step}.json').read_text())
+        for budget in (20, 50):
+            for seed in range(5):
+                rows.append(dict(step=int(step) + 1, checkpoint=int(step), budget=budget,
+                                 seed=seed, mDice=state['metrics']['scores'][f'E{budget}_seed{seed}']))
+    rows.sort(key=lambda row: (row['checkpoint'], row['budget'], row['seed']))
+    path = MULTIMODAL_V2_ROOT / 'curves.csv'
+    temp = path.with_suffix('.csv.tmp')
+    with temp.open('w', newline='') as stream:
+        writer = csv.DictWriter(stream, fieldnames=('step', 'checkpoint', 'budget', 'seed', 'mDice'))
+        writer.writeheader()
+        writer.writerows(rows)
+    temp.replace(path)
+    if not rows:
+        return
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for budget in (20, 50):
+        points = sorted((int(step), json.loads((MULTIMODAL_V2_ROOT / f'states/ck{step}.json').read_text())
+                         ['metrics'][f'E{budget}_mean']) for step, status in states.items()
+                        if status == 'VALID_COMPLETE')
+        ax.plot([step + 1 for step, _ in points], [value for _, value in points],
+                marker='o', markersize=3, label=f'E{budget}, five-seed mean')
+    ax.set(xlabel='Training step', ylabel='Test mDice',
+           title='Multimodal CellSeg: author public 52 test images')
+    ax.grid(alpha=0.25)
+    ax.legend()
+    temp_png = MULTIMODAL_V2_ROOT / 'curves.tmp.png'
+    fig.savefig(temp_png, dpi=140, bbox_inches='tight')
+    plt.close(fig)
+    temp_png.replace(MULTIMODAL_V2_ROOT / 'curves.png')
+
+
+def scale_multimodal_v2(slots0):
+    if not 1 <= slots0 <= 18:
+        raise ValueError('GPU 0 corrected worker slots must be between 1 and 18')
+    path = MULTIMODAL_V2_ROOT / 'manifest.json'
+    manifest = json.loads(path.read_text())
+    manifest['parallel_slots'] = {'0': slots0, '1': 2}
+    write_json(path, manifest)
+    print(f'Corrected Multimodal slots: GPU0={slots0}, GPU1=2', flush=True)
+
+
+def scale_union_slots(slots0, slots1):
+    if not 1 <= slots0 <= 14 or not 1 <= slots1 <= 4:
+        raise ValueError('Union-v4 worker slots exceed the original 14/4 limits')
+    path = ROOT / 'manifest.json'
+    manifest = json.loads(path.read_text())
+    manifest['parallel_slots'] = {'0': slots0, '1': slots1}
+    write_json(path, manifest)
+    print(f'Union-v4 slots: GPU0={slots0}, GPU1={slots1}', flush=True)
+
+
+def retry_multimodal_v2_split_rejection():
+    count = 0
+    for path in (MULTIMODAL_V2_ROOT / 'states').glob('ck*.json'):
+        state = json.loads(path.read_text())
+        if state['status'] != 'FAILED' or state.get('returncode') != 2:
+            continue
+        output = Path(state['output'])
+        if "invalid choice: 'neurips22-author-public52-v2'" not in (output / 'task.log').read_text():
+            continue
+        write_json(path, dict(status='PENDING', previous_failure=state,
+                              reason='split choice registered; retry corrected protocol'))
+        count += 1
+    print(f'Requeued {count} corrected tasks rejected by the missing CLI split choice', flush=True)
+
+
 def worker(gpu, slot, slots):
     manifest = json.loads((ROOT / 'manifest.json').read_text())
     if digest(PROTOCOL) != manifest['protocol_sha256']:
         raise RuntimeError('Protocol changed since campaign preparation')
-    expected_slots = PARALLEL_SLOTS[str(gpu)]
+    expected_slots = manifest['parallel_slots'][str(gpu)]
     if slots != expected_slots or not 0 <= slot < slots:
         raise ValueError(f'GPU {gpu} requires {expected_slots} slots; got slot {slot}/{slots}')
     lock_path = ROOT / f'gpu{gpu}_slot{slot}.lock'
     with lock_path.open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         tasks = [task for task in manifest['tasks'] if task['gpu'] == gpu]
-        if PROFILE == 'biosafe256' and slot == 0:
+        if PROFILE in ('biosafe256', '5tb_nogram') and slot == 0:
             tasks.sort(key=lambda task: task['id'] not in CURVE_TASK_IDS)
             iterations = tuple(reversed(CHECKPOINTS))
         else:
             iterations = CHECKPOINTS
         print(f'GPU {gpu} slot {slot}/{slots}: shared queue with {len(tasks)} tasks per checkpoint', flush=True)
         while True:
+            if not gpu_ready(gpu):
+                time.sleep(10)
+                continue
             claimed = False
             for iteration in iterations:
                 checkpoint = ROOT / f'checkpoints/{iteration}/checkpoint.pth'
@@ -518,19 +893,26 @@ def supervise():
                 if len(argv) > 2 and argv[1] == '-u' and argv[2] == script:
                     running.add(tuple(argv[3:]))
             started = []
-            expected = [('pin',)] if any(not (ROOT / f'checkpoints/{step}/checkpoint.pth').is_file()
-                                             for step in CHECKPOINTS) else []
-            expected.append(('follow_curves',))
-            for gpu in (0, 1):
+            expected = [child_args('pin')] if any(not (ROOT / f'checkpoints/{step}/checkpoint.pth').is_file()
+                                                   for step in CHECKPOINTS) else []
+            expected.append(child_args('follow_curves'))
+            for gpu in EVAL_GPUS:
                 slots = manifest['parallel_slots'][str(gpu)]
-                expected.extend(('worker', '--gpu', str(gpu), '--slot', str(slot), '--slots', str(slots))
+                expected.extend(child_args('worker', '--gpu', str(gpu), '--slot', str(slot), '--slots', str(slots))
                                 for slot in range(slots))
             for args in expected:
-                if args in running:
+                mode = args[len(PROFILE_PREFIX)]
+                if args in running or (mode == 'worker' and any(
+                        command_line[:len(PROFILE_PREFIX) + 5] == args[:len(PROFILE_PREFIX) + 5]
+                        for command_line in running)):
                     continue
-                name = args[0] if args[0] != 'worker' else f'gpu{args[2]}_slot{args[4]}'
+                offset = len(PROFILE_PREFIX)
+                name = mode if mode != 'worker' else f'gpu{args[offset + 2]}_slot{args[offset + 4]}'
                 with (ROOT / f'{name}.log').open('a') as log:
-                    subprocess.Popen([PYTHON, '-u', script, *args], cwd=REPO, stdin=subprocess.DEVNULL,
+                    env = os.environ.copy()
+                    env['DINOV3_1TB_EVAL_PROFILE'] = PROFILE
+                    subprocess.Popen([PYTHON, '-u', script, *args], cwd=REPO, env=env,
+                                     stdin=subprocess.DEVNULL,
                                      stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                 started.append(name)
             gpu_rows = subprocess.run(
@@ -539,7 +921,7 @@ def supervise():
             gpu_status = {}
             for row in gpu_rows.splitlines():
                 index, used, total, utilization = (value.strip() for value in row.split(','))
-                if index in ('0', '1'):
+                if int(index) in EVAL_GPUS:
                     gpu_status[index] = dict(used_mib=int(used), total_mib=int(total),
                                              utilization_percent=int(utilization))
             states = {}
@@ -611,11 +993,20 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', choices=('prepare', 'extend', 'pin', 'worker', 'status',
                                          'curves', 'follow_curves', 'supervise', 'unblock_monuseg',
-                                         'unblock_rxrx3', 'rebalance'))
-    parser.add_argument('--gpu', type=int, choices=(0, 1))
+                                         'unblock_rxrx3', 'rebalance', 'multimodal_v2_prepare',
+                                         'multimodal_v2_worker', 'multimodal_v2_supervise',
+                                         'multimodal_v2_scale', 'multimodal_v2_retry_split_rejection',
+                                         'scale_union_slots'))
+    parser.add_argument('--profile-token')
+    parser.add_argument('--gpu', type=int, choices=EVAL_GPUS)
     parser.add_argument('--slot', type=int)
     parser.add_argument('--slots', type=int)
+    parser.add_argument('--slots0', type=int)
+    parser.add_argument('--slots1', type=int)
+    parser.add_argument('--once', action='store_true')
     opts = parser.parse_args()
+    if opts.profile_token and opts.profile_token != PROFILE:
+        parser.error('profile token and evaluation profile differ')
     if opts.mode == 'prepare':
         prepare()
     elif opts.mode == 'extend':
@@ -641,5 +1032,23 @@ if __name__ == '__main__':
             time.sleep(60)
     elif opts.mode == 'supervise':
         supervise()
+    elif opts.mode == 'multimodal_v2_prepare':
+        prepare_multimodal_v2()
+    elif opts.mode == 'multimodal_v2_worker':
+        if opts.gpu is None or opts.slot is None:
+            parser.error('multimodal_v2_worker requires --gpu and --slot')
+        multimodal_v2_worker(opts.gpu, opts.slot, once=opts.once)
+    elif opts.mode == 'multimodal_v2_supervise':
+        supervise_multimodal_v2()
+    elif opts.mode == 'multimodal_v2_scale':
+        if opts.slots0 is None:
+            parser.error('multimodal_v2_scale requires --slots0')
+        scale_multimodal_v2(opts.slots0)
+    elif opts.mode == 'multimodal_v2_retry_split_rejection':
+        retry_multimodal_v2_split_rejection()
+    elif opts.mode == 'scale_union_slots':
+        if opts.slots0 is None or opts.slots1 is None:
+            parser.error('scale_union_slots requires --slots0 and --slots1')
+        scale_union_slots(opts.slots0, opts.slots1)
     else:
         status()

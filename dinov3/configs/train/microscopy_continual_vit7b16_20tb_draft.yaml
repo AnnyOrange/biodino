@@ -1,0 +1,161 @@
+# B200 DISCUSSION DRAFT — hyperparameters not yet approved for launch.
+# Confirmed: official 7B initialization; 249,978 updates; 8-16 collaborator B200s.
+# Default: 8 GPUs x microbatch 64 x accumulation 2 = global batch 1024.
+# For 16 GPUs, override optim.gradient_accumulation_steps=1.
+# Microbatch 64 is a profiling target, not a measured memory-fit guarantee.
+# Keep ALL model+optimizer checkpoints (max_to_keep: null) and EMA exports.
+# Data mix/stats: launch_7b_20tb_hxw_20261015.sh; optimizer baseline:
+# switch_7b_to_b1024_20261019.py. No machine allocation or data transfer implied.
+# Read README_20TB_7B.md for launch, resume, storage and outstanding choices.
+
+MODEL:
+  META_ARCHITECTURE: SSLMetaArch
+  DEVICE: cuda
+  WEIGHTS: ''
+  DTYPE: float32
+compute_precision:
+  param_dtype: bf16
+  reduce_dtype: fp32
+  sharding_strategy: SHARD_GRAD_OP
+  distributed_mode: fsdp
+  teacher_cpu_offload: false
+dino:
+  loss_weight: 1.0
+  global_ignore_diagonal: true
+  head_n_prototypes: 65536
+  head_bottleneck_dim: 256
+  head_norm_last_layer: false
+  head_nlayers: 3
+  head_hidden_dim: 2048
+  koleo_loss_weight: 0.1
+  koleo_loss_distributed: false
+  force_weight_norm: false
+ibot:
+  loss_weight: 1.0
+  mask_sample_probability: 0.5
+  mask_ratio_min_max:
+  - 0.1
+  - 0.5
+  separate_head: true
+  head_n_prototypes: 65536
+  head_bottleneck_dim: 256
+  head_norm_last_layer: false
+  head_nlayers: 3
+  head_hidden_dim: 2048
+sigreg:
+  enabled: false
+channel_subset:
+  enabled: false
+gram:
+  use_loss: false
+  compute_stats: false
+train:
+  batch_size_per_gpu: 64
+  dataset_path: mixwds_robust:0.09=${oc.env:DATA_1TB_DIR}/filtered_mixed_train_w*.tar||0.21=${oc.env:DATA_4TB_DIR}/filtered_mixed_train*.tar||0.5581=${oc.env:DATA_ROUTE2_DIR}/filtered_projection_20TB_nested-r0*.tar||0.1419=${oc.env:DATA_ROUTE2_DIR}/filtered_projection_20TB_nested-r9*.tar::pct=1,99
+  saveckp_freq: 20
+  seed: 0
+  num_workers: 4
+  wds_deterministic_resampling: false
+  OFFICIAL_EPOCH_LENGTH: 4098
+  use_teacher_head: true
+  learn_from_teacher_tokens: false
+  centering: sinkhorn_knopp
+  checkpointing: true
+  checkpointing_full: false
+  checkpointing_blocks: 0
+  compile: false
+  cudagraphs: false
+  sharded_eval_checkpoint: true
+  cache_dataset: false
+  wds_shuffle_buffer: 128
+  prefetch_factor: 2
+  pin_memory: true
+  output_dir: ${oc.env:TRAIN_OUTPUT_DIR}
+  sync_grads_every_microstep: true
+student:
+  arch: vit_7b
+  patch_size: 16
+  drop_path_rate: 0.4
+  layerscale: 1.0e-05
+  pretrained_weights: ''
+  ffn_layer: swiglu64
+  ffn_ratio: 3
+  resume_from_teacher_chkpt: ${oc.env:INIT_7B_WEIGHTS}
+  qkv_bias: false
+  proj_bias: true
+  ffn_bias: true
+  norm_layer: layernormbf16
+  n_storage_tokens: 4
+  mask_k_bias: true
+  untie_cls_and_patch_norms: false
+  untie_global_and_local_cls_norm: true
+  in_chans: 3
+  enable_channelvit: false
+  stem_type: null
+  pos_embed_type: rope
+  pos_embed_rope_base: 100.0
+  pos_embed_rope_normalize_coords: separate
+  pos_embed_rope_rescale_coords: 2
+  pos_embed_rope_dtype: fp32
+  fp8_enabled: false
+  fp8_filter: blocks
+teacher:
+  momentum_teacher: 0.992
+  final_momentum_teacher: 1.0
+  warmup_teacher_temp: 0.04
+  teacher_temp: 0.07
+  warmup_teacher_temp_epochs: 30
+  in_chans: 3
+  enable_channelvit: false
+  stem_type: null
+optim:
+  epochs: 61
+  optimizer: adamw
+  weight_decay: 0.04
+  weight_decay_end: 0.2
+  lr: 3.0e-05
+  warmup_epochs: 3
+  min_lr: 1.0e-06
+  schedule_trunc_extra: 0.0
+  clip_grad: 3.0
+  freeze_last_layer_epochs: 1
+  scaling_rule: fixed
+  gradient_accumulation_steps: 2
+  patch_embed_lr_mult: 0.2
+  dino_head_wd_multiplier: 1.0
+  layerwise_decay: 0.98
+  multi_tensor_optim: true
+  cpu_offload_state: false
+  adamw_beta1: 0.9
+  adamw_beta2: 0.999
+crops:
+  global_crops_scale:
+  - 0.32
+  - 1.0
+  local_crops_number: 8
+  local_crops_scale:
+  - 0.05
+  - 0.32
+  global_crops_size: 256
+  local_crops_size: 112
+  global_local_crop_pairs_ratios: 1.0
+  localcrops_subset_of_globalcrops: false
+  share_color_jitter: false
+  paired_global_geometry: false
+  horizontal_flips: true
+  augmentation_policy: bio_safe
+  float_input: false
+  rgb_mean:
+  - 0.43700109438633017
+  - 0.4152422629198214
+  - 0.4177610059272783
+  rgb_std:
+  - 0.34138578574532263
+  - 0.34111549859535956
+  - 0.3432925245219299
+evaluation:
+  eval_period_iterations: 4098
+checkpointing:
+  period: 4098
+  max_to_keep: null
+  sharded: true

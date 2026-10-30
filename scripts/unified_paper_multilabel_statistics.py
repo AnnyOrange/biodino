@@ -110,6 +110,7 @@ def pair_job(job):
  except Exception as e:return dict(job=job,status='error',error=repr(e),traceback=traceback.format_exc())
 
 def run(workers):
+ workers=min(workers,4)
  global DATA,SETTINGS
  cfg=json.loads((OUT/'config.json').read_text());SETTINGS=cfg['statistics'];DATA={};models={m['model']:m for m in cfg['models']};errors=[]
  for path in (OUT/'results').glob('*/global/chestmnist/component_result.json'):
@@ -119,7 +120,8 @@ def run(workers):
   except Exception as e:errors.append({'path':str(path),'error':repr(e)})
  state=dict(pid=os.getpid(),updated=time.time(),models=len(DATA),workers=workers,errors=errors,status='running',ci_completed=0,pairs_completed=0)
  statepath=OUT/'states/multilabel_statistics.json';common.dump(statepath,state)
- with multiprocessing.get_context('fork').Pool(workers) as pool:
+ from unified_paper_statistics_resources import pool as bounded_pool
+ with bounded_pool(workers) as pool:
   good=set()
   for r in pool.imap_unordered(ci_job,list(DATA)):
    print('MULTILABEL CI',r,flush=True)
@@ -136,7 +138,7 @@ def run(workers):
  state.update(status='watching',updated=time.time());common.dump(statepath,state)
 
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('--watch',action='store_true');p.add_argument('--workers',type=int,default=8);args=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--watch',action='store_true');p.add_argument('--workers',type=int,default=4);args=p.parse_args()
  with (OUT/'locks/multilabel_statistics.lock').open('a') as lock:
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:raise SystemExit(0)

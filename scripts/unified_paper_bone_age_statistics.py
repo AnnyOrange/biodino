@@ -22,6 +22,7 @@ def load(path,manifest,manifest_hash):
  return a
 
 def run(workers):
+ workers=min(workers,4)
  cfg=json.loads((OUT/'config.json').read_text());common.SETTINGS=cfg['statistics'];models={m['model']:m for m in cfg['models']}
  mp=ROOT/'outputs/02_eval_inputs/formal_v4/rsna_bone_age_manifest.json';raw=mp.read_bytes();manifest=json.loads(raw);h=hashlib.sha256(raw).hexdigest();common.DATA={};errors=[]
  for path in (OUT/'results').glob('*/bone_age/component_result.json'):
@@ -41,7 +42,8 @@ def run(workers):
  state=dict(pid=os.getpid(),updated=time.time(),available_results=len(common.DATA),scheduled=len(jobs),completed_this_pass=0,errors=errors,status='running',workers=workers)
  statepath=OUT/'states/bone_age_statistics.json';common.dump(statepath,state)
  if jobs:
-  with multiprocessing.get_context('fork').Pool(workers) as pool:
+  from unified_paper_statistics_resources import pool as bounded_pool
+  with bounded_pool(workers) as pool:
    for r in pool.imap_unordered(common.compute_job,jobs,chunksize=1):
     print('BONE AGE',r,flush=True)
     if r['status']=='error':state['errors'].append(r)
@@ -50,7 +52,7 @@ def run(workers):
  state.update(status='watching',updated=time.time());common.dump(statepath,state)
 
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('--watch',action='store_true');p.add_argument('--workers',type=int,default=16);a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--watch',action='store_true');p.add_argument('--workers',type=int,default=4);a=p.parse_args()
  with (OUT/'locks/bone_age_statistics.lock').open('a') as lock:
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:raise SystemExit(0)

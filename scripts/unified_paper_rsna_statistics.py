@@ -76,6 +76,7 @@ def job(task):
  except Exception as e:return dict(task=task,status='error',error=repr(e),traceback=traceback.format_exc())
 
 def run(workers):
+ workers=min(workers,4)
  global DATA,SETTINGS
  cfg=json.loads((OUT/'config.json').read_text());SETTINGS=cfg['statistics'];models={m['model']:m for m in cfg['models']};DATA={};errors=[];available={}
  mp=ROOT/'outputs/02_eval_inputs/formal_v4/rsna_pneumonia_manifest.json';manifest=json.loads(mp.read_text());mh=digest(mp)
@@ -92,7 +93,8 @@ def run(workers):
  jobs=[(m,None)for m in DATA]+[(m,fm)for m in DATA if models[m]['kind']=='biodino' for fm in DATA if models[fm]['kind']=='fm']
  state=dict(pid=os.getpid(),updated=time.time(),indexed_seed_counts=available,complete_models=len(DATA),scheduled=len(jobs),completed_this_pass=0,errors=errors,status='running');statepath=OUT/'states/rsna_statistics.json';common.dump(statepath,state)
  if jobs:
-  with multiprocessing.get_context('fork').Pool(workers) as pool:
+  from unified_paper_statistics_resources import pool as bounded_pool
+  with bounded_pool(workers) as pool:
    for r in pool.imap_unordered(job,jobs):
     print('RSNA STATISTICS',r,flush=True)
     if r['status']=='error':state['errors'].append(r)
@@ -101,7 +103,7 @@ def run(workers):
  state.update(status='watching',updated=time.time());common.dump(statepath,state)
 
 if __name__=='__main__':
- torch.set_num_threads(1);p=argparse.ArgumentParser();p.add_argument('--watch',action='store_true');p.add_argument('--workers',type=int,default=16);a=p.parse_args()
+ torch.set_num_threads(1);p=argparse.ArgumentParser();p.add_argument('--watch',action='store_true');p.add_argument('--workers',type=int,default=4);a=p.parse_args()
  with (OUT/'locks/rsna_statistics.lock').open('a') as lock:
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:raise SystemExit(0)

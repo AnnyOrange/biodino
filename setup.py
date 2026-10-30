@@ -11,7 +11,7 @@ from setuptools import setup, find_packages
 
 
 NAME = "dinov3"
-DESCRIPTION = ""
+DESCRIPTION = "DINOv3 research extensions for biomedical self-supervised learning and evaluation"
 
 URL = "https://github.com/facebookresearch/dinov3"
 AUTHOR = "Meta AI"
@@ -70,8 +70,8 @@ setup(
     extras_require={
         "dev": dev_requirements,
     },
-    install_package_data=True,
-    license="DINOv3 LIcense",
+    include_package_data=True,
+    license="DINOv3 License",
     license_files=("LICENSE.md",),
     classifiers=[
         # Trove classifiers: https://github.com/pypa/trove-classifiers/blob/main/src/trove_classifiers/__init__.py

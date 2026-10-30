@@ -1,7 +1,7 @@
 """Controller-clock process/GPU snapshot; remote clocks are not liveness tests."""
 import concurrent.futures,json,subprocess,time,socket
 from pathlib import Path
-from unified_paper_transport import ssh
+from unified_paper_transport import local_host,ssh
 ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'outputs/02_eval_runs/unified_paper'
 def read_json(path):
  try:return json.loads(path.read_text())
@@ -17,7 +17,7 @@ def main():
  def query(h):
   command='nvidia-smi --query-gpu=index,memory.total,memory.used,utilization.gpu --format=csv,noheader,nounits\nnvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits\nps -eo pid,args | grep -E "(unified_paper_queue|run_unified_paper_|run_new_fm_v4_segmentation_20261016)"'
   try:
-   argv=['bash','-c',command] if h in {'server',socket.gethostname()} else ssh(h,5)+[command]
+   argv=['bash','-c',command] if local_host(h) else ssh(h,5)+[command]
    r=subprocess.run(argv,capture_output=True,text=True,timeout=15)
    lines=r.stdout.splitlines();gpus=[];pids=[];memory={}
    for line in lines:

@@ -425,7 +425,7 @@ def _valid_domain(path: Path, manifest_sha: str, head_sha: str, frames: int) -> 
 def evaluate_domain(
     model, data: dict[str, Any], domain: str, fold: int, fold_dir: Path,
     diameter: float, diameter_instances: int, manifest_sha: str, head_sha: str,
-    device: torch.device,
+    device: torch.device, after_inference=None,
 ) -> dict[str, Any]:
     spec = data["domains"][domain]
     frames = spec["test_frames"]
@@ -462,6 +462,8 @@ def evaluate_domain(
         del local, tracked
     table = linker.track_table()
     np.savetxt(result_dir / "res_track.txt", table, fmt="%d")
+    if after_inference is not None:
+        after_inference()
     metrics, diagnostics = score_requested_metrics(
         result_dir, Path(spec["test_gt_dir"]), PY_CTCMETRICS, threads=CTCMETRICS_THREADS
     )

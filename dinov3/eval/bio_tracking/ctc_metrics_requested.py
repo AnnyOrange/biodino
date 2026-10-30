@@ -30,8 +30,10 @@ def create_edge_mapping_indexed(
     for labels_first, labels_second in zip(labels[:-1], labels[1:]):
         labels_first = np.asarray(labels_first)
         labels_second = np.asarray(labels_second)
-        mapping = labels_first[:, None] == labels_second[None, :]
-        index_first, index_second = np.where(mapping)
+        positions = {int(label): i for i, label in enumerate(labels_second)}
+        index_first = np.asarray([i for i, label in enumerate(labels_first)
+                                  if int(label) in positions], dtype=np.int64)
+        index_second = np.asarray([positions[int(labels_first[i])] for i in index_first], dtype=np.int64)
         id_first = labels_first[index_first]
         id_second = labels_second[index_second]
         frame_first = np.ones_like(id_first) * current_frame
@@ -177,27 +179,32 @@ def score_requested_metrics(
     """Load one sequence and score only the four protocol-requested metrics."""
     if str(vendor) not in sys.path:
         sys.path.insert(0, str(vendor))
-    from ctc_metrics.scripts.evaluate import load_data
+    from importlib import import_module
+    from .ctc_mask_matching import match_paths
+    from .ctc_scoring_resources import scoring_budget
+    evaluator = import_module('ctc_metrics.scripts.evaluate')
 
     started = time.perf_counter()
-    comp_tracks, ref_tracks, trajectory, segmentation, _, is_valid = load_data(
-        str(result_dir),
-        str(ground_truth_dir),
-        trajectory_data=True,
-        segmentation_data=True,
-        threads=threads,
-    )
-    loaded = time.perf_counter()
-    metrics, graph_seconds = calculate_requested_metrics(
-        comp_tracks,
-        ref_tracks,
-        trajectory,
-        segmentation,
-        is_valid,
-    )
+    requested_threads = threads
+    with scoring_budget():
+        original_match = evaluator.match_tracks
+        try:
+            evaluator.match_tracks = match_paths
+            # This evaluator is called synchronously by each queue child.
+            # Keep vendor parsing/validation, but never create its 16-worker pool.
+            comp_tracks, ref_tracks, trajectory, segmentation, _, is_valid = evaluator.load_data(
+                str(result_dir), str(ground_truth_dir), trajectory_data=True,
+                segmentation_data=True, threads=1)
+        finally:
+            evaluator.match_tracks = original_match
+        loaded = time.perf_counter()
+        metrics, graph_seconds = calculate_requested_metrics(
+            comp_tracks, ref_tracks, trajectory, segmentation, is_valid)
     diagnostics = {
-        "implementation": "pinned_primitives_requested_only_indexed_graph_v2",
-        "threads": threads,
+        "implementation": "pinned_primitives_requested_only_sparse_masks_indexed_graph_v3",
+        "threads": 1,
+        "requested_threads": requested_threads,
+        "host_scoring_slots": 2,
         "load_data_seconds": loaded - started,
         "graph_operations_seconds": graph_seconds,
         "seconds": time.perf_counter() - started,
