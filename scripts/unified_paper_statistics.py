@@ -39,6 +39,20 @@ FRAMES={}
 META={}
 SETTINGS={}
 VERSION='ood-groupfix-v3-parallel-prediction-hash'
+SELECTION=ROOT/'outputs/02_eval_inputs/formal_v4/fm18_ood_group_selection_v3.json'
+OOD_IDENTITY_FIELDS=('protocol','selection','split_revision','input_revision','test_ids_sha256')
+
+def current_ood_identity(raw, dataset, expected=None):
+ identity=tuple(raw.get(field) for field in OOD_IDENTITY_FIELDS)
+ if (raw.get('dataset')!=dataset or raw.get('protocol')!='bio-eval-union-v4/formal-ood'
+     or raw.get('selection')!=str(SELECTION)
+     or raw.get('split_revision')!='source_stratified_fov_disjoint_v3'
+     or raw.get('input_revision')!='cyclops_raw_float_percentile_0p5_99p5_v2'
+     or not raw.get('test_ids_sha256')):
+  raise ValueError(f'Non-current OOD protocol: {raw.get("model")}/{dataset}')
+ if expected is not None and identity!=expected:
+  raise ValueError(f'FM/BioDINO OOD identity mismatch: {raw.get("model")}/{dataset}')
+ return identity
 
 def provenance(keys):
  return dict(implementation=VERSION,prediction_sha256=[META[k]['prediction_sha256'] for k in keys],
@@ -72,6 +86,8 @@ def job(task):
    group_note='Recorded source groups; BloodMNIST donor mapping unavailable; cryo four project groups',primary_metric='auroc')
   b=FRAMES[reference,dataset] if reference else None
   if b is not None:
+   if current_ood_identity(r,dataset)!=current_ood_identity(META[reference,dataset]['raw'],dataset):
+    raise ValueError(f'OOD protocol mismatch: {candidate}/{reference}/{dataset}')
    for col in ['sample_id','group_id','true_label','source']:
     if not np.array_equal(a[col],b[col]):raise ValueError(f'Unpaired {candidate}/{reference}/{dataset}/{col}')
    delta,p=permutation(a,b,SETTINGS);ci=bootstrap(a,b,SETTINGS)
@@ -92,14 +108,16 @@ def run(workers=4):
  workers=min(workers,4)
  global FRAMES,META,SETTINGS
  cfg=json.loads((OUT/'config.json').read_text());SETTINGS=cfg['statistics'];FRAMES={};META={};errors=[]
- models={m['model']:m for m in cfg['models']};store=OUT/'statistics/ood_groupfix_v3';store.mkdir(exist_ok=True,parents=True)
+ models={m['model']:m for m in cfg['models']};store=OUT/'statistics/ood_groupfix_v3';store.mkdir(exist_ok=True,parents=True);identities={}
  for path in sorted((OUT/'results').glob('*/ood_groupfix_v3/*_result.json')):
   try:
    r=json.loads(path.read_text());key=r['model'],r['dataset']
    if key[0] not in models or key[1] not in ['xray','cryo']:continue
+   identity=current_ood_identity(r,key[1],identities.get(key[1]))
    p=Path(r['prediction_path']);f=pd.read_csv(p)
    if not np.isfinite(f.score).all() or f.sample_id.duplicated().any():raise ValueError('Invalid predictions')
    if not np.allclose(metrics(f.true_label,f.score),[r['metrics'][m] for m in ['auroc','average_precision']],atol=1e-12,rtol=0):raise ValueError('Point metric mismatch')
+   identities[key[1]]=identity
    FRAMES[key]=f;META[key]={'raw':r,'prediction_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'component_sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
   except Exception as e:errors.append(dict(path=str(path),error=repr(e)))
  jobs=[]

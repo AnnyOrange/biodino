@@ -52,9 +52,12 @@ def queue_frame():
     row.update(execution_status='已完成',metric_run_complete=True,reason='Resident evaluation and prediction files verified complete; transfer to unified report mirror still running; paper statistics not complete',remote_result=j.get('remote_result_path',''),remote_result_sha256=j.get('remote_result_sha256',''))
    if j.get('blocked_reason'):
     row.update(execution_status='阻塞',metric_run_complete=False,reason=j['blocked_reason'])
-   superseded=j['dataset']=='multimodal_cellseg' and 'incorrect cross-set basename' in j.get('blocked_reason','')
+   old_ood=j.get('task','ood')=='ood' and '/ood_groupfix_v3/' not in j['result']
+   superseded=old_ood or (j['dataset']=='multimodal_cellseg' and 'incorrect cross-set basename' in j.get('blocked_reason',''))
    row['required_for_current_protocol']=not superseded
-   row['protocol_scope']='withdrawn pairing; preserved correction history, replaced by author-public52 jobs' if superseded else 'current evaluation or required artifact recovery'
+   row['protocol_scope']=('historical OOD; replaced by source/FOV groupfix v3' if old_ood else
+                          'withdrawn pairing; preserved correction history, replaced by author-public52 jobs' if superseded else
+                          'current evaluation or required artifact recovery')
    row['execution_mode']=j.get('execution_mode','frozen_test_feature_recovery' if j.get('task')=='segmentation_cache_recovery' else 'evaluation')
    if row['execution_mode'] in ['retained_head_prediction_recovery','frozen_test_feature_recovery']:
     row['reason']+='; inference/artifact recovery only, not an additional downstream training seed'
@@ -75,7 +78,7 @@ def write_note(frame):
  counts={}
  for queue,g in frame.groupby('queue'):counts[Path(queue).name]={'total':len(g),**g.execution_status.value_counts().to_dict()}
  current=frame[frame.required_for_current_protocol]
- snapshot={'controller_epoch':time.time(),'queues':counts,'current_protocol_job_counts':current.execution_status.value_counts().to_dict(),'withdrawn_historical_jobs':int((~frame.required_for_current_protocol).sum()),'nucls_cohort':read(OUT/'nucls_qc_cohort_validation.json'),'checkpoint_configuration':str(OUT/'config.json'),'resource_snapshot':str(OUT/'resource_snapshot.json'),'note':'Counts refer to jobs, including artifact recovery, not independent experiments. Withdrawn image/label-pairing jobs remain in the correction ledger but are replaced by author-public52 jobs. Full paper completion additionally requires matched protocols, all required seeds, retained grouped predictions and corrected statistics.'}
+ snapshot={'controller_epoch':time.time(),'queues':counts,'current_protocol_job_counts':current.execution_status.value_counts().to_dict(),'withdrawn_historical_jobs':int((~frame.required_for_current_protocol).sum()),'nucls_cohort':read(OUT/'nucls_qc_cohort_validation.json'),'checkpoint_configuration':str(OUT/'config.json'),'resource_snapshot':str(OUT/'resource_snapshot.json'),'note':'Counts refer to jobs, including artifact recovery, not independent experiments. Historical OOD jobs are replaced by groupfix v3; withdrawn image/label-pairing jobs are replaced by author-public52 jobs. Full paper completion additionally requires matched protocols, all required seeds, retained grouped predictions and corrected statistics.'}
  p=REPORT/'delivery_snapshot.json';tmp=p.with_suffix('.tmp');tmp.write_text(json.dumps(snapshot,indent=2,ensure_ascii=False)+'\n');tmp.replace(p)
 if __name__=='__main__':
  frame=queue_frame();frame.to_csv(REPORT/'execution_jobs.csv',index=False);write_note(frame);print(frame.execution_status.value_counts().to_dict())

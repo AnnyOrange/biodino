@@ -142,7 +142,7 @@ def main():
     p.add_argument('--group-fix-v3',action='store_true',help='Score directly on the shared source/FOV-disjoint bank and test members')
     a = p.parse_args()
     torch.set_num_threads(2)
-    key=f'{a.model}__ood__{a.task}'+('__inputfix_v2' if a.input_fix_v2 else '')
+    key=f'{a.model}__ood__{a.task}'+('__groupfix_v3' if a.group_fix_v3 else '__inputfix_v2' if a.input_fix_v2 else '')
     legacy=OUT/'results'/a.model/'ood'
     if a.group_fix_v3 and not a.input_fix_v2:p.error('--group-fix-v3 requires --input-fix-v2')
     root=OUT/'results'/a.model/('ood_groupfix_v3' if a.group_fix_v3 else 'ood_inputfix_v2' if a.input_fix_v2 else 'ood')

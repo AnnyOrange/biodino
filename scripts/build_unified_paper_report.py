@@ -57,24 +57,35 @@ def main(publish=True):
   if row['dataset']=='nucls_qc':row.update(status='待执行',data_complete='是（QC1744，发布方fold及患者隔离已核对）',reason='共享混合标注适配器已通过全量几何及原生指标回代检查；自身模型试跑后批量接入；仅实际入队项标为已排队')
   if row['dataset']=='xray_bone':row.update(status='阻塞',data_complete='否',reason='缺官方validation图像及年龄标签；train12611/test200已在本地')
   if row['model']=='openpath' and row['dataset']=='pcam':row.update(display='不作独立泛化比较：预训练重叠',value='',status='阻塞',reason='已知预训练重叠；排除排名与显著性检验')
- for task in queue['tasks']:
-  if '__groupfix_v3' not in task['key']:continue
-  m,d=task['model'],task['dataset'];result=Path(task['result']);statepath=OUT/'states'/f"{task['key']}.json"
-  state=json.loads(statepath.read_text()) if statepath.exists() else {}
-  row=add(m,'ood',d,metric='auroc',data_complete='固定名单已锁定；逐模型运行时校验',required_seeds=0,seed_semantics='not_applicable',log=task['log'],result=str(result))
-  if result.exists():
-   v=json.loads(result.read_text());score=v['metrics']['auroc'];row.update(value=score,display=f'{score:.6f}（CI待计算）',data_complete='是',status='待执行',reason='确定性指标与逐样本评分完成；统计待完成',predictions=v['prediction_path'])
-   ci=OUT/'statistics/ood_groupfix_v3'/f'{m}__{d}__ci.json'
-   if ci.exists():
-    stat=json.loads(ci.read_text());metric=stat['metrics']['auroc'];lo,hi=metric['ci_low'],metric['ci_high'];row.update(ci_low=lo,ci_high=hi,display=f'{score:.6f} [{lo:.6f}, {hi:.6f}]',reason='确定性指标及分组CI完成；配对比较待其余模型',status='待执行')
-  else:
-   claim=OUT/'locks'/f'{m}.claimdir'/'owner.json'
-   try:owner=json.loads(claim.read_text())
-   except (FileNotFoundError,json.JSONDecodeError):owner={}
-   if owner:
-    row.update(status='运行中' if owner['task']==task['key'] else '已排队',reason='正在提取特征/评分' if owner['task']==task['key'] else '同一模型的前一任务运行中',job_id=f"{owner['host']}:{owner['pid']}")
-   elif state.get('state')=='failed':row.update(status='阻塞',reason=state['error'],job_id=f"{state['host']}:{state['pid']}")
-   else:row.update(status='已排队',reason='已进入运行中的持久队列；等待worker领取')
+ from unified_paper_statistics import current_ood_identity
+ ood_jobs={(j['model'],j['dataset']):j for name in OUT.glob('*queue.json')
+           for j in json.loads(name.read_text()).get('tasks',[])
+           if j.get('task','ood')=='ood' and '/ood_groupfix_v3/' in j['result']}
+ ood_identities={}
+ for m in models:
+  for d in ('xray','cryo'):
+   task=ood_jobs.get((m,d));key=f'{m}__ood__{d}__groupfix_v3'
+   result=OUT/'results'/m/'ood_groupfix_v3'/f'{d}_result.json'
+   statepath=OUT/'states'/f'{key}.json'
+   state=json.loads(statepath.read_text()) if statepath.exists() else {}
+   row=add(m,'ood',d,metric='auroc',data_complete='固定名单已锁定；逐模型运行时校验',required_seeds=0,seed_semantics='not_applicable',log=task['log'] if task else '',result=str(result))
+   if result.exists():
+    v=json.loads(result.read_text())
+    try:ood_identities[d]=current_ood_identity(v,d,ood_identities.get(d))
+    except ValueError as error:
+     row.update(status='阻塞',reason=str(error));continue
+    score=v['metrics']['auroc'];row.update(value=score,display=f'{score:.6f}（CI待计算）',data_complete='是',status='待执行',reason='确定性指标与逐样本评分完成；统计待完成',predictions=v['prediction_path'])
+    ci=OUT/'statistics/ood_groupfix_v3'/f'{m}__{d}__ci.json'
+    if ci.exists():
+     stat=json.loads(ci.read_text());metric=stat['metrics']['auroc'];lo,hi=metric['ci_low'],metric['ci_high'];row.update(ci_low=lo,ci_high=hi,display=f'{score:.6f} [{lo:.6f}, {hi:.6f}]',reason='确定性指标及分组CI完成；配对比较待其余模型',status='待执行')
+   elif task:
+    claim=OUT/'locks'/f'{m}.claimdir'/'owner.json'
+    try:owner=json.loads(claim.read_text())
+    except (FileNotFoundError,json.JSONDecodeError):owner={}
+    if owner:
+     row.update(status='运行中' if owner['task']==key else '已排队',reason='正在提取特征/评分' if owner['task']==key else '同一模型的前一任务运行中',job_id=f"{owner['host']}:{owner['pid']}")
+    elif state.get('state')=='failed':row.update(status='阻塞',reason=state['error'],job_id=f"{state['host']}:{state['pid']}")
+    else:row.update(status='已排队',reason='已进入运行中的持久队列；等待worker领取')
  # Explicit native CTC pilot is a real training process, not a completed fold.
  ctc=OUT/'states/ctc_pilot.json'
  if ctc.exists():
