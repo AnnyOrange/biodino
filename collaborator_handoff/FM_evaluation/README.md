@@ -109,7 +109,7 @@ python collaborator_handoff/FM_evaluation/tools/prepare_existing_parquet.py \
 
 ## 选点与保留状态
 
-按项目当前安排使用test选优，task内再task间等权汇总，结果明确记录为test选优。混合指标的方向、归一化及聚合配置尚未交付，不能直接对MAE、AUROC等原始值平均。本工具输出完整逐项结果，不宣称已经实现统一选点总分。完整评测和恢复核验前保留候选；选定后保留可继续训练的完整DCP、optimizer及EMA，不只保留推理权重。
+按项目当前安排仅使用完整FM ID的test成绩选优，OOD完整评测单独报告、不参与选点，task内再task间等权汇总，结果明确记录为test选优。混合指标的方向、归一化及聚合配置尚未交付，不能直接对MAE、AUROC等原始值平均。本工具输出完整逐项结果，不宣称已经实现统一选点总分。完整评测和恢复核验前保留候选；选定后保留可继续训练的完整DCP、optimizer及EMA，不只保留推理权重。
 
 ## 本次GitHub迁移验证范围
 

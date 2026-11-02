@@ -57,7 +57,7 @@ GB4096可以采用。我们S+至H+原方案使用GB1024，但接受您目前GB40
 
 已收到您截至2026-10-31的进度记录；该记录是历史快照，最终完成以实际更新数为准。
 
-缺少的数据正在补传，下载及状态见 [HF补传目录](https://huggingface.co/datasets/annyorange/4tb/tree/main/dataset_transfer_fm_id_ood_supplement_20261102)；本地上传目录已准备，本轮清单为14个数据文件、约85.91GiB；代码、执行入口及说明通过GitHub提供，不再附两个代码ZIP。远端已完成多少以实际上传记录为准，不把本地准备完成说成已经全部送达。您已经持有且校验一致的数据可跳过。
+数据由本方线下拷贝后上传，下载及状态见 [HF补传目录](https://huggingface.co/datasets/annyorange/4tb/tree/main/dataset_transfer_fm_id_ood_supplement_20261102)；本地上传目录已准备，本轮清单为14个数据文件、约85.91GiB；代码、执行入口及说明通过GitHub提供，不再附两个代码ZIP。本机上传已停止，目前仅2个文件完成远端核验，其余由后续上传补齐。远端已完成多少以实际上传记录为准，不把本地准备完成说成已经全部送达。您已经持有且校验一致的数据可跳过。
 
 已有HF目录包含全部CTC、CHAMMI、Multimodal原始包，以及PCam、NCT、RxRx1等数据，不重复上传这部分。PCam/NCT的重封装脚本与路径、hash映射一起提供。历史HF目录中的旧协议和划分不能覆盖本次冻结清单。
 
