@@ -6,7 +6,7 @@ Existing unrelated allocations remain included in NVML memory.used.
 import atexit,fcntl,hashlib,json,os,socket,subprocess,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'outputs/02_eval_runs/unified_paper'
-QUEUES=['bone_age_queue.json','ood_repair_queue.json','rsna_queue.json','film_queue.json','queue.json','global_queue.json','lc25000_grouped_queue.json','native_detection_queue.json','nucls_queue.json','segmentation_queue.json','segmentation_recovery_queue.json','segmentation_cache_queue.json','detection_queue.json','rxrx1_retrieval_queue.json','rxrx3_retrieval_queue.json','hpa_retrieval_queue.json','additional_retrieval_pilot_queue.json','bbbc038_official_queue.json','ctc_queue.json','retrieval_queue.json']
+QUEUES=['spheroid_queue.json','bone_age_queue.json','ood_repair_queue.json','rsna_queue.json','film_queue.json','queue.json','global_queue.json','lc25000_grouped_queue.json','native_detection_queue.json','nucls_queue.json','segmentation_queue.json','segmentation_recovery_queue.json','segmentation_cache_queue.json','detection_queue.json','rxrx1_retrieval_queue.json','rxrx3_retrieval_queue.json','hpa_retrieval_queue.json','additional_retrieval_pilot_queue.json','bbbc038_official_queue.json','ctc_queue.json','retrieval_queue.json']
 _release_callback=None
 _execution_guard=None
 

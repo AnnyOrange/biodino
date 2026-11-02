@@ -1,0 +1,18 @@
+{
+  "dataset": "conic-cell-count",
+  "task": "regression",
+  "counts": {
+    "train": 3940,
+    "test": 517
+  },
+  "membership_sha256": "0eea54cb9292ea8004557fb54c7320e3185ee6a572e56dc9eb7882ffaec968a4",
+  "canonical_source_files": {
+    "/mnt/huawei_deepcad/benchmark/Regression/CoNIC_Cell_Count/conic_cell_count.csv": "8640e1fd6365a5bd51269bb107725d86538a3cbfce59a79a9df3292a0c2ac0d1",
+    "/mnt/huawei_deepcad/benchmark/segmentation/conic/extracted/images.npy": "baf0cfdbc7378a361822d4cea6a559d2addf4886b74c642b73ab7377fa7522b3"
+  },
+  "source_fingerprints": {
+    "/mnt/huawei_deepcad/benchmark/Regression/CoNIC_Cell_Count/conic_cell_count.csv": "8640e1fd6365a5bd51269bb107725d86538a3cbfce59a79a9df3292a0c2ac0d1",
+    "/mnt/huawei_deepcad/benchmark/Regression/CoNIC_Cell_Count/data/images.npy": "baf0cfdbc7378a361822d4cea6a559d2addf4886b74c642b73ab7377fa7522b3"
+  },
+  "group_split_preserved": true
+}

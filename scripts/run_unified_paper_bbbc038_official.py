@@ -40,7 +40,7 @@ def main():
         if spec['kind']=='biodino':
             from omegaconf import OmegaConf
             arch=OmegaConf.load(spec['train_config']).student.arch
-            kwargs['layers']=[{'vit_small':11,'vit_base':11,'vit_large':23,'vit_huge2':31}[arch]]
+            kwargs['layers']=[{'vit_small':11,'vit_base':11,'vit_large':23,'vit_huge2':31,'vit_7b':39}[arch]]
             model=original_builder(**kwargs)
         else:
             from run_fm_companion_rules import FMSpatialBackbone

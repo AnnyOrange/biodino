@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/'outputs/02_eval_runs/unified_paper'
 SOURCE=Path(__file__).resolve()
+# 2026-10-31: idle reload includes bounded Spheroid host-memory policy.
 LOADED_SHA256=hashlib.sha256(SOURCE.read_bytes()).hexdigest()
 RELOAD_CHECKED_AT=0
 LOCK_FD_ENV='UNIFIED_PAPER_QUEUE_LOCK_FD'
@@ -76,7 +77,10 @@ def main():
    model_hosts={name:m.get('execution_host')for name,m in model_config.items()}
    tasks=json.loads(a.queue_file.read_text())['tasks']; ran=False
    # Finish one downstream training seed for each cell before later repeats.
-   tasks.sort(key=lambda task: (task.get('seed') not in (None, 0), task.get('seed') or 0))
+   def seed_order(task):
+    seed=task.get('seed')
+    return (seed not in (None, 0, 'bundled0to4'), seed if isinstance(seed,int) else 0)
+   tasks.sort(key=seed_order)
    for task in tasks:
     if not a.cpu and excluded(a.host_label,a.gpu):return
     reload_if_changed(wlock)

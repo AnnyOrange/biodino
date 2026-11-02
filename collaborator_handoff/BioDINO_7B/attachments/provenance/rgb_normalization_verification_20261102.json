@@ -1,0 +1,75 @@
+{
+  "status": "PASS",
+  "scope": "7B delivered config equals pinned source YAML semantically; RGB normalization equals actual L20TB config",
+  "files": [
+    {
+      "path": "/mnt/huawei_deepcad/dinov3/outputs/collaborator_handoff/BioDINO_7B/train/7b_b200.yaml",
+      "sha256": "0135ddb3a0bb85c132bfbc6b8531f58be75eb3c262d98ad8868e1ac7104c3f10",
+      "arch": "vit_7b",
+      "mean": [
+        0.43700109438633017,
+        0.4152422629198214,
+        0.4177610059272783
+      ],
+      "std": [
+        0.34138578574532263,
+        0.34111549859535956,
+        0.3432925245219299
+      ],
+      "dataset_path": "mixwds_robust:0.09=${oc.env:DATA_1TB_DIR}/filtered_mixed_train_w*.tar||0.21=${oc.env:DATA_4TB_DIR}/filtered_mixed_train*.tar||0.5581=${oc.env:DATA_ROUTE2_DIR}/filtered_projection_20TB_nested-r0*.tar||0.1419=${oc.env:DATA_ROUTE2_DIR}/filtered_projection_20TB_nested-r9*.tar::pct=1,99",
+      "float_input": false
+    },
+    {
+      "path": "/mnt/huawei_deepcad/dinov3/outputs/01_training_runs/HS6_L_robust_biosafe256_gb1024_lr1e4_wu3_tw30_nosig_e61x4098_20tb_route2_mix009_021_0604_0096_8x5090zxr_20260924/config.yaml",
+      "sha256": "e33cb26b1eecbec0efa7a466b17fb59f16f7a77ae25aa6b4b138028aa95eabe3",
+      "arch": "vit_large",
+      "mean": [
+        0.43700109438633017,
+        0.4152422629198214,
+        0.4177610059272783
+      ],
+      "std": [
+        0.34138578574532263,
+        0.34111549859535956,
+        0.3432925245219299
+      ],
+      "dataset_path": "mixwds_robust:0.09=/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*.tar||0.21=/mnt/huawei_blm/deepcad_5t_v1/wds_patched_shuffle/filtered_mixed_train*.tar||0.5581=/mnt/deepcad_nfs/deepcad_100t/final-data/20TB_takeover_20260922_2350/route2_strict_pathology_20260923/route2_15tb_no_old5_micro_tars/filtered_projection_20TB_nested-r0*.tar||0.1419=/mnt/deepcad_nfs/deepcad_100t/final-data/20TB_takeover_20260922_2350/route2_strict_pathology_20260923/route2_15tb_no_old5_micro_tars/filtered_projection_20TB_nested-r9*.tar::pct=1,99",
+      "float_input": false
+    },
+    {
+      "path": "/mnt/huawei_deepcad/dinov3/scripts/cooldown_20261013/trunk_config_20tb_route2.yaml",
+      "sha256": "e33cb26b1eecbec0efa7a466b17fb59f16f7a77ae25aa6b4b138028aa95eabe3",
+      "arch": "vit_large",
+      "mean": [
+        0.43700109438633017,
+        0.4152422629198214,
+        0.4177610059272783
+      ],
+      "std": [
+        0.34138578574532263,
+        0.34111549859535956,
+        0.3432925245219299
+      ],
+      "dataset_path": "mixwds_robust:0.09=/mnt/huawei_deepcad/webds_micro_100k_by_channel_patched_shuffle/filtered_mixed_train_w*.tar||0.21=/mnt/huawei_blm/deepcad_5t_v1/wds_patched_shuffle/filtered_mixed_train*.tar||0.5581=/mnt/deepcad_nfs/deepcad_100t/final-data/20TB_takeover_20260922_2350/route2_strict_pathology_20260923/route2_15tb_no_old5_micro_tars/filtered_projection_20TB_nested-r0*.tar||0.1419=/mnt/deepcad_nfs/deepcad_100t/final-data/20TB_takeover_20260922_2350/route2_strict_pathology_20260923/route2_15tb_no_old5_micro_tars/filtered_projection_20TB_nested-r9*.tar::pct=1,99",
+      "float_input": false
+    },
+    {
+      "path": "/mnt/huawei_deepcad/dinov3/dinov3/configs/train/microscopy_continual_vit7b16_20tb_draft.yaml",
+      "sha256": "657eeb5289c4018ed656a7d26e15f4f7be01ff9f8bcb14fd82c5fcf5360e8d15",
+      "arch": "vit_7b",
+      "mean": [
+        0.43700109438633017,
+        0.4152422629198214,
+        0.4177610059272783
+      ],
+      "std": [
+        0.34138578574532263,
+        0.34111549859535956,
+        0.3432925245219299
+      ],
+      "dataset_path": "mixwds_robust:0.09=${oc.env:DATA_1TB_DIR}/filtered_mixed_train_w*.tar||0.21=${oc.env:DATA_4TB_DIR}/filtered_mixed_train*.tar||0.5581=${oc.env:DATA_ROUTE2_DIR}/filtered_projection_20TB_nested-r0*.tar||0.1419=${oc.env:DATA_ROUTE2_DIR}/filtered_projection_20TB_nested-r9*.tar::pct=1,99",
+      "float_input": false
+    }
+  ],
+  "limitation": "Configuration equality, not a new full-data pixel-statistics computation; collaborator actual runtime overrides and H+ current config not verified."
+}

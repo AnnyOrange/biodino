@@ -19,7 +19,7 @@ from report_ood_scope import refresh as refresh_ood_scope
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'outputs/02_eval_runs/unified_paper'
 REPORT = ROOT / 'outputs/00_reports/hs0_hs6_1tb_5tb_fm14_20260924'
-NATIVE = {'ctc': 'cell_tracking', 'nucls_qc': 'nuclei_detection_segmentation',
+NATIVE = {'spheroid_lsfm': 'centroid_detection_3d', 'ctc': 'cell_tracking', 'nucls_qc': 'nuclei_detection_segmentation',
           'bbbc038-official': 'instance_segmentation',
           'bccd': 'box_detection', 'bbbc041': 'box_detection',
           'xray_chest': 'box_detection'}
@@ -36,6 +36,17 @@ def write_csv(path, rows, columns):
 
 def metric_from_result(row, payload):
     dataset, metric = row['dataset'], row['metric']
+    if dataset == 'spheroid_lsfm':
+        from run_unified_paper_spheroid import PROTOCOL, MANIFEST, sha
+        if (payload.get('model') != row['model'] or payload.get('protocol') != PROTOCOL
+                or payload.get('manifest_sha256') != sha(MANIFEST)
+                or (payload.get('n_train'), payload.get('n_val'), payload.get('n_test')) != (24, 6, 18)):
+            return None
+        for key in ('prediction', 'head_state'):
+            path = Path(payload.get(key + '_path' if key == 'prediction' else key, ''))
+            if not path.is_file() or sha(path) != payload.get(key + '_sha256'):
+                return None
+        return payload.get('metrics', {}).get('f1' if metric == 'centroid_f1' else metric)
     if dataset == 'ctc':
         if (payload.get('n_domains') != 4 or
                 any(item.get('status') != 'VALID_COMPLETE' for item in payload.get('domain_rows', []))):
@@ -60,6 +71,20 @@ def metric_from_result(row, payload):
                 payload.get('manifest_sha256')):
             return None
         return payload.get('metrics', {}).get(metric)
+    if dataset == 'lc25000':
+        prediction = Path(payload.get('prediction_path', ''))
+        manifest = Path(payload.get('sample_manifest', ''))
+        if (payload.get('model') != row['model'] or
+                payload.get('protocol') != 'lc25000-clean-original-tile-80-20-seed0-v1' or
+                payload.get('split') != payload['protocol'] or
+                (payload.get('n_train'), payload.get('n_test')) != (19949, 5051) or
+                payload.get('annotation_sha256') !=
+                '2ff9e992f759f265dfc9aa2363de0dfcc8e6559884d8bb02a4c925214fdf7e23' or
+                not prediction.is_file() or not manifest.is_file() or
+                hashlib.sha256(prediction.read_bytes()).hexdigest() != payload.get('prediction_sha256') or
+                hashlib.sha256(manifest.read_bytes()).hexdigest() != payload.get('split_sha256')):
+            return None
+        return payload.get(metric)
     if (payload.get('protocol') == 'bio-eval-union-v4' and
             Path(payload.get('prediction_path', '')).is_file() and
             Path(payload.get('sample_manifest', '')).is_file()):
@@ -69,7 +94,9 @@ def metric_from_result(row, payload):
 
 def native_results(model, dataset, fold):
     base = OUT / 'results' / model
-    if dataset == 'ctc':
+    if dataset == 'spheroid_lsfm':
+        pattern = base / 'spheroid_lsfm'
+    elif dataset == 'ctc':
         pattern = base / 'ctc' / f'fold{fold}'
     elif dataset == 'nucls_qc':
         pattern = base / 'nucls_qc' / f'fold{fold}'
@@ -258,6 +285,10 @@ def main():
                        reason='Deterministic score and predictions complete; grouped CI pending',
                        ci_low='', ci_high='', statistics_status='grouped CI and paired comparison pending',
                        snapshot_utc=now, protocol_verified='True')
+            if dataset == 'lc25000':
+                row.update(split_id=payload['split'], split_sha256=payload['split_sha256'],
+                           manifest_sha256=payload['split_sha256'],
+                           validation_basis='Original-tile grouped train/test; fixed annotation and prediction hashes verified')
             changed.append((model, dataset, fold, row['metric']))
     for row in rows:
         if row['task'] not in ('classification', 'regression', 'retrieval') or not row.get('value'):

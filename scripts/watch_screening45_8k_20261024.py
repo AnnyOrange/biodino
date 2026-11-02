@@ -14,6 +14,8 @@ BASE = ROOT / 'outputs/02_eval_runs/screening45_8k_20261024'
 
 
 def ensure(record):
+    if record['site'] == 'hxw' and (BASE / 'hxw/STOP_HXW_EVALUATION').exists():
+        return dict(host=record['host'], result={'action': 'PAUSED_BY_USER'})
     code = '''import json,subprocess,socket,os,time,signal
 from pathlib import Path
 r=RECORD

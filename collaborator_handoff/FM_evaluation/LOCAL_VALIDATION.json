@@ -1,0 +1,11 @@
+{
+  "status": "LOCAL_CHECKS_PASS_TARGET_GPU_PENDING",
+  "entrypoints_imported": 18,
+  "required_input_paths_present": 522275,
+  "reference_result_artifacts_validated": 188,
+  "negative_and_positive_tests": 7,
+  "docker_build": "NOT_RUN: local Docker socket permission denied",
+  "target_7b_B200_smoke": "NOT_RUN",
+  "full_7b_matrix": "NOT_RUN",
+  "scope": "Local evidence is not a target-machine end-to-end PASS"
+}

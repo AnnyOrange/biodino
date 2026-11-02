@@ -1,0 +1,754 @@
+[
+  {
+    "key": "biodino_7b__global__bbbc013",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__bbbc005",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__bbbc048-cellcycle",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__cyclops-protein-loc",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__midog25-atypical",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__bloodmnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__pathmnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__tissuemnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__breastmnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__organamnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__organcmnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__organsmnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__dermamnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__octmnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__pneumoniamnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__retinamnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__chestmnist",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__pcam",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__nct-crc-he",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__chammi-allen-task1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__chammi-cp-task1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__chammi-hpa-task1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__conic-cell-count",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__livecell-cell-count",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__chammi-allen-task2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__chammi-cp-task2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__chammi-cp-task3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__chammi-hpa-task2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__allen-cell-volume",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__retrieval_clustering__nct-crc-he-1k",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__retrieval_clustering__crc-val-he-7k",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__retrieval_clustering__nct-crc-he-100",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__retrieval_clustering__lc25000",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__retrieval_clustering__hpa-subcellular",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__retrieval_clustering__rxrx1-cross",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__retrieval_clustering__rxrx3-core",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__global__lc25000",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__bbbc038__seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__bbbc038__seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__bbbc038__seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__bbbc038__seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__bbbc038__seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__conic__seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__conic__seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__conic__seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__conic__seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__conic__seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__livecell__seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__livecell__seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__livecell__seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__livecell__seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__detection_proxy__livecell__seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__bbbc038_official__seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__bbbc038_official__seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__bbbc038_official__seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__bbbc038_official__seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__bbbc038_official__seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold0_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold1_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold2_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold3_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold4_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold0_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold1_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold3_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold4_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold0_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ctc__fold1_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__film_age__fixed5",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__bone_age__official_validation",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__native_box__bccd__seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__native_box__bccd__seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__native_box__bccd__seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__native_box__bccd__seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__native_box__bccd__seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__native_box__bbbc041__seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__native_box__bbbc041__seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__native_box__bbbc041__seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__native_box__bbbc041__seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__native_box__bbbc041__seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__rsna_pneumonia__seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__rsna_pneumonia__seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__rsna_pneumonia__seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__rsna_pneumonia__seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__rsna_pneumonia__seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold2_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold2_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold2_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold2_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold2_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold3_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold3_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold3_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold3_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold3_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold4_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold4_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold4_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold4_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold4_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold5_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold5_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold5_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold5_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__nucls_qc__fold5_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__spheroid_official__bundled0to4",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ood__xray",
+    "status": "PASS"
+  },
+  {
+    "key": "biodino_7b__ood__cryo",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_0_E20_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_0_E20_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_0_E20_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_0_E20_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_0_E20_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_0_E50_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_0_E50_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_0_E50_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_0_E50_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_0_E50_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_1_E20_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_1_E20_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_1_E20_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_1_E20_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_1_E20_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_1_E50_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_1_E50_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_1_E50_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_1_E50_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_1_E50_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_2_E20_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_2_E20_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_2_E20_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_2_E20_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_2_E20_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_2_E50_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_2_E50_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_2_E50_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_2_E50_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_2_E50_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_3_E20_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_3_E20_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_3_E20_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_3_E20_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_3_E20_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_3_E50_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_3_E50_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_3_E50_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_3_E50_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_3_E50_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_5_E20_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_5_E20_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_5_E20_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_5_E20_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_5_E20_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_5_E50_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_5_E50_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_5_E50_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_5_E50_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_5_E50_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_6_E20_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_6_E20_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_6_E20_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_6_E20_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_6_E20_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_6_E50_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_6_E50_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_6_E50_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_6_E50_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_6_E50_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_7_E20_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_7_E20_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_7_E20_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_7_E20_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_7_E20_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_7_E50_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_7_E50_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_7_E50_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_7_E50_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_7_E50_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_8_E20_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_8_E20_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_8_E20_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_8_E20_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_8_E20_seed4",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_8_E50_seed0",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_8_E50_seed1",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_8_E50_seed2",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_8_E50_seed3",
+    "status": "PASS"
+  },
+  {
+    "key": "seg_8_E50_seed4",
+    "status": "PASS"
+  }
+]

@@ -1,11 +1,16 @@
 """Exact run-level queue ledger for the stable paper entry, including corrections."""
-import json,time
+import errno,json,time
 from pathlib import Path
 import pandas as pd
 ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'outputs/02_eval_runs/unified_paper';REPORT=ROOT/'outputs/00_reports/hs0_hs6_1tb_5tb_fm14_20260924'
 def read(p):
- try:return json.loads(p.read_text())
- except (FileNotFoundError,json.JSONDecodeError):return {}
+ for attempt in range(3):
+  try:return json.loads(p.read_text())
+  except OSError as error:
+   if error.errno!=errno.ESTALE or attempt==2:break
+   time.sleep(.1*(attempt+1))
+  except json.JSONDecodeError:return {}
+ return {}
 def completed_segmentation_recovery(job):
  if job.get('task')!='segmentation_cache_recovery' or not job['key'].endswith('__recipe16'):return []
  split=Path(job['result']).parents[3].name

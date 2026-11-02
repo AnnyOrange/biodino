@@ -1,0 +1,8 @@
+{
+  "expected_counts": {
+    "train": 2722,
+    "val": 2523,
+    "test": 2656
+  },
+  "template_invocation": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/unified_paper/acceptance_cells/pannuke/pannuke-fold3-train-fold2-val-fold1-test/source_template.json"
+}

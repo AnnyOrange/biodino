@@ -1,0 +1,137 @@
+{
+  "dataset": "pcam",
+  "task": "classification",
+  "counts": {
+    "train": 262144,
+    "test": 32768
+  },
+  "membership_sha256": "d0ccf71999bde63769e380597dfd9a9d6de83399f69cc991276a185df7634d1a",
+  "canonical_source_files": {
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/test-00000-of-00002-bb04e6313f58efa0.parquet": "2843436b6f9d3925645f7888e8de04125d86d7a65682c401e679ab2951e7e781",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/test-00001-of-00002-3bfa172e8818685a.parquet": "74298bce37e7d6837702ede5c4df994b7db3ed9405fa194ee61b0e06b26bc7ce",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00000-of-00013-4717c3cf92578c96.parquet": "99ed88ef674a4462d1cabb418699d210b288b27b51486cea5fa10e1edd2817dd",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00001-of-00013-549914845b4273b1.parquet": "19d994a8a4f50ae35cd896386386cccf1d9dd896e0408c302903d91556c6bba5",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00002-of-00013-a859720d3cfcebdf.parquet": "3d418409e5a2a0e3d764e052bd7ebb98076ad9cd28747e2e0226760c40be18a2",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00003-of-00013-a70975735603ee91.parquet": "cb673be5806dacf8a4852caa4633b0fafcdaa8be0e7d7638de0578ded972e8cc",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00004-of-00013-f3cb3678324a5346.parquet": "9380f7c89a3f8ba5edc0a1cb79d4f146d23cfaab19028c28d2f077f6448d7b9d",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00005-of-00013-959ba247c1881dc0.parquet": "fd85cbf7bc46c63a187a4bb90618b62dc6c08e28f20f7d685045b05d8e1f0427",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00006-of-00013-318f5c6d89fc04ef.parquet": "72f65f3e42b29d45e9f4f6f6fd4f3920ed5fb9542e69ac0fcc04649c46db3678",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00007-of-00013-c8a1a9cf7273420c.parquet": "d284c819a44aa85a6cb45be9155efdd3127f590c25dcfff328651c2ab695ee2c",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00008-of-00013-3d4f66c19471ed0a.parquet": "08476f5ca568e74e5f937fbfffb79a6312387c708209e260be4d59e11d96acb5",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00009-of-00013-867b6df30133f28e.parquet": "cfa4f9e15f57cbef83fd7ef257b8fb3ab92915cb5e7860f9b7ca7cca88584bad",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00010-of-00013-abf99d3df1f77818.parquet": "2aeb2d0f738eb865768204b9b230e55698157de698d38c244e811be7cf89346c",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00011-of-00013-e929006353f3ae95.parquet": "b082df47ee3116f781a4bc8e493c1aef5be001a40bcf7dcef327d8d24a81db8c",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00012-of-00013-73b855ce7d233beb.parquet": "31ad1932995754e1c215f5cc376550c0a2c7e3649845a066876fd819007fc7c6"
+  },
+  "source_fingerprints": {
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/test-00000-of-00002-bb04e6313f58efa0.parquet": "2843436b6f9d3925645f7888e8de04125d86d7a65682c401e679ab2951e7e781",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/test-00001-of-00002-3bfa172e8818685a.parquet": "74298bce37e7d6837702ede5c4df994b7db3ed9405fa194ee61b0e06b26bc7ce",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00000-of-00013-4717c3cf92578c96.parquet": "99ed88ef674a4462d1cabb418699d210b288b27b51486cea5fa10e1edd2817dd",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00001-of-00013-549914845b4273b1.parquet": "19d994a8a4f50ae35cd896386386cccf1d9dd896e0408c302903d91556c6bba5",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00002-of-00013-a859720d3cfcebdf.parquet": "3d418409e5a2a0e3d764e052bd7ebb98076ad9cd28747e2e0226760c40be18a2",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00003-of-00013-a70975735603ee91.parquet": "cb673be5806dacf8a4852caa4633b0fafcdaa8be0e7d7638de0578ded972e8cc",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00004-of-00013-f3cb3678324a5346.parquet": "9380f7c89a3f8ba5edc0a1cb79d4f146d23cfaab19028c28d2f077f6448d7b9d",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00005-of-00013-959ba247c1881dc0.parquet": "fd85cbf7bc46c63a187a4bb90618b62dc6c08e28f20f7d685045b05d8e1f0427",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00006-of-00013-318f5c6d89fc04ef.parquet": "72f65f3e42b29d45e9f4f6f6fd4f3920ed5fb9542e69ac0fcc04649c46db3678",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00007-of-00013-c8a1a9cf7273420c.parquet": "d284c819a44aa85a6cb45be9155efdd3127f590c25dcfff328651c2ab695ee2c",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00008-of-00013-3d4f66c19471ed0a.parquet": "08476f5ca568e74e5f937fbfffb79a6312387c708209e260be4d59e11d96acb5",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00009-of-00013-867b6df30133f28e.parquet": "cfa4f9e15f57cbef83fd7ef257b8fb3ab92915cb5e7860f9b7ca7cca88584bad",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00010-of-00013-abf99d3df1f77818.parquet": "2aeb2d0f738eb865768204b9b230e55698157de698d38c244e811be7cf89346c",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00011-of-00013-e929006353f3ae95.parquet": "b082df47ee3116f781a4bc8e493c1aef5be001a40bcf7dcef327d8d24a81db8c",
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00012-of-00013-73b855ce7d233beb.parquet": "31ad1932995754e1c215f5cc376550c0a2c7e3649845a066876fd819007fc7c6"
+  },
+  "source_stats": {
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/test-00000-of-00002-bb04e6313f58efa0.parquet": {
+      "size": 375929557,
+      "mtime_ns": 1782306291897634000,
+      "ctime_ns": 1791861736934071641,
+      "inode": 29224350
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/test-00001-of-00002-3bfa172e8818685a.parquet": {
+      "size": 375420474,
+      "mtime_ns": 1782306108639704000,
+      "ctime_ns": 1791861736925614740,
+      "inode": 29250266
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00000-of-00013-4717c3cf92578c96.parquet": {
+      "size": 470507620,
+      "mtime_ns": 1782307253177654000,
+      "ctime_ns": 1791861736912966629,
+      "inode": 29224348
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00001-of-00013-549914845b4273b1.parquet": {
+      "size": 471051496,
+      "mtime_ns": 1782307177463428000,
+      "ctime_ns": 1791861736955508890,
+      "inode": 29250264
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00002-of-00013-a859720d3cfcebdf.parquet": {
+      "size": 470299887,
+      "mtime_ns": 1782307291217645000,
+      "ctime_ns": 1791861736941735070,
+      "inode": 29250267
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00003-of-00013-a70975735603ee91.parquet": {
+      "size": 470402830,
+      "mtime_ns": 1782307173182942000,
+      "ctime_ns": 1791861736945599470,
+      "inode": 29250272
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00004-of-00013-f3cb3678324a5346.parquet": {
+      "size": 470320552,
+      "mtime_ns": 1782307176589787000,
+      "ctime_ns": 1791861736904560140,
+      "inode": 29250268
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00005-of-00013-959ba247c1881dc0.parquet": {
+      "size": 470487421,
+      "mtime_ns": 1782307346908235000,
+      "ctime_ns": 1791861736908302360,
+      "inode": 29250271
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00006-of-00013-318f5c6d89fc04ef.parquet": {
+      "size": 470930058,
+      "mtime_ns": 1782310833003614000,
+      "ctime_ns": 1791861736964833350,
+      "inode": 29250280
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00007-of-00013-c8a1a9cf7273420c.parquet": {
+      "size": 470791868,
+      "mtime_ns": 1782311040844354000,
+      "ctime_ns": 1791861736859914775,
+      "inode": 29248806
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00008-of-00013-3d4f66c19471ed0a.parquet": {
+      "size": 472057102,
+      "mtime_ns": 1782311541559013000,
+      "ctime_ns": 1791861736865349429,
+      "inode": 29279973
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00009-of-00013-867b6df30133f28e.parquet": {
+      "size": 470777305,
+      "mtime_ns": 1782311557892022000,
+      "ctime_ns": 1791861736874640934,
+      "inode": 29224554
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00010-of-00013-abf99d3df1f77818.parquet": {
+      "size": 470810277,
+      "mtime_ns": 1782311577705090000,
+      "ctime_ns": 1791861736971530230,
+      "inode": 29250287
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00011-of-00013-e929006353f3ae95.parquet": {
+      "size": 471004929,
+      "mtime_ns": 1782311582716230000,
+      "ctime_ns": 1791861736988861320,
+      "inode": 29250290
+    },
+    "/mnt/huawei_deepcad/benchmark/Classification/PatchCamelyon/hf_parquet/data/train-00012-of-00013-73b855ce7d233beb.parquet": {
+      "size": 470837796,
+      "mtime_ns": 1782311525569183000,
+      "ctime_ns": 1791861736884469300,
+      "inode": 29250292
+    }
+  },
+  "source_order": {},
+  "group_split_preserved": true
+}

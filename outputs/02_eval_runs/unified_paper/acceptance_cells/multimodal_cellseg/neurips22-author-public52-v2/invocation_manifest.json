@@ -1,0 +1,8 @@
+{
+  "expected_counts": {
+    "train": 1000,
+    "val": 101,
+    "test": 52
+  },
+  "template_invocation": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/unified_paper/acceptance_cells/multimodal_cellseg/neurips22-author-public52-v2/source_template.json"
+}

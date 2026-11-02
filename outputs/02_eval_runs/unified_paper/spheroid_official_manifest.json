@@ -1,0 +1,1065 @@
+{
+  "protocol": "spheroid-official-patches-frozen-slice-3d-v1",
+  "records": [
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 17,
+      "start": [
+        40,
+        224,
+        448
+      ],
+      "end": [
+        86,
+        480,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0017.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0017.csv",
+      "n_points": 32,
+      "sha256": "f33554ae629080acf86d11ff6a1678c6ce67aae6472bf17d2f91a441e20555ed",
+      "points_sha256": "67fe52d17a26baa832fbc7b8a616ab91caa66716fbc6d56e0532fc49c191c368"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 18,
+      "start": [
+        40,
+        448,
+        0
+      ],
+      "end": [
+        86,
+        704,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0018.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0018.csv",
+      "n_points": 136,
+      "sha256": "fa5e53dc0fb711272057c9dba6942d84035f777c8efeddab0d0607eb07c9290e",
+      "points_sha256": "0c6ce3b524d026df0db49bf07c760d04b8bb1c0f81514cacf02c80a8843aafe1"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 21,
+      "start": [
+        40,
+        672,
+        0
+      ],
+      "end": [
+        86,
+        928,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0021.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0021.csv",
+      "n_points": 83,
+      "sha256": "2b902c3ec5f37afcd1e0ac678e1e21881d22f6c36a3a8cf8aaa355dafe7c7ac7",
+      "points_sha256": "862dec2307c4b83a75d27fe2a4758dcf5d3fa75aea3319cbbdfaf55f7b73e198"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 22,
+      "start": [
+        40,
+        672,
+        224
+      ],
+      "end": [
+        86,
+        928,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0022.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0022.csv",
+      "n_points": 90,
+      "sha256": "2f71417f56c4ca836886da8eb4eb3c09cef64b7a7067743c8543b03f11bbcb32",
+      "points_sha256": "0c34e7095c0a9747b6e14b31d0ee3c8b38c924bd59c3545c577bc410083fc415"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 25,
+      "start": [
+        80,
+        0,
+        224
+      ],
+      "end": [
+        126,
+        256,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0025.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0025.csv",
+      "n_points": 99,
+      "sha256": "d4d648afc141211013005eaf2f6994fade5a14a9bcd62b01eb41c72ae83f99be",
+      "points_sha256": "44b2f7df55d9605e5e40f4627b80ed6c99c527cd7db9093dd1de08b0b07a1f66"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 27,
+      "start": [
+        80,
+        224,
+        0
+      ],
+      "end": [
+        126,
+        480,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0027.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0027.csv",
+      "n_points": 127,
+      "sha256": "5c197b5a2c9f00ad907f62c2444e9609f78737df0303203c220adcffa507256f",
+      "points_sha256": "8ad540d055db0ff6bb98878f6a02318f58400e5300c53172ee6b373e54fb3d7f"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 33,
+      "start": [
+        80,
+        672,
+        0
+      ],
+      "end": [
+        126,
+        928,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0033.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0033.csv",
+      "n_points": 133,
+      "sha256": "a88d352bf0876abc4b5b204d5311d3def2d3f3735676ad5d6760630a34838add",
+      "points_sha256": "fd9763761a635578d04f05f6787ca6dc0f90af436f91a73b5d88c6eb5ba91eee"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 36,
+      "start": [
+        120,
+        0,
+        0
+      ],
+      "end": [
+        166,
+        256,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0036.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0036.csv",
+      "n_points": 45,
+      "sha256": "8e3fe920d68c0556f79cfd907f8e911cacca027333ceb9ee47633acf4c163723",
+      "points_sha256": "3e53d72225add689e2e09bb74a3c2f093c22f0ef306f141fb2f4ea5a4c1ce062"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 37,
+      "start": [
+        120,
+        0,
+        224
+      ],
+      "end": [
+        166,
+        256,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0037.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0037.csv",
+      "n_points": 125,
+      "sha256": "9bfad41866b9f6ddd16e1e5e2bb9b4591ab38af767c1bb54a24299ea5064d2cc",
+      "points_sha256": "b9e8105f47973c1549124a1837572a228da0d9d549fcaec8989b83dbf0151490"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 39,
+      "start": [
+        120,
+        224,
+        0
+      ],
+      "end": [
+        166,
+        480,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0039.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0039.csv",
+      "n_points": 126,
+      "sha256": "eb8960a8beec69bc5e7f8931703acdabb342ec32d401e46fe5dac838d7afed18",
+      "points_sha256": "66770aa41445547b90be5805db246767478407dac26c0f7c1b7272b3f214e4b1"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 42,
+      "start": [
+        120,
+        448,
+        0
+      ],
+      "end": [
+        166,
+        704,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0042.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0042.csv",
+      "n_points": 171,
+      "sha256": "0b7e0b43306d56fc2065240c7580835afa2e8a12cca1a5411335d9476cc8af24",
+      "points_sha256": "fe99d8e16e5120ba961ccdf39c01d41ceaab8b8c7d2475203f9bef06ee4c4814"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 45,
+      "start": [
+        120,
+        672,
+        0
+      ],
+      "end": [
+        166,
+        928,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0045.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0045.csv",
+      "n_points": 125,
+      "sha256": "54a2394bd3e0e0cb195d8300a546af1620ba16bd474675d25823b5cacbeba15a",
+      "points_sha256": "01c4f462aeace74aa8d4eeac3bc6335ce8376eb7f4b205b382007cf4d2493df7"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 55,
+      "start": [
+        160,
+        448,
+        224
+      ],
+      "end": [
+        206,
+        704,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0055.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0055.csv",
+      "n_points": 211,
+      "sha256": "9767514e80aab43ebcb939f6360cc50c2dde17151291c79300ddc8ab235262fc",
+      "points_sha256": "e22e92b91e17ae81d01e92aa197a557109a53a6f91b5211b6eed434e8a124c0e"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 68,
+      "start": [
+        200,
+        448,
+        448
+      ],
+      "end": [
+        246,
+        704,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0068.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0068.csv",
+      "n_points": 73,
+      "sha256": "6dd7cc0c6d523b501979ade28627978d34b2871633ddabf862dedf74158807dd",
+      "points_sha256": "83ba95b69ad94b3dadd9bda1a8b4116de0082aeef43d1aebd2584eca8afa76db"
+    },
+    {
+      "sample": "sample_01",
+      "split": "train",
+      "patch": 70,
+      "start": [
+        200,
+        672,
+        224
+      ],
+      "end": [
+        246,
+        928,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_01/patch_0070.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_01/patch_0070.csv",
+      "n_points": 53,
+      "sha256": "29d23720f35f7c036545346d7f795f6edc1530804e4bee5b5e88dc0cf0bd8f5e",
+      "points_sha256": "c403829a45216b2d8b2a502038687c34ed7efbf24d60977df0c1a53b67c9f45c"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 2,
+      "start": [
+        0,
+        0,
+        448
+      ],
+      "end": [
+        46,
+        256,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0002.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0002.csv",
+      "n_points": 0,
+      "sha256": "4805684b03a186684cf6d857c9f6f7d27cce766b0423c9cf3fa711478c65074b",
+      "points_sha256": "af007692afe027bc17d852203f6ba358f9b2c221acae9337f8b00a6f7c22dc3c"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 8,
+      "start": [
+        0,
+        448,
+        0
+      ],
+      "end": [
+        46,
+        704,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0008.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0008.csv",
+      "n_points": 0,
+      "sha256": "cf2c1b5a45e65c0286d5b691af27ce18f4c0a40ca28f493937302867d130d48f",
+      "points_sha256": "af007692afe027bc17d852203f6ba358f9b2c221acae9337f8b00a6f7c22dc3c"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 9,
+      "start": [
+        0,
+        448,
+        224
+      ],
+      "end": [
+        46,
+        704,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0009.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0009.csv",
+      "n_points": 34,
+      "sha256": "098bf130c462a07ab18df3f4af0a0663cb85d2e54d4f3151a2d244139c74c748",
+      "points_sha256": "9ce346ee2d739f456ee1991dcbb8d43a46d0f9e83661bd922a973ae5c6638f61"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 13,
+      "start": [
+        0,
+        672,
+        224
+      ],
+      "end": [
+        46,
+        928,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0013.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0013.csv",
+      "n_points": 16,
+      "sha256": "189a224b4278549a22e0d60d488c691c886031b4937a8f5e458e987496eebb3f",
+      "points_sha256": "9fd3ed168243de388f557784c0711b5620190d41fe01417cbdc88d62bb5574c2"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 14,
+      "start": [
+        0,
+        672,
+        448
+      ],
+      "end": [
+        46,
+        928,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0014.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0014.csv",
+      "n_points": 28,
+      "sha256": "64c6cd35eff914b6343f72da00baebaef7d9fe8ffb2188b8ee32da847e2c0731",
+      "points_sha256": "83264aa844ebbc832e74f5688e556c753de956a755cb701ef2bd48af18b66d3a"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 23,
+      "start": [
+        40,
+        0,
+        672
+      ],
+      "end": [
+        86,
+        256,
+        928
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0023.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0023.csv",
+      "n_points": 0,
+      "sha256": "fac1a543d278ea46dbae7dc1f94125dbee65f3316e01f7f28e58be244008abe1",
+      "points_sha256": "af007692afe027bc17d852203f6ba358f9b2c221acae9337f8b00a6f7c22dc3c"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 25,
+      "start": [
+        40,
+        224,
+        224
+      ],
+      "end": [
+        86,
+        480,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0025.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0025.csv",
+      "n_points": 198,
+      "sha256": "676ae7027401b3c35e4a5de2351ffe5e1d27e7e1573b7668bef9985469401831",
+      "points_sha256": "04eb0b75a725c0b24eecd2d9c8867609bfb9ce072a8d5ad4b5ea55332ff4590a"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 29,
+      "start": [
+        40,
+        448,
+        224
+      ],
+      "end": [
+        86,
+        704,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0029.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0029.csv",
+      "n_points": 167,
+      "sha256": "daf5f21217027e6676627f91a95829606010913a2266303148171c0488e57b44",
+      "points_sha256": "a000087526b7460e7207c32d9433b41ea0bdcbdd8bd2ed5b33b99d98065503e3"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 31,
+      "start": [
+        40,
+        448,
+        672
+      ],
+      "end": [
+        86,
+        704,
+        928
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0031.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0031.csv",
+      "n_points": 64,
+      "sha256": "c662b8015b523ec9974dc48c2fed5a8165fb287265d4660ac39ee824638ec1b4",
+      "points_sha256": "a9cff7edd05d385f6b33be2734d6f14b2a25760fc6324b4316d2a4d73fe9680b"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 33,
+      "start": [
+        40,
+        672,
+        224
+      ],
+      "end": [
+        86,
+        928,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0033.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0033.csv",
+      "n_points": 109,
+      "sha256": "1f9c8c1f71736c9a32b3fb8dbbb1f8e3aba6ba38473030d9647b6bf46e2a85d8",
+      "points_sha256": "2c124b2751bff63ecde1c00fcbcd5451906a29c4f127c746566d67522e50e83a"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 38,
+      "start": [
+        40,
+        896,
+        448
+      ],
+      "end": [
+        86,
+        1152,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0038.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0038.csv",
+      "n_points": 89,
+      "sha256": "372c068e1d63e152ae682b1796b8134db4781c44387b55b854a39f9837cb1ce3",
+      "points_sha256": "ef0e3d7198a009eaff3720191e1e8c107e1d71b953be17907aa9b5ef2b233ad1"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 44,
+      "start": [
+        80,
+        224,
+        0
+      ],
+      "end": [
+        126,
+        480,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0044.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0044.csv",
+      "n_points": 154,
+      "sha256": "98b136cd4c246eea7cb2fc26b7db80c79ef22fdae397ff382f12c08be18fd73d",
+      "points_sha256": "ea077c91588a38dd75b7705f3488de08f378632ddd0595572f603b3f150292cc"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 48,
+      "start": [
+        80,
+        448,
+        0
+      ],
+      "end": [
+        126,
+        704,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0048.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0048.csv",
+      "n_points": 21,
+      "sha256": "6000b3331ca3010f94437070abe8267a586cf2ed8c3ed4b69f48e1d488bcf0fa",
+      "points_sha256": "7cc49ce5ae6af948ba3c73798638032c7dff4c921463ded2b775b84d511d4b34"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 53,
+      "start": [
+        80,
+        672,
+        224
+      ],
+      "end": [
+        126,
+        928,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0053.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0053.csv",
+      "n_points": 141,
+      "sha256": "0895947b0e513d1e1a95ee1a7b9473e0d44d2aec6da0053ccbf017626463819e",
+      "points_sha256": "6dfbe4e96a64b627b4063fc5afe8d479c012a5a331e1cbd48bc89fdf9b57fc3b"
+    },
+    {
+      "sample": "sample_02",
+      "split": "train",
+      "patch": 55,
+      "start": [
+        80,
+        672,
+        672
+      ],
+      "end": [
+        126,
+        928,
+        928
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/patches/sample_02/patch_0055.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/train/train/points_csv/sample_02/patch_0055.csv",
+      "n_points": 285,
+      "sha256": "a42ae4c838bae2e1461d139d4597207ca3f4af778fc774cbad336cd99a8f8f95",
+      "points_sha256": "a605b76dc95e993346e8dd7e8e14e1028dae6a680fbc6cde62f037a2276bbdfa"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 6,
+      "start": [
+        0,
+        448,
+        0
+      ],
+      "end": [
+        46,
+        704,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0006.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0006.csv",
+      "n_points": 45,
+      "sha256": "fac1fecc299b3326350268319a8eafb114fb1e7156fb336b85659f33db13df93",
+      "points_sha256": "b7eb52be27f4422bad0611843c007fe1efaf16dd3a919f38b52fa1bdc02e45b7"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 15,
+      "start": [
+        40,
+        224,
+        0
+      ],
+      "end": [
+        86,
+        480,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0015.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0015.csv",
+      "n_points": 46,
+      "sha256": "05f89141be0800cd30f926501e2fda8dfeba17093be1c94b6a4862b3edc14ad3",
+      "points_sha256": "8ba79a8debe5d82e0f31d0d92e180c4306911ddcfc6842b47292b0a4be1e96f8"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 16,
+      "start": [
+        40,
+        224,
+        224
+      ],
+      "end": [
+        86,
+        480,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0016.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0016.csv",
+      "n_points": 120,
+      "sha256": "58701b74aa9e0af6a02daca8517e77e6ddf7f0596d677f443f2a9dfc1fefecb6",
+      "points_sha256": "b1d9de3d4f98aba9682c6c4c3e60ded33536d8979df2214fa116534312a1ab34"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 19,
+      "start": [
+        40,
+        448,
+        224
+      ],
+      "end": [
+        86,
+        704,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0019.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0019.csv",
+      "n_points": 150,
+      "sha256": "8e791ca2c88adf988084e68dcff9b74a10d78d3c8eeeed21cd1eb1f74c6b862f",
+      "points_sha256": "bcdb2606dcd1f0f8703fe65af395b6e9c4cc0b41aee0de405011b80d0fe0f610"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 20,
+      "start": [
+        40,
+        448,
+        448
+      ],
+      "end": [
+        86,
+        704,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0020.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0020.csv",
+      "n_points": 44,
+      "sha256": "750a5f354b33c88c8df351a3ce72359020e4ee4717d1e9aef21e651d9da97d04",
+      "points_sha256": "1f1cef879cd44a3ba47d4b5938187b22815ec11e4b52c9236fb867232ba057dc"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 29,
+      "start": [
+        80,
+        224,
+        448
+      ],
+      "end": [
+        126,
+        480,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0029.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0029.csv",
+      "n_points": 131,
+      "sha256": "70a63e64071f36201a53f715cca4b768560e969b8dbb91e79753e70c9e8aa743",
+      "points_sha256": "b3ee02d2c7b643cd8a1ae2ca506fbf825a86093ab8ef3aa4aa71054140aca784"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 30,
+      "start": [
+        80,
+        448,
+        0
+      ],
+      "end": [
+        126,
+        704,
+        256
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0030.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0030.csv",
+      "n_points": 179,
+      "sha256": "0cad7b75849f1a1521da693ce28226f22b276dde140ddbdd9550f709b26388ee",
+      "points_sha256": "05b92c88621921fefb127af6400541168f8ae6d5fd5854613262202bbe285fcf"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 47,
+      "start": [
+        120,
+        672,
+        448
+      ],
+      "end": [
+        166,
+        928,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0047.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0047.csv",
+      "n_points": 112,
+      "sha256": "d798d25d210b253e8bea6f2bff258c7c21feefd09f09991ea70e18dc3c009e26",
+      "points_sha256": "54c057669a4d11e647f7b03eab9ca8ade9b0dd4e8a73150cb1084596c2a2bc8b"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 52,
+      "start": [
+        160,
+        224,
+        224
+      ],
+      "end": [
+        206,
+        480,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0052.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0052.csv",
+      "n_points": 204,
+      "sha256": "9617faa32d8cffe9596e7e1fc66b51821159251a3aacd892eeb489dacded5e7d",
+      "points_sha256": "f1d76c43a3bafdda5b2b13c7746d22bc793d3496f50813480b6f8ae50a044626"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 53,
+      "start": [
+        160,
+        224,
+        448
+      ],
+      "end": [
+        206,
+        480,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0053.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0053.csv",
+      "n_points": 103,
+      "sha256": "d5f27c346660559a30f003cf1805b046bc125e24816ad81f74b810fb4defed75",
+      "points_sha256": "75dd5932fa5d273fde696e715fb9d5cef5b8df2d479b901e7622e80fe30ced93"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 59,
+      "start": [
+        160,
+        672,
+        448
+      ],
+      "end": [
+        206,
+        928,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0059.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0059.csv",
+      "n_points": 124,
+      "sha256": "5e34fa6e879f359f3e8c677a5641d05f37ef87f4d1bdfb7e36c39f90672f474c",
+      "points_sha256": "549ccb5e9a0262c58bd4be3b21b7e5a8f5b04c3e68bd968152ce6ce56df864af"
+    },
+    {
+      "sample": "sample_01",
+      "split": "test",
+      "patch": 67,
+      "start": [
+        200,
+        448,
+        224
+      ],
+      "end": [
+        246,
+        704,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_01/patch_0067.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_01/patch_0067.csv",
+      "n_points": 90,
+      "sha256": "47f513101cf9fff57536b3bc8c1dcbbe4f65c8e4c94ef77a38322539c9a6c3a7",
+      "points_sha256": "de1369d682c2ffbebb633882a9bebe6c86756bdbe4a6650c71e1ee7111e844fc"
+    },
+    {
+      "sample": "sample_02",
+      "split": "test",
+      "patch": 10,
+      "start": [
+        0,
+        448,
+        448
+      ],
+      "end": [
+        46,
+        704,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_02/patch_0010.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_02/patch_0010.csv",
+      "n_points": 67,
+      "sha256": "2100ab5d0a552e36e8352d899254fb0edad366392435b6d9a25d847660c289d5",
+      "points_sha256": "30c8bedf7d206ffd86a935d0c84d32bd43f217d26e29024c216dcf5ed5ed1e16"
+    },
+    {
+      "sample": "sample_02",
+      "split": "test",
+      "patch": 26,
+      "start": [
+        40,
+        224,
+        448
+      ],
+      "end": [
+        86,
+        480,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_02/patch_0026.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_02/patch_0026.csv",
+      "n_points": 186,
+      "sha256": "cf16511e840c8c0039b66dcfc5fc57ac28bf7007a7b13e948e0f4aebac082d86",
+      "points_sha256": "f6c205a2db3460db7be8f100be6dddaae4ba81ad27cce14d73ae7accefd1b94c"
+    },
+    {
+      "sample": "sample_02",
+      "split": "test",
+      "patch": 45,
+      "start": [
+        80,
+        224,
+        224
+      ],
+      "end": [
+        126,
+        480,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_02/patch_0045.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_02/patch_0045.csv",
+      "n_points": 273,
+      "sha256": "88cc4b6d8952d0c2d764ac5dc3318bc7bddde5c7f5af42da246a56d15d393a44",
+      "points_sha256": "d906761b9abef27d608605778f4d2d218166fd84cc868456dae8d2b9098f09c4"
+    },
+    {
+      "sample": "sample_02",
+      "split": "test",
+      "patch": 49,
+      "start": [
+        80,
+        448,
+        224
+      ],
+      "end": [
+        126,
+        704,
+        480
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_02/patch_0049.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_02/patch_0049.csv",
+      "n_points": 186,
+      "sha256": "3800913e6e314bd2ae9ec668d1011e95de72614bccfae9ae8bd335ebe312f788",
+      "points_sha256": "dd02a8560a31bd24d96567d819b5aa16453deeb83dc6d37518e08ba7900e45bb"
+    },
+    {
+      "sample": "sample_02",
+      "split": "test",
+      "patch": 51,
+      "start": [
+        80,
+        448,
+        672
+      ],
+      "end": [
+        126,
+        704,
+        928
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_02/patch_0051.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_02/patch_0051.csv",
+      "n_points": 129,
+      "sha256": "5aa4cf2cc5274d9d2a91e52949448ff9460f7dd0fd4e384efb0ce663d9f793b9",
+      "points_sha256": "818c976a8010dc14538012e94b9bd8602abd5c326ffc3a408c060d609dea3b4f"
+    },
+    {
+      "sample": "sample_02",
+      "split": "test",
+      "patch": 58,
+      "start": [
+        80,
+        896,
+        448
+      ],
+      "end": [
+        126,
+        1152,
+        704
+      ],
+      "image": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/patches/sample_02/patch_0058.tif",
+      "points": "/mnt/huawei_deepcad/benchmark/ood/ood_detection/datasets/Spheroid_LSFM/extracted/dataset_upload/SH-SY5Y/test/test/points_csv/sample_02/patch_0058.csv",
+      "n_points": 241,
+      "sha256": "4d4a2c1577fe5484ad90b8306d392167f7e23fd361c2eac38c9112afac15a93e",
+      "points_sha256": "ce6c5b923767a3c96fe0fbc02bf5eb7b9d2bfca23e1fca830c0e4dc1557fbdfe"
+    }
+  ],
+  "splits": {
+    "train": [
+      2,
+      28,
+      13,
+      10,
+      26,
+      24,
+      27,
+      11,
+      17,
+      22,
+      5,
+      16,
+      8,
+      14,
+      23,
+      20,
+      1,
+      29,
+      6,
+      4,
+      18,
+      19,
+      9,
+      7
+    ],
+    "val": [
+      25,
+      3,
+      0,
+      21,
+      15,
+      12
+    ],
+    "test": [
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47
+    ]
+  },
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "epochs": 150,
+  "patience": 10,
+  "lr": 0.0001,
+  "batch_size": 4,
+  "microbatch": 1,
+  "selection": "minimum validation MSE; earliest tie; threshold selected on validation F1 only",
+  "thresholds": [
+    0.05,
+    0.1,
+    0.15,
+    0.2,
+    0.25,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9
+  ],
+  "target_sigma_um": 2.0,
+  "head": "Conv3d C->32 at native grid; trilinear64; Conv3d32->16; trilinear128; Conv3d16->8->1; sigmoid; trilinear native256",
+  "loss": "unweighted MSE to max-composed isotropic Gaussian centroids sigma2um",
+  "augmentation": "none",
+  "optimizer": "Adam lr1e-4 betas0.9,0.999 eps1e-8 wd0",
+  "preprocessing": "Released normalized intensity clipped0..1, each Z plane replicated RGB, no crop/rescale, ImageNet norm for BioDINO; final spatial layer; published FM adapter for FM",
+  "matching_um": 5.0,
+  "border_um": 5.0,
+  "nms_um": 5.0,
+  "official_split": true,
+  "spheroid_disjoint": false,
+  "split_note": "Author 30 training /18 test members unchanged; fixed seed0 24/6 train/val for every model and head seed. Shared spheroids and overlapping pixels retained by user authorization.",
+  "method_note": "New shared frozen feature probe, not author PAC-MAP UNet training; no LN18 weak pretraining; five downstream seeds, not backbone repeats",
+  "sources": [
+    "https://zenodo.org/records/11636385",
+    "https://github.com/DeVosLab/PAC-MAP/blob/main/configs/SH-SY5Y.py"
+  ]
+}

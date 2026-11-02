@@ -1,0 +1,8 @@
+{
+  "expected_counts": {
+    "train": 3469,
+    "val": 494,
+    "test": 1018
+  },
+  "template_invocation": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/unified_paper/acceptance_cells/conic/official-baseline-fold0-nested-v1/source_template.json"
+}

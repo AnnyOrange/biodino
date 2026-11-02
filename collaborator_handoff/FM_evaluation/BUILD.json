@@ -1,0 +1,7 @@
+{
+  "base_github_commit": "1b1c9b9b1f4ad9ba16a7fbfe897083086c01e476",
+  "scope": "GitHub evaluation delivery; training entry/config unchanged from base commit",
+  "segmentation_cells": 9,
+  "jobs": 221,
+  "runtime_install": "Pinned py-ctcmetrics source and imagecodecs wheel installed by bootstrap_runtime.py"
+}

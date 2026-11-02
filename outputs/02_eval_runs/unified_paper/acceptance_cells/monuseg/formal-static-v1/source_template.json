@@ -1,0 +1,6 @@
+{
+  "template_source_hashes": {
+    "/mnt/huawei_deepcad/benchmark/segmentation/monuseg/extracted/monuseg2018_train30_extra7val_test14_manifest.json": "52dd206e30f91238666b80e5b99501bb3111f79129c8e6400d91a2895a3632ec"
+  },
+  "original_template_sha256": "997a678ac696e2123064bbc9ec9a331755efce1639441771237cd3fdecebe56f"
+}

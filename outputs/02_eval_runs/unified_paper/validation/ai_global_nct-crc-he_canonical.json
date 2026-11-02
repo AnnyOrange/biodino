@@ -1,0 +1,289 @@
+{
+  "dataset": "nct-crc-he",
+  "task": "classification",
+  "counts": {
+    "train": 100000,
+    "test": 7180
+  },
+  "membership_sha256": "aff9d173c226ca3fd9f443a671fc8cf59332acb815b23b2adea4c2f928329bc6",
+  "canonical_source_files": {
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00000-of-00031-9d9ce51d852fe548.parquet": "6cfff2daf97ff57bbfe20bf64348e00428f4d2b7f0c1082b0e890cb7626b88ee",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00001-of-00031-86f133db9e34167a.parquet": "a28681f5d3b261524fb29a61666a0d3d5d484a3061f68ad9457e23cf63162c87",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00002-of-00031-634e2be7e45474a6.parquet": "9d72fc50b8d703b6331bc14dc9d3e1c9305d186beea887e93ab4894723139f65",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00003-of-00031-2e9610e9209eee4b.parquet": "9966f009c33565913d2914ec346e1593eb93e92e6357c6a032502b9bc9f96239",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00004-of-00031-db39214df52f61bc.parquet": "499767b0dee4eb2f40f01784b2b49ff939d3aa0428d75c8d24120a0d4c5cda1b",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00005-of-00031-adfe9fa7a42c989c.parquet": "c473579e8dcd26425ed50416d3a535d78b679a08d7e94e4141f44e50a0bf6f29",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00006-of-00031-03908c6f639647ad.parquet": "bb2e57aa8bbb399860390f2eaf53ab770f925d639c183555818402d18635ec1e",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00007-of-00031-17fc07fb43fa8ea6.parquet": "ec58b5f220c6bfeb8a902416eee10d6d6b759cb11db4bfcdee127f9bd8f88a5c",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00008-of-00031-b2c2ae0570bf57eb.parquet": "fadbb4ed881701634c22d6e89967457d637a37bf52ac453d6f3e12766d17d516",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00009-of-00031-ffc6e162d7190297.parquet": "2afe607fdde7f9351f19b6368b113f4766884a7ef480718375b05b72b86b0523",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00010-of-00031-9cf695d560fd088f.parquet": "57ea3d8d5deba30433e014febad2961610c1c568030271e51067fd85586278ad",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00011-of-00031-c632980092dc4ac3.parquet": "02903e9e866a61dd0aa40ba875e92512c6030682927f46bef2c44872ce9f9a87",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00012-of-00031-90cfe58578a7b326.parquet": "089212c6ab31ec0aff7666be55011a0dab681cd5171a915eefa3d71810499949",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00013-of-00031-2dc8d8ed440658fd.parquet": "f3ba07b6515b8c86ee2320085992d873325783a9d5b4f286ad996789eedba403",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00014-of-00031-fdea43331d60021e.parquet": "ec994b4deedb581a1744e9d1dd3622c57249885e7c3a3f4c1a9278a5d1871b49",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00015-of-00031-6bc6386ded7e1bc5.parquet": "988f7f8263a29ab4ea383db784d7bd8bc396da7bb8107b86a8ae926d127196ee",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00016-of-00031-c8ecb98493f7bf48.parquet": "ad2f5bbcac79ed9f43cfecc4797957c150d336b0b5c5c0c9450b550a71a004ed",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00017-of-00031-185be2828f60b3a7.parquet": "110a95ced6bb1eefff9503bbc851e2b4225ea0938b7695134539277c8ed367c6",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00018-of-00031-20db16691204a5c6.parquet": "1410bb33bc350399edc9843f0164a902e729ebabc1e394212e05be129db22198",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00019-of-00031-9be5fae292c61245.parquet": "4bc55936817f54e3e4bba87b8789e4d7918d02cad0f153093feb69a3bcf21e3e",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00020-of-00031-cf3901477d5683dd.parquet": "96d4f40bbe5d9201a36332c42a0b34d25f0f0276a125b79833da58f8f4352ff1",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00021-of-00031-01616619139ce6c7.parquet": "d44ebd7cba95311abd47a4226af824862058b98a34542808a740b69918477f24",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00022-of-00031-f75d364152127a0d.parquet": "eaff015ceb18068e29cfc8d40243d328d0a14209af3375b9ea08ccee3af0825b",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00023-of-00031-afa1144530f0b555.parquet": "daeeeaa43a5ebff6ce12df44e7a483c9fcedc84a002c7ca796d66c21f10f484c",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00024-of-00031-3118769ff888d2ba.parquet": "5f70796cecf4623f9ce3b64bfb8dc20ddeff86fcb0e8da44a812ed8a2b50ed1f",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00025-of-00031-84cf8b96a9fd0393.parquet": "f0baf84dcb29557bfbd564698086364aa0984743ffde7850d28a02b8ea33d91e",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00026-of-00031-99cb219472c1a683.parquet": "dc17f3051982d94db3a92c627cd9635508ddb0ebd392ff59fd68a0afdc551b32",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00027-of-00031-d608712dc7e39f0e.parquet": "7ec489ecffecda9e82f42635f12efe86858039f3d2aa0bc07ebced1321636bb6",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00028-of-00031-2196d4cd249a34ed.parquet": "0c47ddf352c13f99438b63fdfa2f54529a1eb9107fcd9d9e1f4f7390d67adc1b",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00029-of-00031-69f644f3d04b5627.parquet": "8a898f21337c5a69bc1aefbbff1bab77fb5315732063bc01e5c11b65cc1b063f",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00030-of-00031-32b2c2a836ee093d.parquet": "2fa28cd326adbc21d30718ad25f4376ec6037c117608e1be896589d343370647",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/owkin_hf_parquet/data/crc_val_he_7k-00000-of-00003-a44b36e006c0b9b1.parquet": "b5a43c55c528bceb0efe6147ccb62425083c1c97c0ee36dad83bfa1f6cd42a0c",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/owkin_hf_parquet/data/crc_val_he_7k-00001-of-00003-99f6a50aeb3e1a12.parquet": "270d04a6ed81dfac10e1e51dc4040fee75d7ef31c25bf9dcd1835b1babf5bcef",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/owkin_hf_parquet/data/crc_val_he_7k-00002-of-00003-3d70705e64186eb5.parquet": "8cc8a7ed0997b0b5b2316a2e6f8f76fb293ef2d2d944a4a33f7fc74284f534ff"
+  },
+  "source_fingerprints": {
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00000-of-00031-9d9ce51d852fe548.parquet": "6cfff2daf97ff57bbfe20bf64348e00428f4d2b7f0c1082b0e890cb7626b88ee",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00001-of-00031-86f133db9e34167a.parquet": "a28681f5d3b261524fb29a61666a0d3d5d484a3061f68ad9457e23cf63162c87",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00002-of-00031-634e2be7e45474a6.parquet": "9d72fc50b8d703b6331bc14dc9d3e1c9305d186beea887e93ab4894723139f65",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00003-of-00031-2e9610e9209eee4b.parquet": "9966f009c33565913d2914ec346e1593eb93e92e6357c6a032502b9bc9f96239",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00004-of-00031-db39214df52f61bc.parquet": "499767b0dee4eb2f40f01784b2b49ff939d3aa0428d75c8d24120a0d4c5cda1b",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00005-of-00031-adfe9fa7a42c989c.parquet": "c473579e8dcd26425ed50416d3a535d78b679a08d7e94e4141f44e50a0bf6f29",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00006-of-00031-03908c6f639647ad.parquet": "bb2e57aa8bbb399860390f2eaf53ab770f925d639c183555818402d18635ec1e",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00007-of-00031-17fc07fb43fa8ea6.parquet": "ec58b5f220c6bfeb8a902416eee10d6d6b759cb11db4bfcdee127f9bd8f88a5c",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00008-of-00031-b2c2ae0570bf57eb.parquet": "fadbb4ed881701634c22d6e89967457d637a37bf52ac453d6f3e12766d17d516",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00009-of-00031-ffc6e162d7190297.parquet": "2afe607fdde7f9351f19b6368b113f4766884a7ef480718375b05b72b86b0523",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00010-of-00031-9cf695d560fd088f.parquet": "57ea3d8d5deba30433e014febad2961610c1c568030271e51067fd85586278ad",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00011-of-00031-c632980092dc4ac3.parquet": "02903e9e866a61dd0aa40ba875e92512c6030682927f46bef2c44872ce9f9a87",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00012-of-00031-90cfe58578a7b326.parquet": "089212c6ab31ec0aff7666be55011a0dab681cd5171a915eefa3d71810499949",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00013-of-00031-2dc8d8ed440658fd.parquet": "f3ba07b6515b8c86ee2320085992d873325783a9d5b4f286ad996789eedba403",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00014-of-00031-fdea43331d60021e.parquet": "ec994b4deedb581a1744e9d1dd3622c57249885e7c3a3f4c1a9278a5d1871b49",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00015-of-00031-6bc6386ded7e1bc5.parquet": "988f7f8263a29ab4ea383db784d7bd8bc396da7bb8107b86a8ae926d127196ee",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00016-of-00031-c8ecb98493f7bf48.parquet": "ad2f5bbcac79ed9f43cfecc4797957c150d336b0b5c5c0c9450b550a71a004ed",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00017-of-00031-185be2828f60b3a7.parquet": "110a95ced6bb1eefff9503bbc851e2b4225ea0938b7695134539277c8ed367c6",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00018-of-00031-20db16691204a5c6.parquet": "1410bb33bc350399edc9843f0164a902e729ebabc1e394212e05be129db22198",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00019-of-00031-9be5fae292c61245.parquet": "4bc55936817f54e3e4bba87b8789e4d7918d02cad0f153093feb69a3bcf21e3e",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00020-of-00031-cf3901477d5683dd.parquet": "96d4f40bbe5d9201a36332c42a0b34d25f0f0276a125b79833da58f8f4352ff1",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00021-of-00031-01616619139ce6c7.parquet": "d44ebd7cba95311abd47a4226af824862058b98a34542808a740b69918477f24",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00022-of-00031-f75d364152127a0d.parquet": "eaff015ceb18068e29cfc8d40243d328d0a14209af3375b9ea08ccee3af0825b",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00023-of-00031-afa1144530f0b555.parquet": "daeeeaa43a5ebff6ce12df44e7a483c9fcedc84a002c7ca796d66c21f10f484c",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00024-of-00031-3118769ff888d2ba.parquet": "5f70796cecf4623f9ce3b64bfb8dc20ddeff86fcb0e8da44a812ed8a2b50ed1f",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00025-of-00031-84cf8b96a9fd0393.parquet": "f0baf84dcb29557bfbd564698086364aa0984743ffde7850d28a02b8ea33d91e",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00026-of-00031-99cb219472c1a683.parquet": "dc17f3051982d94db3a92c627cd9635508ddb0ebd392ff59fd68a0afdc551b32",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00027-of-00031-d608712dc7e39f0e.parquet": "7ec489ecffecda9e82f42635f12efe86858039f3d2aa0bc07ebced1321636bb6",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00028-of-00031-2196d4cd249a34ed.parquet": "0c47ddf352c13f99438b63fdfa2f54529a1eb9107fcd9d9e1f4f7390d67adc1b",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00029-of-00031-69f644f3d04b5627.parquet": "8a898f21337c5a69bc1aefbbff1bab77fb5315732063bc01e5c11b65cc1b063f",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00030-of-00031-32b2c2a836ee093d.parquet": "2fa28cd326adbc21d30718ad25f4376ec6037c117608e1be896589d343370647",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/owkin_hf_parquet/data/crc_val_he_7k-00000-of-00003-a44b36e006c0b9b1.parquet": "b5a43c55c528bceb0efe6147ccb62425083c1c97c0ee36dad83bfa1f6cd42a0c",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/owkin_hf_parquet/data/crc_val_he_7k-00001-of-00003-99f6a50aeb3e1a12.parquet": "270d04a6ed81dfac10e1e51dc4040fee75d7ef31c25bf9dcd1835b1babf5bcef",
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/owkin_hf_parquet/data/crc_val_he_7k-00002-of-00003-3d70705e64186eb5.parquet": "8cc8a7ed0997b0b5b2316a2e6f8f76fb293ef2d2d944a4a33f7fc74284f534ff"
+  },
+  "source_stats": {
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00000-of-00031-9d9ce51d852fe548.parquet": {
+      "size": 488362800,
+      "mtime_ns": 1779364673810794000,
+      "ctime_ns": 1791861737700676300,
+      "inode": 10311330
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00001-of-00031-86f133db9e34167a.parquet": {
+      "size": 488275440,
+      "mtime_ns": 1779365480189800000,
+      "ctime_ns": 1791861737620629501,
+      "inode": 10319842
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00002-of-00031-634e2be7e45474a6.parquet": {
+      "size": 488980700,
+      "mtime_ns": 1779366060998159000,
+      "ctime_ns": 1791861737650213637,
+      "inode": 10275874
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00003-of-00031-2e9610e9209eee4b.parquet": {
+      "size": 489887790,
+      "mtime_ns": 1779366714546631000,
+      "ctime_ns": 1791861737663741743,
+      "inode": 10275875
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00004-of-00031-db39214df52f61bc.parquet": {
+      "size": 490850315,
+      "mtime_ns": 1779367404814172000,
+      "ctime_ns": 1791861737669289959,
+      "inode": 10323231
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00005-of-00031-adfe9fa7a42c989c.parquet": {
+      "size": 490890967,
+      "mtime_ns": 1779367987120450000,
+      "ctime_ns": 1791861737536716930,
+      "inode": 10323236
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00006-of-00031-03908c6f639647ad.parquet": {
+      "size": 452400784,
+      "mtime_ns": 1779368524063143000,
+      "ctime_ns": 1791861737672604217,
+      "inode": 10275880
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00007-of-00031-17fc07fb43fa8ea6.parquet": {
+      "size": 288709673,
+      "mtime_ns": 1779368867200037000,
+      "ctime_ns": 1791861737678843492,
+      "inode": 10319852
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00008-of-00031-b2c2ae0570bf57eb.parquet": {
+      "size": 288956134,
+      "mtime_ns": 1779369210526837000,
+      "ctime_ns": 1791861737632995100,
+      "inode": 10311342
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00009-of-00031-ffc6e162d7190297.parquet": {
+      "size": 290097093,
+      "mtime_ns": 1779369555500867000,
+      "ctime_ns": 1791861737636685620,
+      "inode": 10311344
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00010-of-00031-9cf695d560fd088f.parquet": {
+      "size": 484028406,
+      "mtime_ns": 1779370130745157000,
+      "ctime_ns": 1791861737641146853,
+      "inode": 10275891
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00011-of-00031-c632980092dc4ac3.parquet": {
+      "size": 490533765,
+      "mtime_ns": 1779370713664439000,
+      "ctime_ns": 1791861737549150945,
+      "inode": 10275894
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00012-of-00031-90cfe58578a7b326.parquet": {
+      "size": 490726970,
+      "mtime_ns": 1779423116167598000,
+      "ctime_ns": 1791861737704998786,
+      "inode": 10323282
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00013-of-00031-2dc8d8ed440658fd.parquet": {
+      "size": 490381915,
+      "mtime_ns": 1779423815262001000,
+      "ctime_ns": 1791861737708336087,
+      "inode": 10319914
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00014-of-00031-fdea43331d60021e.parquet": {
+      "size": 490314657,
+      "mtime_ns": 1779424423840519000,
+      "ctime_ns": 1791861737654774705,
+      "inode": 10323289
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00015-of-00031-6bc6386ded7e1bc5.parquet": {
+      "size": 489971472,
+      "mtime_ns": 1779425082905198000,
+      "ctime_ns": 1791861737600626249,
+      "inode": 10280433
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00016-of-00031-c8ecb98493f7bf48.parquet": {
+      "size": 489068347,
+      "mtime_ns": 1779425787324743000,
+      "ctime_ns": 1791861737694386626,
+      "inode": 10275932
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00017-of-00031-185be2828f60b3a7.parquet": {
+      "size": 488841168,
+      "mtime_ns": 1779426366878249000,
+      "ctime_ns": 1791861737615304960,
+      "inode": 10323290
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00018-of-00031-20db16691204a5c6.parquet": {
+      "size": 488843043,
+      "mtime_ns": 1779426946384952000,
+      "ctime_ns": 1791861737557256620,
+      "inode": 10280445
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00019-of-00031-9be5fae292c61245.parquet": {
+      "size": 488805395,
+      "mtime_ns": 1779427767572712000,
+      "ctime_ns": 1791861737561868810,
+      "inode": 10275937
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00020-of-00031-cf3901477d5683dd.parquet": {
+      "size": 407619046,
+      "mtime_ns": 1779430598417452000,
+      "ctime_ns": 1791861737606967659,
+      "inode": 10275941
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00021-of-00031-01616619139ce6c7.parquet": {
+      "size": 134915637,
+      "mtime_ns": 1779430759121061000,
+      "ctime_ns": 1791861737567976913,
+      "inode": 10275942
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00022-of-00031-f75d364152127a0d.parquet": {
+      "size": 130460627,
+      "mtime_ns": 1779430914017526000,
+      "ctime_ns": 1791861737683417929,
+      "inode": 10319949
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00023-of-00031-afa1144530f0b555.parquet": {
+      "size": 134084297,
+      "mtime_ns": 1779431076073617000,
+      "ctime_ns": 1791861737576600216,
+      "inode": 10275944
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00024-of-00031-3118769ff888d2ba.parquet": {
+      "size": 471897900,
+      "mtime_ns": 1779431636591668000,
+      "ctime_ns": 1791861737688124382,
+      "inode": 10323308
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00025-of-00031-84cf8b96a9fd0393.parquet": {
+      "size": 487896803,
+      "mtime_ns": 1779432294340107000,
+      "ctime_ns": 1791861737581950471,
+      "inode": 10319953
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00026-of-00031-99cb219472c1a683.parquet": {
+      "size": 487059988,
+      "mtime_ns": 1779432890436544000,
+      "ctime_ns": 1791861737611179287,
+      "inode": 10319960
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00027-of-00031-d608712dc7e39f0e.parquet": {
+      "size": 484394489,
+      "mtime_ns": 1779433550554435000,
+      "ctime_ns": 1791861737659416261,
+      "inode": 10275973
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00028-of-00031-2196d4cd249a34ed.parquet": {
+      "size": 484000389,
+      "mtime_ns": 1779434128500004000,
+      "ctime_ns": 1791861737592111480,
+      "inode": 10311421
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00029-of-00031-69f644f3d04b5627.parquet": {
+      "size": 483927481,
+      "mtime_ns": 1779434704928253000,
+      "ctime_ns": 1791861737644707959,
+      "inode": 10319987
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/1aurent_hf_parquet/data/NCT_CRC_HE_100K_NONORM-00030-of-00031-32b2c2a836ee093d.parquet": {
+      "size": 483850223,
+      "mtime_ns": 1779435523541983000,
+      "ctime_ns": 1791861737714689104,
+      "inode": 10275982
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/owkin_hf_parquet/data/crc_val_he_7k-00000-of-00003-a44b36e006c0b9b1.parquet": {
+      "size": 318480632,
+      "mtime_ns": 1779360792158061000,
+      "ctime_ns": 1791861737727805780,
+      "inode": 10302035
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/owkin_hf_parquet/data/crc_val_he_7k-00001-of-00003-99f6a50aeb3e1a12.parquet": {
+      "size": 314615484,
+      "mtime_ns": 1779361853348050000,
+      "ctime_ns": 1791861737739473546,
+      "inode": 10314635
+    },
+    "/mnt/huawei_deepcad/benchmark/Retrieval_Clustering/NCT-CRC-HE/owkin_hf_parquet/data/crc_val_he_7k-00002-of-00003-3d70705e64186eb5.parquet": {
+      "size": 315445989,
+      "mtime_ns": 1779362904829264000,
+      "ctime_ns": 1791861737744792058,
+      "inode": 10314636
+    }
+  },
+  "source_order": {},
+  "group_split_preserved": true
+}

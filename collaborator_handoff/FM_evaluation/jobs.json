@@ -1,0 +1,3616 @@
+[
+  {
+    "task": "regression",
+    "dataset": "bbbc013",
+    "key": "biodino_7b__global__bbbc013",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc013"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/bbbc013/component_result.json"
+  },
+  {
+    "task": "regression",
+    "dataset": "bbbc005",
+    "key": "biodino_7b__global__bbbc005",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc005"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/bbbc005/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "bbbc048-cellcycle",
+    "key": "biodino_7b__global__bbbc048-cellcycle",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc048-cellcycle"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/bbbc048-cellcycle/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "cyclops-protein-loc",
+    "key": "biodino_7b__global__cyclops-protein-loc",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "cyclops-protein-loc"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/cyclops-protein-loc/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "midog25-atypical",
+    "key": "biodino_7b__global__midog25-atypical",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "midog25-atypical"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/midog25-atypical/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "bloodmnist",
+    "key": "biodino_7b__global__bloodmnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bloodmnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/bloodmnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "pathmnist",
+    "key": "biodino_7b__global__pathmnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "pathmnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/pathmnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "tissuemnist",
+    "key": "biodino_7b__global__tissuemnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "tissuemnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/tissuemnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "breastmnist",
+    "key": "biodino_7b__global__breastmnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "breastmnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/breastmnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "organamnist",
+    "key": "biodino_7b__global__organamnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "organamnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/organamnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "organcmnist",
+    "key": "biodino_7b__global__organcmnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "organcmnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/organcmnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "organsmnist",
+    "key": "biodino_7b__global__organsmnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "organsmnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/organsmnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "dermamnist",
+    "key": "biodino_7b__global__dermamnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "dermamnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/dermamnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "octmnist",
+    "key": "biodino_7b__global__octmnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "octmnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/octmnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "pneumoniamnist",
+    "key": "biodino_7b__global__pneumoniamnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "pneumoniamnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/pneumoniamnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "retinamnist",
+    "key": "biodino_7b__global__retinamnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "retinamnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/retinamnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "chestmnist",
+    "key": "biodino_7b__global__chestmnist",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "chestmnist"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/chestmnist/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "pcam",
+    "key": "biodino_7b__global__pcam",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "pcam"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/pcam/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "nct-crc-he",
+    "key": "biodino_7b__global__nct-crc-he",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "nct-crc-he"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/nct-crc-he/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "chammi-allen-task1",
+    "key": "biodino_7b__global__chammi-allen-task1",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "chammi-allen-task1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/chammi-allen-task1/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "chammi-cp-task1",
+    "key": "biodino_7b__global__chammi-cp-task1",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "chammi-cp-task1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/chammi-cp-task1/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "chammi-hpa-task1",
+    "key": "biodino_7b__global__chammi-hpa-task1",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "chammi-hpa-task1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/chammi-hpa-task1/component_result.json"
+  },
+  {
+    "task": "regression",
+    "dataset": "conic-cell-count",
+    "key": "biodino_7b__global__conic-cell-count",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "conic-cell-count"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/conic-cell-count/component_result.json"
+  },
+  {
+    "task": "regression",
+    "dataset": "livecell-cell-count",
+    "key": "biodino_7b__global__livecell-cell-count",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "livecell-cell-count"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/livecell-cell-count/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "chammi-allen-task2",
+    "key": "biodino_7b__global__chammi-allen-task2",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "chammi-allen-task2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/chammi-allen-task2/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "chammi-cp-task2",
+    "key": "biodino_7b__global__chammi-cp-task2",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "chammi-cp-task2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/chammi-cp-task2/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "chammi-cp-task3",
+    "key": "biodino_7b__global__chammi-cp-task3",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "chammi-cp-task3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/chammi-cp-task3/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "chammi-hpa-task2",
+    "key": "biodino_7b__global__chammi-hpa-task2",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "chammi-hpa-task2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/chammi-hpa-task2/component_result.json"
+  },
+  {
+    "task": "regression",
+    "dataset": "allen-cell-volume",
+    "key": "biodino_7b__global__allen-cell-volume",
+    "entrypoint": "run_unified_paper_global.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "allen-cell-volume"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/allen-cell-volume/component_result.json"
+  },
+  {
+    "task": "retrieval_clustering",
+    "dataset": "nct-crc-he-1k",
+    "seed": "bundled0to4",
+    "fold": "fixed",
+    "key": "biodino_7b__retrieval_clustering__nct-crc-he-1k",
+    "entrypoint": "run_unified_paper_retrieval.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "nct-crc-he-1k"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/retrieval_clustering/nct-crc-he-1k/component_result.json"
+  },
+  {
+    "task": "retrieval_clustering",
+    "dataset": "crc-val-he-7k",
+    "seed": "bundled0to4",
+    "fold": "fixed",
+    "key": "biodino_7b__retrieval_clustering__crc-val-he-7k",
+    "entrypoint": "run_unified_paper_retrieval.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "crc-val-he-7k"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/retrieval_clustering/crc-val-he-7k/component_result.json"
+  },
+  {
+    "task": "retrieval_clustering",
+    "dataset": "nct-crc-he-100",
+    "seed": "bundled0to4",
+    "fold": "fixed",
+    "key": "biodino_7b__retrieval_clustering__nct-crc-he-100",
+    "entrypoint": "run_unified_paper_retrieval.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "nct-crc-he-100"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/retrieval_clustering/nct-crc-he-100/component_result.json"
+  },
+  {
+    "task": "retrieval_clustering",
+    "dataset": "lc25000",
+    "seed": "bundled0to4",
+    "fold": "fixed",
+    "key": "biodino_7b__retrieval_clustering__lc25000",
+    "entrypoint": "run_unified_paper_retrieval.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "lc25000"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/retrieval_clustering/lc25000/component_result.json"
+  },
+  {
+    "task": "retrieval_clustering",
+    "dataset": "hpa-subcellular",
+    "seed": "bundled0to4",
+    "fold": "fixed",
+    "key": "biodino_7b__retrieval_clustering__hpa-subcellular",
+    "entrypoint": "run_unified_paper_hpa_retrieval.py",
+    "args": [
+      "--model",
+      "biodino_7b"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/retrieval_clustering/hpa-subcellular/component_result.json"
+  },
+  {
+    "task": "retrieval_clustering",
+    "dataset": "rxrx1-cross",
+    "seed": "bundled0to4",
+    "fold": "fixed",
+    "key": "biodino_7b__retrieval_clustering__rxrx1-cross",
+    "entrypoint": "run_unified_paper_rxrx1.py",
+    "args": [
+      "--model",
+      "biodino_7b"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/retrieval_clustering/rxrx1-cross/component_result.json"
+  },
+  {
+    "task": "retrieval_clustering",
+    "dataset": "rxrx3-core",
+    "seed": "bundled0to4",
+    "fold": "fixed",
+    "key": "biodino_7b__retrieval_clustering__rxrx3-core",
+    "entrypoint": "run_unified_paper_rxrx3.py",
+    "args": [
+      "--model",
+      "biodino_7b"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/retrieval_clustering/rxrx3-core/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "lc25000",
+    "key": "biodino_7b__global__lc25000",
+    "entrypoint": "run_unified_paper_lc25000_grouped.py",
+    "args": [
+      "--model",
+      "biodino_7b"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/global/lc25000/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "bbbc038",
+    "seed": 0,
+    "key": "biodino_7b__detection_proxy__bbbc038__seed0",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc038",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/bbbc038/seed0/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "bbbc038",
+    "seed": 1,
+    "key": "biodino_7b__detection_proxy__bbbc038__seed1",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc038",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/bbbc038/seed1/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "bbbc038",
+    "seed": 2,
+    "key": "biodino_7b__detection_proxy__bbbc038__seed2",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc038",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/bbbc038/seed2/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "bbbc038",
+    "seed": 3,
+    "key": "biodino_7b__detection_proxy__bbbc038__seed3",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc038",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/bbbc038/seed3/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "bbbc038",
+    "seed": 4,
+    "key": "biodino_7b__detection_proxy__bbbc038__seed4",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc038",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/bbbc038/seed4/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "conic",
+    "seed": 0,
+    "fold": "fixed",
+    "key": "biodino_7b__detection_proxy__conic__seed0",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "conic",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/conic/seed0/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "conic",
+    "seed": 1,
+    "fold": "fixed",
+    "key": "biodino_7b__detection_proxy__conic__seed1",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "conic",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/conic/seed1/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "conic",
+    "seed": 2,
+    "fold": "fixed",
+    "key": "biodino_7b__detection_proxy__conic__seed2",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "conic",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/conic/seed2/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "conic",
+    "seed": 3,
+    "fold": "fixed",
+    "key": "biodino_7b__detection_proxy__conic__seed3",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "conic",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/conic/seed3/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "conic",
+    "seed": 4,
+    "fold": "fixed",
+    "key": "biodino_7b__detection_proxy__conic__seed4",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "conic",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/conic/seed4/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "livecell",
+    "seed": 0,
+    "fold": "fixed",
+    "key": "biodino_7b__detection_proxy__livecell__seed0",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "livecell",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/livecell/seed0/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "livecell",
+    "seed": 1,
+    "fold": "fixed",
+    "key": "biodino_7b__detection_proxy__livecell__seed1",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "livecell",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/livecell/seed1/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "livecell",
+    "seed": 2,
+    "fold": "fixed",
+    "key": "biodino_7b__detection_proxy__livecell__seed2",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "livecell",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/livecell/seed2/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "livecell",
+    "seed": 3,
+    "fold": "fixed",
+    "key": "biodino_7b__detection_proxy__livecell__seed3",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "livecell",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/livecell/seed3/component_result.json"
+  },
+  {
+    "task": "detection_proxy",
+    "dataset": "livecell",
+    "seed": 4,
+    "fold": "fixed",
+    "key": "biodino_7b__detection_proxy__livecell__seed4",
+    "entrypoint": "run_unified_paper_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "livecell",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/detection_proxy/livecell/seed4/component_result.json"
+  },
+  {
+    "task": "instance_segmentation",
+    "dataset": "bbbc038-official",
+    "seed": 0,
+    "fold": "stage1+stage2",
+    "key": "biodino_7b__bbbc038_official__seed0",
+    "entrypoint": "run_unified_paper_bbbc038_official.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/bbbc038_official/seed0/component_result.json"
+  },
+  {
+    "task": "instance_segmentation",
+    "dataset": "bbbc038-official",
+    "seed": 1,
+    "fold": "stage1+stage2",
+    "key": "biodino_7b__bbbc038_official__seed1",
+    "entrypoint": "run_unified_paper_bbbc038_official.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/bbbc038_official/seed1/component_result.json"
+  },
+  {
+    "task": "instance_segmentation",
+    "dataset": "bbbc038-official",
+    "seed": 2,
+    "fold": "stage1+stage2",
+    "key": "biodino_7b__bbbc038_official__seed2",
+    "entrypoint": "run_unified_paper_bbbc038_official.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/bbbc038_official/seed2/component_result.json"
+  },
+  {
+    "task": "instance_segmentation",
+    "dataset": "bbbc038-official",
+    "seed": 3,
+    "fold": "stage1+stage2",
+    "key": "biodino_7b__bbbc038_official__seed3",
+    "entrypoint": "run_unified_paper_bbbc038_official.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/bbbc038_official/seed3/component_result.json"
+  },
+  {
+    "task": "instance_segmentation",
+    "dataset": "bbbc038-official",
+    "seed": 4,
+    "fold": "stage1+stage2",
+    "key": "biodino_7b__bbbc038_official__seed4",
+    "entrypoint": "run_unified_paper_bbbc038_official.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/bbbc038_official/seed4/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 0,
+    "fold": 0,
+    "key": "biodino_7b__ctc__fold0_seed0",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "0",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold0/seed0/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 0,
+    "fold": 1,
+    "key": "biodino_7b__ctc__fold1_seed0",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "1",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold1/seed0/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 0,
+    "fold": 2,
+    "key": "biodino_7b__ctc__fold2_seed0",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "2",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold2/seed0/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 0,
+    "fold": 3,
+    "key": "biodino_7b__ctc__fold3_seed0",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "3",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold3/seed0/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 0,
+    "fold": 4,
+    "key": "biodino_7b__ctc__fold4_seed0",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "4",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold4/seed0/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 1,
+    "fold": 0,
+    "key": "biodino_7b__ctc__fold0_seed1",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "0",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold0/seed1/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 1,
+    "fold": 1,
+    "key": "biodino_7b__ctc__fold1_seed1",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "1",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold1/seed1/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 1,
+    "fold": 2,
+    "key": "biodino_7b__ctc__fold2_seed1",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "2",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold2/seed1/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 1,
+    "fold": 3,
+    "key": "biodino_7b__ctc__fold3_seed1",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "3",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold3/seed1/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 1,
+    "fold": 4,
+    "key": "biodino_7b__ctc__fold4_seed1",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "4",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold4/seed1/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 2,
+    "fold": 0,
+    "key": "biodino_7b__ctc__fold0_seed2",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "0",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold0/seed2/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 2,
+    "fold": 1,
+    "key": "biodino_7b__ctc__fold1_seed2",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "1",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold1/seed2/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 2,
+    "fold": 2,
+    "key": "biodino_7b__ctc__fold2_seed2",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "2",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold2/seed2/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 2,
+    "fold": 3,
+    "key": "biodino_7b__ctc__fold3_seed2",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "3",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold3/seed2/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 2,
+    "fold": 4,
+    "key": "biodino_7b__ctc__fold4_seed2",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "4",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold4/seed2/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 3,
+    "fold": 0,
+    "key": "biodino_7b__ctc__fold0_seed3",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "0",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold0/seed3/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 3,
+    "fold": 1,
+    "key": "biodino_7b__ctc__fold1_seed3",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "1",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold1/seed3/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 3,
+    "fold": 2,
+    "key": "biodino_7b__ctc__fold2_seed3",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "2",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold2/seed3/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 3,
+    "fold": 3,
+    "key": "biodino_7b__ctc__fold3_seed3",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "3",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold3/seed3/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 3,
+    "fold": 4,
+    "key": "biodino_7b__ctc__fold4_seed3",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "4",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold4/seed3/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 4,
+    "fold": 0,
+    "key": "biodino_7b__ctc__fold0_seed4",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "0",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold0/seed4/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 4,
+    "fold": 1,
+    "key": "biodino_7b__ctc__fold1_seed4",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "1",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold1/seed4/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 4,
+    "fold": 2,
+    "key": "biodino_7b__ctc__fold2_seed4",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "2",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold2/seed4/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 4,
+    "fold": 3,
+    "key": "biodino_7b__ctc__fold3_seed4",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "3",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold3/seed4/component_result.json"
+  },
+  {
+    "task": "cell_tracking",
+    "dataset": "ctc",
+    "seed": 4,
+    "fold": 4,
+    "key": "biodino_7b__ctc__fold4_seed4",
+    "entrypoint": "run_unified_paper_ctc.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "4",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ctc/fold4/seed4/component_result.json"
+  },
+  {
+    "task": "classification",
+    "dataset": "film_age",
+    "key": "biodino_7b__film_age__fixed5",
+    "entrypoint": "run_unified_paper_film.py",
+    "args": [
+      "--model",
+      "biodino_7b"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/film_age/component_result.json"
+  },
+  {
+    "task": "bone_age_regression",
+    "dataset": "xray_bone",
+    "key": "biodino_7b__bone_age__official_validation",
+    "entrypoint": "run_unified_paper_bone_age.py",
+    "args": [
+      "--model",
+      "biodino_7b"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/bone_age/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "bccd",
+    "seed": 0,
+    "fold": "fixed",
+    "key": "biodino_7b__native_box__bccd__seed0",
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bccd",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/native_box/bccd/seed0/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "bccd",
+    "seed": 1,
+    "fold": "fixed",
+    "key": "biodino_7b__native_box__bccd__seed1",
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bccd",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/native_box/bccd/seed1/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "bccd",
+    "seed": 2,
+    "fold": "fixed",
+    "key": "biodino_7b__native_box__bccd__seed2",
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bccd",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/native_box/bccd/seed2/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "bccd",
+    "seed": 3,
+    "fold": "fixed",
+    "key": "biodino_7b__native_box__bccd__seed3",
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bccd",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/native_box/bccd/seed3/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "bccd",
+    "seed": 4,
+    "fold": "fixed",
+    "key": "biodino_7b__native_box__bccd__seed4",
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bccd",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/native_box/bccd/seed4/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "bbbc041",
+    "seed": 0,
+    "fold": "fixed",
+    "key": "biodino_7b__native_box__bbbc041__seed0",
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc041",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/native_box/bbbc041/seed0/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "bbbc041",
+    "seed": 1,
+    "fold": "fixed",
+    "key": "biodino_7b__native_box__bbbc041__seed1",
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc041",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/native_box/bbbc041/seed1/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "bbbc041",
+    "seed": 2,
+    "fold": "fixed",
+    "key": "biodino_7b__native_box__bbbc041__seed2",
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc041",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/native_box/bbbc041/seed2/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "bbbc041",
+    "seed": 3,
+    "fold": "fixed",
+    "key": "biodino_7b__native_box__bbbc041__seed3",
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc041",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/native_box/bbbc041/seed3/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "bbbc041",
+    "seed": 4,
+    "fold": "fixed",
+    "key": "biodino_7b__native_box__bbbc041__seed4",
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--dataset",
+      "bbbc041",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/native_box/bbbc041/seed4/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "xray_chest",
+    "seed": 0,
+    "fold": "fixed",
+    "key": "biodino_7b__rsna_pneumonia__seed0",
+    "entrypoint": "run_unified_paper_rsna.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/rsna_pneumonia/seed0/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "xray_chest",
+    "seed": 1,
+    "fold": "fixed",
+    "key": "biodino_7b__rsna_pneumonia__seed1",
+    "entrypoint": "run_unified_paper_rsna.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/rsna_pneumonia/seed1/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "xray_chest",
+    "seed": 2,
+    "fold": "fixed",
+    "key": "biodino_7b__rsna_pneumonia__seed2",
+    "entrypoint": "run_unified_paper_rsna.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/rsna_pneumonia/seed2/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "xray_chest",
+    "seed": 3,
+    "fold": "fixed",
+    "key": "biodino_7b__rsna_pneumonia__seed3",
+    "entrypoint": "run_unified_paper_rsna.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/rsna_pneumonia/seed3/component_result.json"
+  },
+  {
+    "task": "box_detection",
+    "dataset": "xray_chest",
+    "seed": 4,
+    "fold": "fixed",
+    "key": "biodino_7b__rsna_pneumonia__seed4",
+    "entrypoint": "run_unified_paper_rsna.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/rsna_pneumonia/seed4/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 0,
+    "fold": 2,
+    "key": "biodino_7b__nucls_qc__fold2_seed0",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "2",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold2/seed0/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 1,
+    "fold": 2,
+    "key": "biodino_7b__nucls_qc__fold2_seed1",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "2",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold2/seed1/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 2,
+    "fold": 2,
+    "key": "biodino_7b__nucls_qc__fold2_seed2",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "2",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold2/seed2/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 3,
+    "fold": 2,
+    "key": "biodino_7b__nucls_qc__fold2_seed3",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "2",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold2/seed3/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 4,
+    "fold": 2,
+    "key": "biodino_7b__nucls_qc__fold2_seed4",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "2",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold2/seed4/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 0,
+    "fold": 3,
+    "key": "biodino_7b__nucls_qc__fold3_seed0",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "3",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold3/seed0/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 1,
+    "fold": 3,
+    "key": "biodino_7b__nucls_qc__fold3_seed1",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "3",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold3/seed1/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 2,
+    "fold": 3,
+    "key": "biodino_7b__nucls_qc__fold3_seed2",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "3",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold3/seed2/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 3,
+    "fold": 3,
+    "key": "biodino_7b__nucls_qc__fold3_seed3",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "3",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold3/seed3/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 4,
+    "fold": 3,
+    "key": "biodino_7b__nucls_qc__fold3_seed4",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "3",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold3/seed4/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 0,
+    "fold": 4,
+    "key": "biodino_7b__nucls_qc__fold4_seed0",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "4",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold4/seed0/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 1,
+    "fold": 4,
+    "key": "biodino_7b__nucls_qc__fold4_seed1",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "4",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold4/seed1/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 2,
+    "fold": 4,
+    "key": "biodino_7b__nucls_qc__fold4_seed2",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "4",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold4/seed2/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 3,
+    "fold": 4,
+    "key": "biodino_7b__nucls_qc__fold4_seed3",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "4",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold4/seed3/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 4,
+    "fold": 4,
+    "key": "biodino_7b__nucls_qc__fold4_seed4",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "4",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold4/seed4/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 0,
+    "fold": 5,
+    "key": "biodino_7b__nucls_qc__fold5_seed0",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "5",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold5/seed0/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 1,
+    "fold": 5,
+    "key": "biodino_7b__nucls_qc__fold5_seed1",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "5",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold5/seed1/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 2,
+    "fold": 5,
+    "key": "biodino_7b__nucls_qc__fold5_seed2",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "5",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold5/seed2/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 3,
+    "fold": 5,
+    "key": "biodino_7b__nucls_qc__fold5_seed3",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "5",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold5/seed3/component_result.json"
+  },
+  {
+    "task": "nuclei_detection_segmentation",
+    "dataset": "nucls_qc",
+    "seed": 4,
+    "fold": 5,
+    "key": "biodino_7b__nucls_qc__fold5_seed4",
+    "entrypoint": "run_unified_paper_nucls.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--fold",
+      "5",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/nucls_qc/fold5/seed4/component_result.json"
+  },
+  {
+    "task": "centroid_detection_3d",
+    "dataset": "spheroid_lsfm",
+    "seed": "bundled0to4",
+    "fold": "fixed",
+    "key": "biodino_7b__spheroid_official__bundled0to4",
+    "entrypoint": "run_unified_paper_spheroid.py",
+    "args": [
+      "--model",
+      "biodino_7b"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/spheroid_lsfm/component_result.json"
+  },
+  {
+    "key": "biodino_7b__ood__xray",
+    "task": "ood",
+    "dataset": "xray",
+    "entrypoint": "run_unified_paper_ood.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--task",
+      "xray",
+      "--checkpoint",
+      "@CHECKPOINT@",
+      "--train-config",
+      "@TRAIN_CONFIG@",
+      "--input-fix-v2",
+      "--group-fix-v3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ood_groupfix_v3/xray_result.json"
+  },
+  {
+    "key": "biodino_7b__ood__cryo",
+    "task": "ood",
+    "dataset": "cryo",
+    "entrypoint": "run_unified_paper_ood.py",
+    "args": [
+      "--model",
+      "biodino_7b",
+      "--task",
+      "cryo",
+      "--checkpoint",
+      "@CHECKPOINT@",
+      "--train-config",
+      "@TRAIN_CONFIG@",
+      "--input-fix-v2",
+      "--group-fix-v3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/ood_groupfix_v3/cryo_result.json"
+  },
+  {
+    "key": "cache_0",
+    "task": "prepare_segmentation",
+    "dataset": "cellpose",
+    "entrypoint": "run_unified_paper_biodino_segmentation_cache.py",
+    "args": [
+      "--cell-index",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/acceptance_cells/cellpose/formal-static-v1/cache_complete.json"
+  },
+  {
+    "key": "seg_0_E20_seed0",
+    "task": "segmentation",
+    "dataset": "cellpose",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "0",
+      "--budget",
+      "20",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/cellpose/formal-static-v1/E20/seed0/component_result.json"
+  },
+  {
+    "key": "seg_0_E20_seed1",
+    "task": "segmentation",
+    "dataset": "cellpose",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "0",
+      "--budget",
+      "20",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/cellpose/formal-static-v1/E20/seed1/component_result.json"
+  },
+  {
+    "key": "seg_0_E20_seed2",
+    "task": "segmentation",
+    "dataset": "cellpose",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "0",
+      "--budget",
+      "20",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/cellpose/formal-static-v1/E20/seed2/component_result.json"
+  },
+  {
+    "key": "seg_0_E20_seed3",
+    "task": "segmentation",
+    "dataset": "cellpose",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "0",
+      "--budget",
+      "20",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/cellpose/formal-static-v1/E20/seed3/component_result.json"
+  },
+  {
+    "key": "seg_0_E20_seed4",
+    "task": "segmentation",
+    "dataset": "cellpose",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "0",
+      "--budget",
+      "20",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/cellpose/formal-static-v1/E20/seed4/component_result.json"
+  },
+  {
+    "key": "seg_0_E50_seed0",
+    "task": "segmentation",
+    "dataset": "cellpose",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "0",
+      "--budget",
+      "50",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/cellpose/formal-static-v1/E50/seed0/component_result.json"
+  },
+  {
+    "key": "seg_0_E50_seed1",
+    "task": "segmentation",
+    "dataset": "cellpose",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "0",
+      "--budget",
+      "50",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/cellpose/formal-static-v1/E50/seed1/component_result.json"
+  },
+  {
+    "key": "seg_0_E50_seed2",
+    "task": "segmentation",
+    "dataset": "cellpose",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "0",
+      "--budget",
+      "50",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/cellpose/formal-static-v1/E50/seed2/component_result.json"
+  },
+  {
+    "key": "seg_0_E50_seed3",
+    "task": "segmentation",
+    "dataset": "cellpose",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "0",
+      "--budget",
+      "50",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/cellpose/formal-static-v1/E50/seed3/component_result.json"
+  },
+  {
+    "key": "seg_0_E50_seed4",
+    "task": "segmentation",
+    "dataset": "cellpose",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "0",
+      "--budget",
+      "50",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/cellpose/formal-static-v1/E50/seed4/component_result.json"
+  },
+  {
+    "key": "cache_1",
+    "task": "prepare_segmentation",
+    "dataset": "conic",
+    "entrypoint": "run_unified_paper_biodino_segmentation_cache.py",
+    "args": [
+      "--cell-index",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/acceptance_cells/conic/official-baseline-fold0-nested-v1/cache_complete.json"
+  },
+  {
+    "key": "seg_1_E20_seed0",
+    "task": "segmentation",
+    "dataset": "conic",
+    "split": "official-baseline-fold0-nested-v1",
+    "budget": 20,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "1",
+      "--budget",
+      "20",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/conic/official-baseline-fold0-nested-v1/E20/seed0/component_result.json"
+  },
+  {
+    "key": "seg_1_E20_seed1",
+    "task": "segmentation",
+    "dataset": "conic",
+    "split": "official-baseline-fold0-nested-v1",
+    "budget": 20,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "1",
+      "--budget",
+      "20",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/conic/official-baseline-fold0-nested-v1/E20/seed1/component_result.json"
+  },
+  {
+    "key": "seg_1_E20_seed2",
+    "task": "segmentation",
+    "dataset": "conic",
+    "split": "official-baseline-fold0-nested-v1",
+    "budget": 20,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "1",
+      "--budget",
+      "20",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/conic/official-baseline-fold0-nested-v1/E20/seed2/component_result.json"
+  },
+  {
+    "key": "seg_1_E20_seed3",
+    "task": "segmentation",
+    "dataset": "conic",
+    "split": "official-baseline-fold0-nested-v1",
+    "budget": 20,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "1",
+      "--budget",
+      "20",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/conic/official-baseline-fold0-nested-v1/E20/seed3/component_result.json"
+  },
+  {
+    "key": "seg_1_E20_seed4",
+    "task": "segmentation",
+    "dataset": "conic",
+    "split": "official-baseline-fold0-nested-v1",
+    "budget": 20,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "1",
+      "--budget",
+      "20",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/conic/official-baseline-fold0-nested-v1/E20/seed4/component_result.json"
+  },
+  {
+    "key": "seg_1_E50_seed0",
+    "task": "segmentation",
+    "dataset": "conic",
+    "split": "official-baseline-fold0-nested-v1",
+    "budget": 50,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "1",
+      "--budget",
+      "50",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/conic/official-baseline-fold0-nested-v1/E50/seed0/component_result.json"
+  },
+  {
+    "key": "seg_1_E50_seed1",
+    "task": "segmentation",
+    "dataset": "conic",
+    "split": "official-baseline-fold0-nested-v1",
+    "budget": 50,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "1",
+      "--budget",
+      "50",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/conic/official-baseline-fold0-nested-v1/E50/seed1/component_result.json"
+  },
+  {
+    "key": "seg_1_E50_seed2",
+    "task": "segmentation",
+    "dataset": "conic",
+    "split": "official-baseline-fold0-nested-v1",
+    "budget": 50,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "1",
+      "--budget",
+      "50",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/conic/official-baseline-fold0-nested-v1/E50/seed2/component_result.json"
+  },
+  {
+    "key": "seg_1_E50_seed3",
+    "task": "segmentation",
+    "dataset": "conic",
+    "split": "official-baseline-fold0-nested-v1",
+    "budget": 50,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "1",
+      "--budget",
+      "50",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/conic/official-baseline-fold0-nested-v1/E50/seed3/component_result.json"
+  },
+  {
+    "key": "seg_1_E50_seed4",
+    "task": "segmentation",
+    "dataset": "conic",
+    "split": "official-baseline-fold0-nested-v1",
+    "budget": 50,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "1",
+      "--budget",
+      "50",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/conic/official-baseline-fold0-nested-v1/E50/seed4/component_result.json"
+  },
+  {
+    "key": "cache_2",
+    "task": "prepare_segmentation",
+    "dataset": "livecell",
+    "entrypoint": "run_unified_paper_biodino_segmentation_cache.py",
+    "args": [
+      "--cell-index",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/acceptance_cells/livecell/formal-static-v1/cache_complete.json"
+  },
+  {
+    "key": "seg_2_E20_seed0",
+    "task": "segmentation",
+    "dataset": "livecell",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "2",
+      "--budget",
+      "20",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/livecell/formal-static-v1/E20/seed0/component_result.json"
+  },
+  {
+    "key": "seg_2_E20_seed1",
+    "task": "segmentation",
+    "dataset": "livecell",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "2",
+      "--budget",
+      "20",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/livecell/formal-static-v1/E20/seed1/component_result.json"
+  },
+  {
+    "key": "seg_2_E20_seed2",
+    "task": "segmentation",
+    "dataset": "livecell",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "2",
+      "--budget",
+      "20",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/livecell/formal-static-v1/E20/seed2/component_result.json"
+  },
+  {
+    "key": "seg_2_E20_seed3",
+    "task": "segmentation",
+    "dataset": "livecell",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "2",
+      "--budget",
+      "20",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/livecell/formal-static-v1/E20/seed3/component_result.json"
+  },
+  {
+    "key": "seg_2_E20_seed4",
+    "task": "segmentation",
+    "dataset": "livecell",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "2",
+      "--budget",
+      "20",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/livecell/formal-static-v1/E20/seed4/component_result.json"
+  },
+  {
+    "key": "seg_2_E50_seed0",
+    "task": "segmentation",
+    "dataset": "livecell",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "2",
+      "--budget",
+      "50",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/livecell/formal-static-v1/E50/seed0/component_result.json"
+  },
+  {
+    "key": "seg_2_E50_seed1",
+    "task": "segmentation",
+    "dataset": "livecell",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "2",
+      "--budget",
+      "50",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/livecell/formal-static-v1/E50/seed1/component_result.json"
+  },
+  {
+    "key": "seg_2_E50_seed2",
+    "task": "segmentation",
+    "dataset": "livecell",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "2",
+      "--budget",
+      "50",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/livecell/formal-static-v1/E50/seed2/component_result.json"
+  },
+  {
+    "key": "seg_2_E50_seed3",
+    "task": "segmentation",
+    "dataset": "livecell",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "2",
+      "--budget",
+      "50",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/livecell/formal-static-v1/E50/seed3/component_result.json"
+  },
+  {
+    "key": "seg_2_E50_seed4",
+    "task": "segmentation",
+    "dataset": "livecell",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "2",
+      "--budget",
+      "50",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/livecell/formal-static-v1/E50/seed4/component_result.json"
+  },
+  {
+    "key": "cache_3",
+    "task": "prepare_segmentation",
+    "dataset": "monuseg",
+    "entrypoint": "run_unified_paper_biodino_segmentation_cache.py",
+    "args": [
+      "--cell-index",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/acceptance_cells/monuseg/formal-static-v1/cache_complete.json"
+  },
+  {
+    "key": "seg_3_E20_seed0",
+    "task": "segmentation",
+    "dataset": "monuseg",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "3",
+      "--budget",
+      "20",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/monuseg/formal-static-v1/E20/seed0/component_result.json"
+  },
+  {
+    "key": "seg_3_E20_seed1",
+    "task": "segmentation",
+    "dataset": "monuseg",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "3",
+      "--budget",
+      "20",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/monuseg/formal-static-v1/E20/seed1/component_result.json"
+  },
+  {
+    "key": "seg_3_E20_seed2",
+    "task": "segmentation",
+    "dataset": "monuseg",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "3",
+      "--budget",
+      "20",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/monuseg/formal-static-v1/E20/seed2/component_result.json"
+  },
+  {
+    "key": "seg_3_E20_seed3",
+    "task": "segmentation",
+    "dataset": "monuseg",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "3",
+      "--budget",
+      "20",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/monuseg/formal-static-v1/E20/seed3/component_result.json"
+  },
+  {
+    "key": "seg_3_E20_seed4",
+    "task": "segmentation",
+    "dataset": "monuseg",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "3",
+      "--budget",
+      "20",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/monuseg/formal-static-v1/E20/seed4/component_result.json"
+  },
+  {
+    "key": "seg_3_E50_seed0",
+    "task": "segmentation",
+    "dataset": "monuseg",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "3",
+      "--budget",
+      "50",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/monuseg/formal-static-v1/E50/seed0/component_result.json"
+  },
+  {
+    "key": "seg_3_E50_seed1",
+    "task": "segmentation",
+    "dataset": "monuseg",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "3",
+      "--budget",
+      "50",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/monuseg/formal-static-v1/E50/seed1/component_result.json"
+  },
+  {
+    "key": "seg_3_E50_seed2",
+    "task": "segmentation",
+    "dataset": "monuseg",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "3",
+      "--budget",
+      "50",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/monuseg/formal-static-v1/E50/seed2/component_result.json"
+  },
+  {
+    "key": "seg_3_E50_seed3",
+    "task": "segmentation",
+    "dataset": "monuseg",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "3",
+      "--budget",
+      "50",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/monuseg/formal-static-v1/E50/seed3/component_result.json"
+  },
+  {
+    "key": "seg_3_E50_seed4",
+    "task": "segmentation",
+    "dataset": "monuseg",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "3",
+      "--budget",
+      "50",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/monuseg/formal-static-v1/E50/seed4/component_result.json"
+  },
+  {
+    "key": "cache_4",
+    "task": "prepare_segmentation",
+    "dataset": "multimodal_cellseg",
+    "entrypoint": "run_unified_paper_biodino_segmentation_cache.py",
+    "args": [
+      "--cell-index",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/acceptance_cells/multimodal_cellseg/neurips22-author-public52-v2/cache_complete.json"
+  },
+  {
+    "key": "seg_4_E20_seed0",
+    "task": "segmentation",
+    "dataset": "multimodal_cellseg",
+    "split": "neurips22-author-public52-v2",
+    "budget": 20,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "4",
+      "--budget",
+      "20",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/multimodal_cellseg/neurips22-author-public52-v2/E20/seed0/component_result.json"
+  },
+  {
+    "key": "seg_4_E20_seed1",
+    "task": "segmentation",
+    "dataset": "multimodal_cellseg",
+    "split": "neurips22-author-public52-v2",
+    "budget": 20,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "4",
+      "--budget",
+      "20",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/multimodal_cellseg/neurips22-author-public52-v2/E20/seed1/component_result.json"
+  },
+  {
+    "key": "seg_4_E20_seed2",
+    "task": "segmentation",
+    "dataset": "multimodal_cellseg",
+    "split": "neurips22-author-public52-v2",
+    "budget": 20,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "4",
+      "--budget",
+      "20",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/multimodal_cellseg/neurips22-author-public52-v2/E20/seed2/component_result.json"
+  },
+  {
+    "key": "seg_4_E20_seed3",
+    "task": "segmentation",
+    "dataset": "multimodal_cellseg",
+    "split": "neurips22-author-public52-v2",
+    "budget": 20,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "4",
+      "--budget",
+      "20",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/multimodal_cellseg/neurips22-author-public52-v2/E20/seed3/component_result.json"
+  },
+  {
+    "key": "seg_4_E20_seed4",
+    "task": "segmentation",
+    "dataset": "multimodal_cellseg",
+    "split": "neurips22-author-public52-v2",
+    "budget": 20,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "4",
+      "--budget",
+      "20",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/multimodal_cellseg/neurips22-author-public52-v2/E20/seed4/component_result.json"
+  },
+  {
+    "key": "seg_4_E50_seed0",
+    "task": "segmentation",
+    "dataset": "multimodal_cellseg",
+    "split": "neurips22-author-public52-v2",
+    "budget": 50,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "4",
+      "--budget",
+      "50",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/multimodal_cellseg/neurips22-author-public52-v2/E50/seed0/component_result.json"
+  },
+  {
+    "key": "seg_4_E50_seed1",
+    "task": "segmentation",
+    "dataset": "multimodal_cellseg",
+    "split": "neurips22-author-public52-v2",
+    "budget": 50,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "4",
+      "--budget",
+      "50",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/multimodal_cellseg/neurips22-author-public52-v2/E50/seed1/component_result.json"
+  },
+  {
+    "key": "seg_4_E50_seed2",
+    "task": "segmentation",
+    "dataset": "multimodal_cellseg",
+    "split": "neurips22-author-public52-v2",
+    "budget": 50,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "4",
+      "--budget",
+      "50",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/multimodal_cellseg/neurips22-author-public52-v2/E50/seed2/component_result.json"
+  },
+  {
+    "key": "seg_4_E50_seed3",
+    "task": "segmentation",
+    "dataset": "multimodal_cellseg",
+    "split": "neurips22-author-public52-v2",
+    "budget": 50,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "4",
+      "--budget",
+      "50",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/multimodal_cellseg/neurips22-author-public52-v2/E50/seed3/component_result.json"
+  },
+  {
+    "key": "seg_4_E50_seed4",
+    "task": "segmentation",
+    "dataset": "multimodal_cellseg",
+    "split": "neurips22-author-public52-v2",
+    "budget": 50,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "4",
+      "--budget",
+      "50",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/multimodal_cellseg/neurips22-author-public52-v2/E50/seed4/component_result.json"
+  },
+  {
+    "key": "cache_5",
+    "task": "prepare_segmentation",
+    "dataset": "pannuke",
+    "entrypoint": "run_unified_paper_biodino_segmentation_cache.py",
+    "args": [
+      "--cell-index",
+      "5"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/acceptance_cells/pannuke/pannuke-fold1-train-fold2-val-fold3-test/cache_complete.json"
+  },
+  {
+    "key": "seg_5_E20_seed0",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold1-train-fold2-val-fold3-test",
+    "budget": 20,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "5",
+      "--budget",
+      "20",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold1-train-fold2-val-fold3-test/E20/seed0/component_result.json"
+  },
+  {
+    "key": "seg_5_E20_seed1",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold1-train-fold2-val-fold3-test",
+    "budget": 20,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "5",
+      "--budget",
+      "20",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold1-train-fold2-val-fold3-test/E20/seed1/component_result.json"
+  },
+  {
+    "key": "seg_5_E20_seed2",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold1-train-fold2-val-fold3-test",
+    "budget": 20,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "5",
+      "--budget",
+      "20",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold1-train-fold2-val-fold3-test/E20/seed2/component_result.json"
+  },
+  {
+    "key": "seg_5_E20_seed3",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold1-train-fold2-val-fold3-test",
+    "budget": 20,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "5",
+      "--budget",
+      "20",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold1-train-fold2-val-fold3-test/E20/seed3/component_result.json"
+  },
+  {
+    "key": "seg_5_E20_seed4",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold1-train-fold2-val-fold3-test",
+    "budget": 20,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "5",
+      "--budget",
+      "20",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold1-train-fold2-val-fold3-test/E20/seed4/component_result.json"
+  },
+  {
+    "key": "seg_5_E50_seed0",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold1-train-fold2-val-fold3-test",
+    "budget": 50,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "5",
+      "--budget",
+      "50",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold1-train-fold2-val-fold3-test/E50/seed0/component_result.json"
+  },
+  {
+    "key": "seg_5_E50_seed1",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold1-train-fold2-val-fold3-test",
+    "budget": 50,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "5",
+      "--budget",
+      "50",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold1-train-fold2-val-fold3-test/E50/seed1/component_result.json"
+  },
+  {
+    "key": "seg_5_E50_seed2",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold1-train-fold2-val-fold3-test",
+    "budget": 50,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "5",
+      "--budget",
+      "50",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold1-train-fold2-val-fold3-test/E50/seed2/component_result.json"
+  },
+  {
+    "key": "seg_5_E50_seed3",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold1-train-fold2-val-fold3-test",
+    "budget": 50,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "5",
+      "--budget",
+      "50",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold1-train-fold2-val-fold3-test/E50/seed3/component_result.json"
+  },
+  {
+    "key": "seg_5_E50_seed4",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold1-train-fold2-val-fold3-test",
+    "budget": 50,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "5",
+      "--budget",
+      "50",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold1-train-fold2-val-fold3-test/E50/seed4/component_result.json"
+  },
+  {
+    "key": "cache_6",
+    "task": "prepare_segmentation",
+    "dataset": "pannuke",
+    "entrypoint": "run_unified_paper_biodino_segmentation_cache.py",
+    "args": [
+      "--cell-index",
+      "6"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/acceptance_cells/pannuke/pannuke-fold2-train-fold1-val-fold3-test/cache_complete.json"
+  },
+  {
+    "key": "seg_6_E20_seed0",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold2-train-fold1-val-fold3-test",
+    "budget": 20,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "6",
+      "--budget",
+      "20",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold2-train-fold1-val-fold3-test/E20/seed0/component_result.json"
+  },
+  {
+    "key": "seg_6_E20_seed1",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold2-train-fold1-val-fold3-test",
+    "budget": 20,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "6",
+      "--budget",
+      "20",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold2-train-fold1-val-fold3-test/E20/seed1/component_result.json"
+  },
+  {
+    "key": "seg_6_E20_seed2",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold2-train-fold1-val-fold3-test",
+    "budget": 20,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "6",
+      "--budget",
+      "20",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold2-train-fold1-val-fold3-test/E20/seed2/component_result.json"
+  },
+  {
+    "key": "seg_6_E20_seed3",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold2-train-fold1-val-fold3-test",
+    "budget": 20,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "6",
+      "--budget",
+      "20",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold2-train-fold1-val-fold3-test/E20/seed3/component_result.json"
+  },
+  {
+    "key": "seg_6_E20_seed4",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold2-train-fold1-val-fold3-test",
+    "budget": 20,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "6",
+      "--budget",
+      "20",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold2-train-fold1-val-fold3-test/E20/seed4/component_result.json"
+  },
+  {
+    "key": "seg_6_E50_seed0",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold2-train-fold1-val-fold3-test",
+    "budget": 50,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "6",
+      "--budget",
+      "50",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold2-train-fold1-val-fold3-test/E50/seed0/component_result.json"
+  },
+  {
+    "key": "seg_6_E50_seed1",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold2-train-fold1-val-fold3-test",
+    "budget": 50,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "6",
+      "--budget",
+      "50",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold2-train-fold1-val-fold3-test/E50/seed1/component_result.json"
+  },
+  {
+    "key": "seg_6_E50_seed2",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold2-train-fold1-val-fold3-test",
+    "budget": 50,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "6",
+      "--budget",
+      "50",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold2-train-fold1-val-fold3-test/E50/seed2/component_result.json"
+  },
+  {
+    "key": "seg_6_E50_seed3",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold2-train-fold1-val-fold3-test",
+    "budget": 50,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "6",
+      "--budget",
+      "50",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold2-train-fold1-val-fold3-test/E50/seed3/component_result.json"
+  },
+  {
+    "key": "seg_6_E50_seed4",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold2-train-fold1-val-fold3-test",
+    "budget": 50,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "6",
+      "--budget",
+      "50",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold2-train-fold1-val-fold3-test/E50/seed4/component_result.json"
+  },
+  {
+    "key": "cache_7",
+    "task": "prepare_segmentation",
+    "dataset": "pannuke",
+    "entrypoint": "run_unified_paper_biodino_segmentation_cache.py",
+    "args": [
+      "--cell-index",
+      "7"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/acceptance_cells/pannuke/pannuke-fold3-train-fold2-val-fold1-test/cache_complete.json"
+  },
+  {
+    "key": "seg_7_E20_seed0",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold3-train-fold2-val-fold1-test",
+    "budget": 20,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "7",
+      "--budget",
+      "20",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold3-train-fold2-val-fold1-test/E20/seed0/component_result.json"
+  },
+  {
+    "key": "seg_7_E20_seed1",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold3-train-fold2-val-fold1-test",
+    "budget": 20,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "7",
+      "--budget",
+      "20",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold3-train-fold2-val-fold1-test/E20/seed1/component_result.json"
+  },
+  {
+    "key": "seg_7_E20_seed2",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold3-train-fold2-val-fold1-test",
+    "budget": 20,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "7",
+      "--budget",
+      "20",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold3-train-fold2-val-fold1-test/E20/seed2/component_result.json"
+  },
+  {
+    "key": "seg_7_E20_seed3",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold3-train-fold2-val-fold1-test",
+    "budget": 20,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "7",
+      "--budget",
+      "20",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold3-train-fold2-val-fold1-test/E20/seed3/component_result.json"
+  },
+  {
+    "key": "seg_7_E20_seed4",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold3-train-fold2-val-fold1-test",
+    "budget": 20,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "7",
+      "--budget",
+      "20",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold3-train-fold2-val-fold1-test/E20/seed4/component_result.json"
+  },
+  {
+    "key": "seg_7_E50_seed0",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold3-train-fold2-val-fold1-test",
+    "budget": 50,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "7",
+      "--budget",
+      "50",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold3-train-fold2-val-fold1-test/E50/seed0/component_result.json"
+  },
+  {
+    "key": "seg_7_E50_seed1",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold3-train-fold2-val-fold1-test",
+    "budget": 50,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "7",
+      "--budget",
+      "50",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold3-train-fold2-val-fold1-test/E50/seed1/component_result.json"
+  },
+  {
+    "key": "seg_7_E50_seed2",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold3-train-fold2-val-fold1-test",
+    "budget": 50,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "7",
+      "--budget",
+      "50",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold3-train-fold2-val-fold1-test/E50/seed2/component_result.json"
+  },
+  {
+    "key": "seg_7_E50_seed3",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold3-train-fold2-val-fold1-test",
+    "budget": 50,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "7",
+      "--budget",
+      "50",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold3-train-fold2-val-fold1-test/E50/seed3/component_result.json"
+  },
+  {
+    "key": "seg_7_E50_seed4",
+    "task": "segmentation",
+    "dataset": "pannuke",
+    "split": "pannuke-fold3-train-fold2-val-fold1-test",
+    "budget": 50,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "7",
+      "--budget",
+      "50",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/pannuke/pannuke-fold3-train-fold2-val-fold1-test/E50/seed4/component_result.json"
+  },
+  {
+    "key": "cache_8",
+    "task": "prepare_segmentation",
+    "dataset": "tissuenet",
+    "entrypoint": "run_unified_paper_biodino_segmentation_cache.py",
+    "args": [
+      "--cell-index",
+      "8"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/acceptance_cells/tissuenet/formal-static-v1/cache_complete.json"
+  },
+  {
+    "key": "seg_8_E20_seed0",
+    "task": "segmentation",
+    "dataset": "tissuenet",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "8",
+      "--budget",
+      "20",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/tissuenet/formal-static-v1/E20/seed0/component_result.json"
+  },
+  {
+    "key": "seg_8_E20_seed1",
+    "task": "segmentation",
+    "dataset": "tissuenet",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "8",
+      "--budget",
+      "20",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/tissuenet/formal-static-v1/E20/seed1/component_result.json"
+  },
+  {
+    "key": "seg_8_E20_seed2",
+    "task": "segmentation",
+    "dataset": "tissuenet",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "8",
+      "--budget",
+      "20",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/tissuenet/formal-static-v1/E20/seed2/component_result.json"
+  },
+  {
+    "key": "seg_8_E20_seed3",
+    "task": "segmentation",
+    "dataset": "tissuenet",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "8",
+      "--budget",
+      "20",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/tissuenet/formal-static-v1/E20/seed3/component_result.json"
+  },
+  {
+    "key": "seg_8_E20_seed4",
+    "task": "segmentation",
+    "dataset": "tissuenet",
+    "split": "formal-static-v1",
+    "budget": 20,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "8",
+      "--budget",
+      "20",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/tissuenet/formal-static-v1/E20/seed4/component_result.json"
+  },
+  {
+    "key": "seg_8_E50_seed0",
+    "task": "segmentation",
+    "dataset": "tissuenet",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 0,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "8",
+      "--budget",
+      "50",
+      "--seed",
+      "0"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/tissuenet/formal-static-v1/E50/seed0/component_result.json"
+  },
+  {
+    "key": "seg_8_E50_seed1",
+    "task": "segmentation",
+    "dataset": "tissuenet",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 1,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "8",
+      "--budget",
+      "50",
+      "--seed",
+      "1"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/tissuenet/formal-static-v1/E50/seed1/component_result.json"
+  },
+  {
+    "key": "seg_8_E50_seed2",
+    "task": "segmentation",
+    "dataset": "tissuenet",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 2,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "8",
+      "--budget",
+      "50",
+      "--seed",
+      "2"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/tissuenet/formal-static-v1/E50/seed2/component_result.json"
+  },
+  {
+    "key": "seg_8_E50_seed3",
+    "task": "segmentation",
+    "dataset": "tissuenet",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 3,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "8",
+      "--budget",
+      "50",
+      "--seed",
+      "3"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/tissuenet/formal-static-v1/E50/seed3/component_result.json"
+  },
+  {
+    "key": "seg_8_E50_seed4",
+    "task": "segmentation",
+    "dataset": "tissuenet",
+    "split": "formal-static-v1",
+    "budget": 50,
+    "seed": 4,
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "args": [
+      "--cell-index",
+      "8",
+      "--budget",
+      "50",
+      "--seed",
+      "4"
+    ],
+    "result": "outputs/02_eval_runs/unified_paper/results/biodino_7b/segmentation/tissuenet/formal-static-v1/E50/seed4/component_result.json"
+  }
+]

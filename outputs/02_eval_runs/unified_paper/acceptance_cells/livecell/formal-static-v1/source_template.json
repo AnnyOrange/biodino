@@ -1,0 +1,8 @@
+{
+  "template_source_hashes": {
+    "/mnt/huawei_deepcad/benchmark/segmentation/LIVECell/LIVECell_dataset_2021/annotations/LIVECell/livecell_coco_train.json": "6788902479bc0ffd2838fb7160a778078f464ea6034ed76bb5a0e40263cb9e78",
+    "/mnt/huawei_deepcad/benchmark/segmentation/LIVECell/LIVECell_dataset_2021/annotations/LIVECell/livecell_coco_val.json": "eb72a68f5065d9ade1805b496eecdcd14ca275e5f1bc6aae7e07279bddadfdc7",
+    "/mnt/huawei_deepcad/benchmark/segmentation/LIVECell/LIVECell_dataset_2021/annotations/LIVECell/livecell_coco_test.json": "9eb5805ca031cebcd70bab4a4aa0c89d98646c206d333803a8d5b10ea7fe9960"
+  },
+  "original_template_sha256": "1e90396cfe17d2fed0f04b348f2bcac2fcdb184cad38dee434f9061cc0743a4e"
+}

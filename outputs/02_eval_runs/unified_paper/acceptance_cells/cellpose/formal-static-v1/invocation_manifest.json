@@ -1,0 +1,8 @@
+{
+  "expected_counts": {
+    "train": 432,
+    "val": 108,
+    "test": 68
+  },
+  "template_invocation": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/unified_paper/acceptance_cells/cellpose/formal-static-v1/source_template.json"
+}

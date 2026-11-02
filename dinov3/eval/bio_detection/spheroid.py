@@ -1,7 +1,6 @@
 """PAC-MAP source-coordinate adapter and physical centroid scorer.
 
-The released SH-SY5Y split is patch-level, not spheroid-independent. Strict
-independence admission fails without altering the author's official cohort.
+The released SH-SY5Y split is patch-level, not spheroid-independent. Official patch-level evaluation is authorized; overlap is disclosed, not blocked.
 """
 from pathlib import Path
 import ast,json,hashlib
@@ -40,4 +39,4 @@ def prepare(root):
     aa=arrays[a['image']][tuple(slice(l,h) for l,h in zip(lo-a['start'],hi-a['start']))];bb=arrays[b['image']][tuple(slice(l,h) for l,h in zip(lo-b['start'],hi-b['start']))]
     overlap.append(dict(train=a['image'],test=b['image'],overlap_voxels=int(np.prod(size)),identical_overlap_pixels=bool(np.array_equal(aa,bb)),max_abs_difference=float(np.max(abs(aa-bb)))))
  train_groups={r['sample'] for r in rows if r['split']=='train'};test_groups={r['sample'] for r in rows if r['split']=='test'}
- return dict(records=rows,overlap_pairs=overlap,train_samples=sorted(train_groups),test_samples=sorted(test_groups),shared_spheroids=sorted(train_groups&test_groups),status='BLOCKED_OFFICIAL_PATCH_SPLIT_NOT_SPHEROID_DISJOINT',reason='Both complete official cohorts use same2spheroids;74pixel-overlap pairs involve29/30trainingpatches. Removing overlaps leaves1trainingpatch; whole-spheroid exclusion leaves0. Cannot claim grouped independent generalization or silently invent a new split.',voxel_um=VOXEL_UM.tolist(),matching_um=MATCH_UM,border_um=BORDER_UM,weak_pretraining_included=False)
+ return dict(records=rows,overlap_pairs=overlap,train_samples=sorted(train_groups),test_samples=sorted(test_groups),shared_spheroids=sorted(train_groups&test_groups),status='OFFICIAL_PATCH_SPLIT_ACCEPTED_WITH_OVERLAP',reason='User accepted author official patch split on 2026-10-31. Shared spheroids and pixel overlaps are retained and disclosed; no spheroid-independent generalization claim.',voxel_um=VOXEL_UM.tolist(),matching_um=MATCH_UM,border_um=BORDER_UM,weak_pretraining_included=False)

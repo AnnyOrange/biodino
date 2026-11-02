@@ -1,0 +1,49 @@
+{
+  "protocol_id": "unified-nucls-qc-hybrid-last-v1",
+  "manifest": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/formal_v4/nucls_native_manifest.json",
+  "manifest_sha256": "8b63b49a20dbc9596263914fcd46979f27273bfceb2c651d7dd3526f7ac3dfd1",
+  "frozen_encoder": true,
+  "head": "MaskRCNN shared trainable256 projection, RPN, box and genuine-mask-only branches",
+  "epochs": 10,
+  "batch_size": 2,
+  "learning_rates": [
+    0.001,
+    0.005
+  ],
+  "optimizer": "SGD momentum.9 weight_decay.0005; StepLR step3 gamma.1",
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "seed_semantics": "training_randomness: head initialization, shuffle, RPN/RoI sampling; fixed publisher fold membership",
+  "selection": "Official fold1 seed0 candidates; final epoch10 validation bboxAP, tie lowerLR; fixed for fresh fits on folds2-5; no early stopping on evaluation folds",
+  "evaluation_folds": [
+    2,
+    3,
+    4,
+    5
+  ],
+  "fold_aggregation": "equal fold weight; folds and training seeds remain separate; never pool repetitions as independent FOVs",
+  "primary_metric": "bbox_ap_50_95",
+  "secondary_metrics": [
+    "bbox_ap_50",
+    "bbox_ap_75",
+    "matched_mask_dice_pooled",
+    "matched_mask_dice_mean",
+    "matched_classification_accuracy",
+    "detection_f1_iou50"
+  ],
+  "metrics": "COCO class-aware AP, maxDets300, ambiguous class8 GT crowd and predictions excluded; Hungarian IoU>=.5 class-agnostic integer box matching for classification and genuine mask Dice; zero-overlap matched masks retained; fixed score threshold torchvision.05 and mask threshold.5",
+  "invalid_candidate_rule": "Nonfinite training candidate excluded with recorded loss; choose from valid prescribed LRs on fold1 validation only; all-invalid blocks only the affected model",
+  "input": "Annotated FOV crop in RGB/CSV coordinates; publisher class253 defines ROI; no resizing of mixed raster; published FM input normalization as shared native adapter; no augmentation",
+  "limitations": [
+    "Project frozen-encoder head comparison, not a reproduction of the paper model",
+    "Independent polygon rasterization avoids released rectangle overlay corruption and 1-2px raster/RGB mismatch; all models share these masks",
+    "Matched-mask Dice conditions on detection matches; AP and matched-mask count reported alongside",
+    "Corrected publisher mask target indexing after excluding ambiguous objects and retained zero-overlap matched masks; changes explicitly shared by all models",
+    "Publisher fold1 model selection followed by folds2-5 evaluation; do not describe this as nested CV"
+  ]
+}

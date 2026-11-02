@@ -1,0 +1,997 @@
+{
+  "tasks": [
+    {
+      "task": "classification",
+      "dataset": "bloodmnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "pathmnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "tissuemnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "breastmnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "organamnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "organcmnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "organsmnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "dermamnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "octmnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "pneumoniamnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "retinamnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "chestmnist",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "bbbc048-cellcycle",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "cyclops-protein-loc",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "midog25-atypical",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "regression",
+      "dataset": "bbbc005",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "retrieval",
+      "dataset": "nct-crc-he-1k",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "retrieval",
+      "dataset": "crc-val-he-7k",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "segmentation",
+      "dataset": "cellpose",
+      "required_seeds": 5,
+      "seed_semantics": "training_randomness",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "segmentation",
+      "dataset": "conic",
+      "required_seeds": 5,
+      "seed_semantics": "training_randomness",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "segmentation",
+      "dataset": "livecell",
+      "required_seeds": 5,
+      "seed_semantics": "training_randomness",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "segmentation",
+      "dataset": "monuseg",
+      "required_seeds": 5,
+      "seed_semantics": "training_randomness",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "segmentation",
+      "dataset": "pannuke",
+      "required_seeds": 5,
+      "seed_semantics": "training_randomness",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "segmentation",
+      "dataset": "tissuenet",
+      "required_seeds": 5,
+      "seed_semantics": "training_randomness",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "pcam",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "nct-crc-he",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "chammi-allen-task1",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "chammi-allen-task2",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "chammi-cp-task1",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "chammi-cp-task2",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "chammi-cp-task3",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "chammi-hpa-task1",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "chammi-hpa-task2",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "regression",
+      "dataset": "bbbc013",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "retrieval",
+      "dataset": "hpa-subcellular",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "retrieval",
+      "dataset": "rxrx1-cross",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "retrieval",
+      "dataset": "rxrx3-core",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "segmentation",
+      "dataset": "multimodal_cellseg",
+      "required_seeds": 5,
+      "seed_semantics": "training_randomness",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "cell_tracking",
+      "dataset": "ctc",
+      "required_seeds": 5,
+      "seed_semantics": "head_training_seeds_separate_from_folds",
+      "folds": 5,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "ood",
+      "dataset": "xray",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "ood",
+      "dataset": "cryo",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "classification",
+      "dataset": "lc25000",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "lc25000-clean-original-tile-80-20-seed0-v1"
+    },
+    {
+      "task": "regression",
+      "dataset": "conic-cell-count",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "regression",
+      "dataset": "livecell-cell-count",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "retrieval",
+      "dataset": "lc25000",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "retrieval",
+      "dataset": "nct-crc-he-100",
+      "required_seeds": 0,
+      "seed_semantics": "not_applicable",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "clustering",
+      "dataset": "lc25000",
+      "required_seeds": 5,
+      "seed_semantics": "MiniBatchKMeans initialization and minibatch sampling; fixed silhouette evaluation subset seed0",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "clustering",
+      "dataset": "nct-crc-he-100",
+      "required_seeds": 5,
+      "seed_semantics": "MiniBatchKMeans initialization and minibatch sampling; fixed silhouette evaluation subset seed0",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "detection_proxy",
+      "dataset": "bbbc038",
+      "required_seeds": 5,
+      "seed_semantics": "training_randomness",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "detection_proxy",
+      "dataset": "conic",
+      "required_seeds": 5,
+      "seed_semantics": "training_randomness",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "detection_proxy",
+      "dataset": "livecell",
+      "required_seeds": 5,
+      "seed_semantics": "training_randomness",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "clustering",
+      "dataset": "nct-crc-he-1k",
+      "required_seeds": 5,
+      "seed_semantics": "MiniBatchKMeans initialization and minibatch sampling; fixed silhouette evaluation subset seed0",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "clustering",
+      "dataset": "crc-val-he-7k",
+      "required_seeds": 5,
+      "seed_semantics": "MiniBatchKMeans initialization and minibatch sampling; fixed silhouette evaluation subset seed0",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "clustering",
+      "dataset": "hpa-subcellular",
+      "required_seeds": 5,
+      "seed_semantics": "MiniBatchKMeans initialization and minibatch sampling; fixed silhouette evaluation subset seed0",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "clustering",
+      "dataset": "rxrx1-cross",
+      "required_seeds": 5,
+      "seed_semantics": "MiniBatchKMeans initialization and minibatch sampling; fixed silhouette evaluation subset seed0",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "clustering",
+      "dataset": "rxrx3-core",
+      "required_seeds": 5,
+      "seed_semantics": "MiniBatchKMeans initialization and minibatch sampling; fixed silhouette evaluation subset seed0",
+      "folds": 1,
+      "protocol": "bio-eval-union-v4"
+    },
+    {
+      "task": "instance_segmentation",
+      "dataset": "bbbc038-official",
+      "required_seeds": 5,
+      "folds": 2,
+      "protocol": "dsb2018-released-scoring-sets-frozen-hovernet-fixed50-v1",
+      "fold_ids": [
+        "stage1",
+        "stage2"
+      ],
+      "seed_semantics": "Training randomness: decoder initialization, shuffle, crop and augmentation; one fit evaluated on both official stages"
+    },
+    {
+      "task": "box_detection",
+      "dataset": "bbbc041",
+      "required_seeds": 5,
+      "folds": 1,
+      "protocol": "existing_requested_native_supplement",
+      "native_config": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/unified_paper/native_detection_config.json",
+      "metric": "bbox_ap_50_95"
+    },
+    {
+      "task": "box_detection",
+      "dataset": "bccd",
+      "required_seeds": 5,
+      "folds": 1,
+      "protocol": "existing_requested_native_supplement",
+      "native_config": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/unified_paper/native_detection_config.json",
+      "metric": "bbox_ap_50_95"
+    },
+    {
+      "task": "centroid_detection_3d",
+      "dataset": "spheroid_lsfm",
+      "required_seeds": 5,
+      "folds": 1,
+      "protocol": "existing_requested_native_supplement"
+    },
+    {
+      "task": "nuclei_detection_segmentation",
+      "dataset": "nucls_qc",
+      "required_seeds": 5,
+      "folds": 4,
+      "protocol": "existing_requested_native_supplement",
+      "fold_ids": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "selection_fold": 1,
+      "sample_manifest": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/formal_v4/nucls_native_manifest.json"
+    },
+    {
+      "task": "box_detection",
+      "dataset": "xray_chest",
+      "required_seeds": 5,
+      "folds": 1,
+      "protocol": "existing_requested_native_supplement"
+    },
+    {
+      "task": "bone_age_regression",
+      "dataset": "xray_bone",
+      "required_seeds": 0,
+      "folds": 1,
+      "protocol": "existing_requested_native_supplement"
+    },
+    {
+      "task": "classification",
+      "dataset": "film_age",
+      "required_seeds": 5,
+      "folds": 1,
+      "protocol": "existing_requested_native_supplement"
+    },
+    {
+      "task": "regression",
+      "dataset": "allen-cell-volume",
+      "required_seeds": 0,
+      "folds": 1,
+      "protocol": "existing_requested_native_supplement"
+    }
+  ],
+  "training_seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "statistics": {
+    "bootstrap_replicates": 2000,
+    "permutation_replicates": 10000,
+    "random_seed": 20261021,
+    "confidence_level": 0.95,
+    "resampling": "paired independent groups; strata by source for OOD; keep all patches and all seeds together",
+    "seed_aggregation": "mean of per-seed metric, never ensemble predictions",
+    "primary_comparisons": "Each fixed configured BioDINO anchor versus each configured FM within matched task/dataset/budget/fold/metric; retrospective checkpoint selection provenance retained",
+    "primary_metrics": {
+      "ood": "auroc",
+      "classification": "balanced_accuracy",
+      "regression": "mae",
+      "segmentation": "mDice",
+      "detection_proxy": "test_patch_f1",
+      "cell_tracking": "TRA"
+    },
+    "multiplicity": "Holm within each dataset/task across the complete predeclared biodino-vs-FM family; pending tests remain pending",
+    "checkpoint_selection": "historical retrospective anchors, inference conditional on given weights; no confirmatory claim for datasets used in selection",
+    "ood_groups": {
+      "xray": "biological sample_id, preserving volumes/variants/slices",
+      "cryo": "project_id (4 groups); limited source diversity",
+      "id": "BBBC048 source field prefix; CyclOps source image stem; BloodMNIST image ID (donor mapping unavailable)"
+    },
+    "dense_definition": "Mean of 5 single-seed patch F1 scores; bootstrap original images together across seeds; paired swap all predictions for each image",
+    "global_definition": "Deterministic v4 solves; source-group bootstrap and paired source-group swaps; BBBC013 stratified by compound and grouped by replicate row",
+    "classification_bootstrap": "Class-stratified source-group bootstrap when each independent source group has homogeneous labels; preserve rare classes; record per-class group counts",
+    "segmentation_definition": "Mean of five single-seed pooled-pixel class-macro Dice scores; group bootstrap synchronised across seeds; MoNuSeg TCGA patient groups, Cellpose original image groups with unavailable donor metadata explicitly noted",
+    "native_box_definition": "Mean of five independently trained seed APs; source-image groups (patient mapping unavailable); resample same groups across seeds, rerank all detections and recompute COCO101point AP from validated per-image matches; paired group swap synchronizes all five fits; AP50:95 all configured BioDINO anchors x18 Holm family per dataset, AP50/AP75 secondary separate families",
+    "retrieval_definition": "Source-query-group bootstrap and paired model swap of Recall@1 outcomes, conditional on fixed gallery; original image hashes available, patient map unavailable; not patient-level inference",
+    "clustering_definition": "Mean five single-fit NMI values; source-image group bootstrap synchronized across fitted partitions; recompute NMI from contingency counts. Cluster IDs arbitrary; do not use raw-ID swaps for paired test. Higher-level patient grouping unresolved.",
+    "nucls_definition": "Patient bootstrap stratified by official fold; five individual fitted-head metrics then equal-weight mean of folds2-5; synchronized patient swaps; separate seed SD. See nucls_statistics_config.json.",
+    "planned_comparisons_per_family": 342,
+    "ctc_definition": "Released labelled held-out sequence02; whole CTC domain is one resampling/swap block, including all frames/tracks and all five separately trained seeds. Fold-specific4-domain and complete5-fold20-domain macro metrics. Domain bootstrap stratified by fixed fold; two-sided exact swaps for <=16 domains, otherwise10000 MonteCarlo swaps with plus-one correction. Separate342-comparison Holm families per metric/fold; no official hidden-test claim.",
+    "primary_dataset_metrics": {
+      "chestmnist": "macro_auc",
+      "xray_chest": "rsna_mean_precision",
+      "xray_bone": "mae",
+      "bbbc038-official": "dsb_mean_precision"
+    },
+    "multilabel_definition": "Whole recorded-group bootstrap synchronized across all labels/models; macro ROC AUC; paired whole-group score swaps with exact AUC-difference algebra;2000bootstrap/10000permutations; donor linkage unavailable for ChestMNIST, image-conditional inference explicitly reported.",
+    "bone_age_definition": "Fixed float64 Ridge,1425released official validation cases; grouped recorded-case percentile bootstrap and paired whole-case prediction swaps; primary MAE months; repeated-patient linkage unavailable, no patient-independence certification.",
+    "rsna_definition": "Official3000test exams,2356NIHpatients; all exams and five fitted-head outputs stay within patient block. Bootstrap mean of five individual scored-image mean precisions; negative/no-prediction exclusions follow each fitted model. Paired swaps synchronized across five fits, retaining per-fit scored counts; no ensemble. Primary rsna_mean_precision.",
+    "clustering_test_replicates": 10000,
+    "clustering_paired_method": "Two-sided centered paired whole-source-image-group bootstrap test, conditional on five fitted partitions. Shared bootstrap draws,2000 percentile CI draws,10000 centered null draws,plus-one p correction. No cluster-ID swaps. Exploratory source-image inference where patient/slide metadata unavailable."
+  },
+  "models": [
+    {
+      "model": "biodino_7b",
+      "kind": "biodino",
+      "checkpoint": "/REPLACE/teacher_checkpoint.pth",
+      "train_config": "/REPLACE/resolved_train_config.yaml",
+      "min_free_mib": 30000
+    }
+  ],
+  "reporting": {
+    "id_families": [
+      "分类",
+      "回归",
+      "检索",
+      "聚类",
+      "分割",
+      "检测",
+      "跟踪"
+    ],
+    "tasks": [
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "bloodmnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "pathmnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "tissuemnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "breastmnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "organamnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "organcmnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "organsmnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "dermamnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "octmnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "pneumoniamnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "retinamnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "chestmnist"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "bbbc048-cellcycle"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "cyclops-protein-loc"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "midog25-atypical"
+      },
+      {
+        "domain": "ID",
+        "family": "回归",
+        "task": "regression",
+        "dataset": "bbbc005"
+      },
+      {
+        "domain": "ID",
+        "family": "检索",
+        "task": "retrieval",
+        "dataset": "nct-crc-he-1k"
+      },
+      {
+        "domain": "ID",
+        "family": "检索",
+        "task": "retrieval",
+        "dataset": "crc-val-he-7k"
+      },
+      {
+        "domain": "ID",
+        "family": "分割",
+        "task": "segmentation",
+        "dataset": "cellpose"
+      },
+      {
+        "domain": "ID",
+        "family": "分割",
+        "task": "segmentation",
+        "dataset": "conic"
+      },
+      {
+        "domain": "ID",
+        "family": "分割",
+        "task": "segmentation",
+        "dataset": "livecell"
+      },
+      {
+        "domain": "ID",
+        "family": "分割",
+        "task": "segmentation",
+        "dataset": "monuseg"
+      },
+      {
+        "domain": "ID",
+        "family": "分割",
+        "task": "segmentation",
+        "dataset": "pannuke"
+      },
+      {
+        "domain": "ID",
+        "family": "分割",
+        "task": "segmentation",
+        "dataset": "tissuenet"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "pcam"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "nct-crc-he"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "chammi-allen-task1"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "chammi-allen-task2"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "chammi-cp-task1"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "chammi-cp-task2"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "chammi-cp-task3"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "chammi-hpa-task1"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "chammi-hpa-task2"
+      },
+      {
+        "domain": "ID",
+        "family": "回归",
+        "task": "regression",
+        "dataset": "bbbc013"
+      },
+      {
+        "domain": "ID",
+        "family": "检索",
+        "task": "retrieval",
+        "dataset": "hpa-subcellular"
+      },
+      {
+        "domain": "ID",
+        "family": "检索",
+        "task": "retrieval",
+        "dataset": "rxrx1-cross"
+      },
+      {
+        "domain": "ID",
+        "family": "检索",
+        "task": "retrieval",
+        "dataset": "rxrx3-core"
+      },
+      {
+        "domain": "ID",
+        "family": "分割",
+        "task": "segmentation",
+        "dataset": "multimodal_cellseg"
+      },
+      {
+        "domain": "ID",
+        "family": "跟踪",
+        "task": "cell_tracking",
+        "dataset": "ctc"
+      },
+      {
+        "domain": "OOD",
+        "family": "异常检测",
+        "task": "ood",
+        "dataset": "xray"
+      },
+      {
+        "domain": "OOD",
+        "family": "异常检测",
+        "task": "ood",
+        "dataset": "cryo"
+      },
+      {
+        "domain": "ID",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "lc25000"
+      },
+      {
+        "domain": "ID",
+        "family": "回归",
+        "task": "regression",
+        "dataset": "conic-cell-count"
+      },
+      {
+        "domain": "ID",
+        "family": "回归",
+        "task": "regression",
+        "dataset": "livecell-cell-count"
+      },
+      {
+        "domain": "ID",
+        "family": "检索",
+        "task": "retrieval",
+        "dataset": "lc25000"
+      },
+      {
+        "domain": "ID",
+        "family": "检索",
+        "task": "retrieval",
+        "dataset": "nct-crc-he-100"
+      },
+      {
+        "domain": "ID",
+        "family": "聚类",
+        "task": "clustering",
+        "dataset": "lc25000"
+      },
+      {
+        "domain": "ID",
+        "family": "聚类",
+        "task": "clustering",
+        "dataset": "nct-crc-he-100"
+      },
+      {
+        "domain": "ID",
+        "family": "检测",
+        "task": "detection_proxy",
+        "dataset": "bbbc038"
+      },
+      {
+        "domain": "ID",
+        "family": "检测",
+        "task": "detection_proxy",
+        "dataset": "conic"
+      },
+      {
+        "domain": "ID",
+        "family": "检测",
+        "task": "detection_proxy",
+        "dataset": "livecell"
+      },
+      {
+        "domain": "ID",
+        "family": "聚类",
+        "task": "clustering",
+        "dataset": "nct-crc-he-1k"
+      },
+      {
+        "domain": "ID",
+        "family": "聚类",
+        "task": "clustering",
+        "dataset": "crc-val-he-7k"
+      },
+      {
+        "domain": "ID",
+        "family": "聚类",
+        "task": "clustering",
+        "dataset": "hpa-subcellular"
+      },
+      {
+        "domain": "ID",
+        "family": "聚类",
+        "task": "clustering",
+        "dataset": "rxrx1-cross"
+      },
+      {
+        "domain": "ID",
+        "family": "聚类",
+        "task": "clustering",
+        "dataset": "rxrx3-core"
+      },
+      {
+        "domain": "ID",
+        "family": "分割",
+        "task": "instance_segmentation",
+        "dataset": "bbbc038-official"
+      },
+      {
+        "domain": "OOD",
+        "family": "检测",
+        "task": "box_detection",
+        "dataset": "bbbc041"
+      },
+      {
+        "domain": "OOD",
+        "family": "检测",
+        "task": "box_detection",
+        "dataset": "bccd"
+      },
+      {
+        "domain": "OOD",
+        "family": "三维检测",
+        "task": "centroid_detection_3d",
+        "dataset": "spheroid_lsfm"
+      },
+      {
+        "domain": "OOD",
+        "family": "检测/分类/分割",
+        "task": "nuclei_detection_segmentation",
+        "dataset": "nucls_qc"
+      },
+      {
+        "domain": "OOD",
+        "family": "检测",
+        "task": "box_detection",
+        "dataset": "xray_chest"
+      },
+      {
+        "domain": "OOD",
+        "family": "回归",
+        "task": "bone_age_regression",
+        "dataset": "xray_bone"
+      },
+      {
+        "domain": "OOD",
+        "family": "分类",
+        "task": "classification",
+        "dataset": "film_age"
+      },
+      {
+        "domain": "ID",
+        "family": "回归",
+        "task": "regression",
+        "dataset": "allen-cell-volume"
+      }
+    ],
+    "ood_definition": "Imaging modalities absent from this DINOv3 backbone pretraining data; downstream splits and evaluation settings shared with FM."
+  }
+}

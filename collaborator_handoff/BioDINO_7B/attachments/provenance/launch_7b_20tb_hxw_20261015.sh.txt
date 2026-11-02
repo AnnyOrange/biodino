@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# ViT-7B/16 continual pretraining on the 20TB route2 mix, 4x RTX 5090 (32 GB) on 5090-hxw-xzj, FSDP2.
+#   usage: bash scripts/launch_7b_20tb_hxw_20261015.sh <gpus e.g. 4,5,6,7> <port> <out_dir>
+# Memory plan per rank (4 ranks): fp32 student shard 6.7 GB + fp32 grad shard 6.7 GB + bf16 block gathers + checkpointed
+# activations; EMA teacher on CPU (FSDP CPUOffloadPolicy); AdamW moments on CPU, stepped a few tensors at a time
+# (optim.cpu_offload_state + _chunked_offloaded_step). bf16 only (no torchao on hxw -> fp8 off).
+# Same data as the ViT-L 20TB trunk (30% 1TB+5TB curated, 70% route2 15TB) and the trunk's RGB statistics.
+set -euo pipefail
+GPUS=${1:?gpus}; PORT=${2:?port}; OUT=${3:?out_dir}
+REPO=${REPO:-/home/xzj/biodino_7b_20261015}
+PY=${PY:-/home/xzj/miniconda3/envs/dinov3/bin/python}
+INIT_W=${INIT_W:-/home/xzj/storage/merged/weights/dinov3_vit7b16_pretrain_lvd1689m-a955f4ea.pth}
+ONE_TB=${ONE_TB:-/data/microscopy-100k-patched}
+FOUR_TB=${FOUR_TB:-/home/xzj/storage/merged/4TB/wds_patched_shuffle}
+ROUTE2=${ROUTE2:-/home/xzj/storage/merged/15TB_from_20TB}
+DATA="mixwds_robust:0.09=$ONE_TB/filtered_mixed_train_w*.tar||0.21=$FOUR_TB/filtered_mixed_train*.tar||0.5581=$ROUTE2/filtered_projection_20TB_nested-r0*.tar||0.1419=$ROUTE2/filtered_projection_20TB_nested-r9*.tar::pct=1,99"
+NGPU=$(echo "$GPUS" | tr ',' '\n' | wc -l)
+BS=${BS:-8}; ACC=${ACC:-16}                       # 4 x 8 x 16 = 512 images per update
+EPOCH_LEN=${EPOCH_LEN:-500}; EPOCHS=${EPOCHS:-12}  # 6,000 updates = 3.07M images
+LR=${LR:-2e-5}; WARMUP_EPOCHS=${WARMUP_EPOCHS:-1}
+MAX_UPDATES=${MAX_UPDATES:-0}
+PERIOD=${PERIOD:-250}; EVAL_PERIOD=${EVAL_PERIOD:-250}
+CHUNK=${CHUNK:-16}; FP8=${FP8:-false}
+# INIT_W=none: random init (memory/speed smoke test only)
+[ "$INIT_W" = none ] && INIT_W="" || [ -f "$INIT_W" ] || { echo "missing $INIT_W"; exit 1; }
+mkdir -p "$OUT"
+extra=(); [ "$MAX_UPDATES" != 0 ] && extra+=(train.max_updates=$MAX_UPDATES)
+cat > "$OUT/launch_manifest.json" <<JSON
+{"time":"$(date -u +%FT%TZ)","host":"$(hostname)","gpus":"$GPUS","arch":"vit_7b","init":"$INIT_W",
+ "layout":"fsdp $NGPU ranks x bs$BS x acc$ACC = $((NGPU*BS*ACC)) per update","schedule":"$EPOCHS x $EPOCH_LEN updates, lr $LR, warmup $WARMUP_EPOCHS epoch(s)",
+ "offload":"teacher CPU (FSDP), AdamW moments CPU chunk=$CHUNK","fp8":"$FP8","dataset_path":"$DATA","code_tree":"$REPO"}
+JSON
+cd "$REPO"
+export PYTHONUNBUFFERED=1 PYTORCH_ALLOC_CONF=expandable_segments:True TORCH_NCCL_ASYNC_ERROR_HANDLING=1 NCCL_DEBUG=WARN NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1
+export OMP_NUM_THREADS=8 MALLOC_ARENA_MAX=4 PYTHONPATH=$REPO
+ulimit -n 65536 2>/dev/null || true
+CUDA_VISIBLE_DEVICES=$GPUS setsid nohup $PY -m torch.distributed.run --nnodes=1 --nproc_per_node=$NGPU --master_addr=127.0.0.1 --master_port=$PORT \
+  dinov3/train/train.py --config-file dinov3/configs/train/microscopy_continual_vit7b16_hs6.yaml --output-dir "$OUT" --seed 0 \
+  "train.dataset_path=$DATA" train.batch_size_per_gpu=$BS train.num_workers=${NUM_WORKERS:-6} train.prefetch_factor=2 train.wds_shuffle_buffer=1000 \
+  train.OFFICIAL_EPOCH_LENGTH=$EPOCH_LEN train.compile=false train.sync_grads_every_microstep=true train.checkpointing=true train.checkpointing_full=${CKPT_FULL:-true} train.sharded_eval_checkpoint=true \
+  compute_precision.distributed_mode=fsdp compute_precision.teacher_cpu_offload=${TEACHER_OFFLOAD:-true} \
+  "student.resume_from_teacher_chkpt=$INIT_W" student.fp8_enabled=$FP8 \
+  optim.epochs=$EPOCHS optim.lr=$LR optim.warmup_epochs=$WARMUP_EPOCHS optim.scaling_rule=fixed optim.gradient_accumulation_steps=$ACC \
+  optim.cpu_offload_state=true optim.cpu_offload_chunk_params=$CHUNK \
+  teacher.warmup_teacher_temp_epochs=$((EPOCHS * 2)) \
+  "crops.rgb_mean=[0.43700109438633017,0.4152422629198214,0.4177610059272783]" "crops.rgb_std=[0.34138578574532263,0.34111549859535956,0.3432925245219299]" \
+  evaluation.eval_period_iterations=$EVAL_PERIOD checkpointing.period=$PERIOD checkpointing.max_to_keep=2 checkpointing.sharded=true \
+  "${extra[@]}" > "$OUT/console.log" 2>&1 < /dev/null &
+echo "launched ViT-7B 20TB on GPUs $GPUS (pid $!) -> $OUT/console.log"

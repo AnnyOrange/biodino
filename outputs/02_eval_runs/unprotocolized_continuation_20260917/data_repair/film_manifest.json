@@ -1,0 +1,1647 @@
+{
+  "dataset": "FILM",
+  "task": "c_elegans_age_classification",
+  "protocol_source": "PROPOSED_BY_US",
+  "protocol_id": "film-age-grouped3fold-v1",
+  "official_split": "No released age-classification split; original study uses t-tests of lysosomal spectra",
+  "license": "CC BY 4.0",
+  "sources": {
+    "data": "https://api.figshare.com/v2/articles/31302607",
+    "paper": "https://www.nature.com/articles/s41592-026-03090-1",
+    "full_methods": "https://arxiv.org/abs/2504.04305v3",
+    "code": "https://github.com/buchenglab/SPEND"
+  },
+  "archive": {
+    "bytes": 1822990074,
+    "md5": "5cf65ce14edf0f770984f375abfa49d6",
+    "crc_valid": true
+  },
+  "classes": [
+    "D2",
+    "D4",
+    "D6",
+    "D10"
+  ],
+  "expected_stacks": 28,
+  "expected_groups": 27,
+  "class_counts": {
+    "D10": 7,
+    "D2": 7,
+    "D4": 7,
+    "D6": 7
+  },
+  "wavenumbers_cm_minus1": [
+    1000,
+    1008,
+    1017,
+    1026,
+    1035,
+    1044,
+    1049,
+    1053,
+    1057,
+    1062,
+    1066,
+    1071,
+    1075,
+    1080,
+    1089,
+    1093,
+    1098,
+    1102,
+    1111,
+    1120,
+    1129,
+    1138,
+    1147,
+    1156,
+    1165,
+    1168,
+    1174,
+    1177,
+    1183,
+    1186,
+    1192,
+    1201,
+    1210,
+    1214,
+    1217,
+    1223,
+    1226,
+    1232,
+    1235,
+    1238,
+    1244,
+    1250,
+    1254,
+    1259,
+    1266,
+    1272,
+    1275,
+    1281,
+    1289,
+    1297,
+    1302,
+    1306,
+    1311,
+    1315,
+    1324,
+    1333,
+    1342,
+    1351,
+    1356,
+    1365,
+    1370,
+    1378,
+    1384,
+    1391,
+    1396,
+    1400,
+    1406,
+    1410,
+    1421,
+    1427,
+    1433,
+    1442,
+    1450,
+    1460,
+    1469,
+    1474,
+    1478,
+    1484,
+    1493,
+    1502,
+    1513,
+    1518,
+    1526,
+    1529,
+    1536,
+    1547,
+    1551,
+    1555,
+    1563,
+    1566,
+    1572,
+    1581,
+    1584,
+    1587,
+    1597,
+    1605,
+    1611,
+    1619,
+    1625,
+    1630,
+    1639,
+    1643,
+    1649,
+    1656,
+    1659,
+    1665,
+    1673,
+    1678,
+    1681,
+    1686,
+    1692,
+    1702,
+    1708,
+    1711,
+    1721,
+    1727,
+    1736,
+    1741,
+    1744,
+    1749,
+    1754,
+    1764,
+    1777,
+    1782,
+    1788,
+    1797
+  ],
+  "grouping": "Named age/sample identity; D6_sample1 and fov2 inseparable; all planes/tiles remain together",
+  "preprocessing": "Released SPEND-denoised full stack; shared per-stack p1/p99 scaling and clipping; tensor CHW126; existing encoder resize256/center224",
+  "channel_policy": "mean3",
+  "channel_policy_candidates": [
+    "mean3",
+    "native (only true multichannel backbone)"
+  ],
+  "channel_policy_note": "mean3 is the existing fixed spectral-mean RGB baseline, not a chemically calibrated reconstruction; native preserves all126 bands",
+  "evaluator": "dinov3.eval.bio_frozen_eval.probes.run_classification_probe_split",
+  "feature_aggregation": "Average FOV features per named sample before fitting/scoring; equal weight per group",
+  "primary_metric": "balanced_accuracy",
+  "secondary_metrics": [
+    "accuracy",
+    "macro_f1"
+  ],
+  "aggregation": "Mean over three outer folds within each seed, then mean and population SD across seeds; save every fold; no independent-repetition CI claim",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "repetitions": [
+    {
+      "seed": 0,
+      "folds": [
+        {
+          "fold": 0,
+          "train_indices": [
+            1,
+            2,
+            3,
+            4,
+            7,
+            10,
+            11,
+            12,
+            14,
+            15,
+            16,
+            18,
+            21,
+            22,
+            24,
+            26,
+            27
+          ],
+          "test_indices": [
+            0,
+            5,
+            6,
+            8,
+            9,
+            13,
+            17,
+            19,
+            20,
+            23,
+            25
+          ],
+          "inner_folds": [
+            {
+              "fold": 0,
+              "train_indices": [
+                3,
+                4,
+                7,
+                10,
+                15,
+                16,
+                21,
+                22,
+                27
+              ],
+              "val_indices": [
+                1,
+                2,
+                11,
+                12,
+                14,
+                18,
+                24,
+                26
+              ]
+            },
+            {
+              "fold": 1,
+              "train_indices": [
+                1,
+                2,
+                4,
+                10,
+                11,
+                12,
+                14,
+                15,
+                18,
+                21,
+                22,
+                24,
+                26
+              ],
+              "val_indices": [
+                3,
+                7,
+                16,
+                27
+              ]
+            },
+            {
+              "fold": 2,
+              "train_indices": [
+                1,
+                2,
+                3,
+                7,
+                11,
+                12,
+                14,
+                16,
+                18,
+                24,
+                26,
+                27
+              ],
+              "val_indices": [
+                4,
+                10,
+                15,
+                21,
+                22
+              ]
+            }
+          ]
+        },
+        {
+          "fold": 1,
+          "train_indices": [
+            0,
+            2,
+            3,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            13,
+            14,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            25,
+            27
+          ],
+          "test_indices": [
+            1,
+            4,
+            11,
+            12,
+            15,
+            16,
+            24,
+            26
+          ],
+          "inner_folds": [
+            {
+              "fold": 0,
+              "train_indices": [
+                0,
+                3,
+                6,
+                8,
+                10,
+                13,
+                17,
+                18,
+                19,
+                23,
+                25
+              ],
+              "val_indices": [
+                2,
+                5,
+                7,
+                9,
+                14,
+                20,
+                21,
+                22,
+                27
+              ]
+            },
+            {
+              "fold": 1,
+              "train_indices": [
+                0,
+                2,
+                5,
+                7,
+                9,
+                10,
+                14,
+                18,
+                20,
+                21,
+                22,
+                23,
+                27
+              ],
+              "val_indices": [
+                3,
+                6,
+                8,
+                13,
+                17,
+                19,
+                25
+              ]
+            },
+            {
+              "fold": 2,
+              "train_indices": [
+                2,
+                3,
+                5,
+                6,
+                7,
+                8,
+                9,
+                13,
+                14,
+                17,
+                19,
+                20,
+                21,
+                22,
+                25,
+                27
+              ],
+              "val_indices": [
+                0,
+                10,
+                18,
+                23
+              ]
+            }
+          ]
+        },
+        {
+          "fold": 2,
+          "train_indices": [
+            0,
+            1,
+            4,
+            5,
+            6,
+            8,
+            9,
+            11,
+            12,
+            13,
+            15,
+            16,
+            17,
+            19,
+            20,
+            23,
+            24,
+            25,
+            26
+          ],
+          "test_indices": [
+            2,
+            3,
+            7,
+            10,
+            14,
+            18,
+            21,
+            22,
+            27
+          ],
+          "inner_folds": [
+            {
+              "fold": 0,
+              "train_indices": [
+                0,
+                4,
+                6,
+                9,
+                12,
+                13,
+                16,
+                17,
+                19,
+                24,
+                25
+              ],
+              "val_indices": [
+                1,
+                5,
+                8,
+                11,
+                15,
+                20,
+                23,
+                26
+              ]
+            },
+            {
+              "fold": 1,
+              "train_indices": [
+                0,
+                1,
+                5,
+                8,
+                11,
+                12,
+                15,
+                17,
+                20,
+                23,
+                24,
+                26
+              ],
+              "val_indices": [
+                4,
+                6,
+                9,
+                13,
+                16,
+                19,
+                25
+              ]
+            },
+            {
+              "fold": 2,
+              "train_indices": [
+                1,
+                4,
+                5,
+                6,
+                8,
+                9,
+                11,
+                13,
+                15,
+                16,
+                19,
+                20,
+                23,
+                25,
+                26
+              ],
+              "val_indices": [
+                0,
+                12,
+                17,
+                24
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "seed": 1,
+      "folds": [
+        {
+          "fold": 0,
+          "train_indices": [
+            2,
+            3,
+            4,
+            5,
+            7,
+            8,
+            9,
+            13,
+            16,
+            18,
+            19,
+            20,
+            23,
+            24,
+            25,
+            27
+          ],
+          "test_indices": [
+            0,
+            1,
+            6,
+            10,
+            11,
+            12,
+            14,
+            15,
+            17,
+            21,
+            22,
+            26
+          ],
+          "inner_folds": [
+            {
+              "fold": 0,
+              "train_indices": [
+                3,
+                5,
+                8,
+                9,
+                16,
+                19,
+                23,
+                24
+              ],
+              "val_indices": [
+                2,
+                4,
+                7,
+                13,
+                18,
+                20,
+                25,
+                27
+              ]
+            },
+            {
+              "fold": 1,
+              "train_indices": [
+                2,
+                3,
+                4,
+                7,
+                9,
+                13,
+                18,
+                19,
+                20,
+                24,
+                25,
+                27
+              ],
+              "val_indices": [
+                5,
+                8,
+                16,
+                23
+              ]
+            },
+            {
+              "fold": 2,
+              "train_indices": [
+                2,
+                4,
+                5,
+                7,
+                8,
+                13,
+                16,
+                18,
+                20,
+                23,
+                25,
+                27
+              ],
+              "val_indices": [
+                3,
+                9,
+                19,
+                24
+              ]
+            }
+          ]
+        },
+        {
+          "fold": 1,
+          "train_indices": [
+            0,
+            1,
+            4,
+            5,
+            6,
+            8,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            19,
+            21,
+            22,
+            24,
+            25,
+            26
+          ],
+          "test_indices": [
+            2,
+            3,
+            7,
+            9,
+            18,
+            20,
+            23,
+            27
+          ],
+          "inner_folds": [
+            {
+              "fold": 0,
+              "train_indices": [
+                0,
+                5,
+                6,
+                8,
+                10,
+                12,
+                14,
+                15,
+                16,
+                24,
+                26
+              ],
+              "val_indices": [
+                1,
+                4,
+                11,
+                13,
+                17,
+                19,
+                21,
+                22,
+                25
+              ]
+            },
+            {
+              "fold": 1,
+              "train_indices": [
+                0,
+                1,
+                4,
+                10,
+                11,
+                13,
+                15,
+                17,
+                19,
+                21,
+                22,
+                24,
+                25
+              ],
+              "val_indices": [
+                5,
+                6,
+                8,
+                12,
+                14,
+                16,
+                26
+              ]
+            },
+            {
+              "fold": 2,
+              "train_indices": [
+                1,
+                4,
+                5,
+                6,
+                8,
+                11,
+                12,
+                13,
+                14,
+                16,
+                17,
+                19,
+                21,
+                22,
+                25,
+                26
+              ],
+              "val_indices": [
+                0,
+                10,
+                15,
+                24
+              ]
+            }
+          ]
+        },
+        {
+          "fold": 2,
+          "train_indices": [
+            0,
+            1,
+            2,
+            3,
+            6,
+            7,
+            9,
+            10,
+            11,
+            12,
+            14,
+            15,
+            17,
+            18,
+            20,
+            21,
+            22,
+            23,
+            26,
+            27
+          ],
+          "test_indices": [
+            4,
+            5,
+            8,
+            13,
+            16,
+            19,
+            24,
+            25
+          ],
+          "inner_folds": [
+            {
+              "fold": 0,
+              "train_indices": [
+                0,
+                3,
+                6,
+                7,
+                9,
+                11,
+                14,
+                15,
+                17,
+                23,
+                27
+              ],
+              "val_indices": [
+                1,
+                2,
+                10,
+                12,
+                18,
+                20,
+                21,
+                22,
+                26
+              ]
+            },
+            {
+              "fold": 1,
+              "train_indices": [
+                0,
+                1,
+                2,
+                9,
+                10,
+                12,
+                15,
+                18,
+                20,
+                21,
+                22,
+                23,
+                26
+              ],
+              "val_indices": [
+                3,
+                6,
+                7,
+                11,
+                14,
+                17,
+                27
+              ]
+            },
+            {
+              "fold": 2,
+              "train_indices": [
+                1,
+                2,
+                3,
+                6,
+                7,
+                10,
+                11,
+                12,
+                14,
+                17,
+                18,
+                20,
+                21,
+                22,
+                26,
+                27
+              ],
+              "val_indices": [
+                0,
+                9,
+                15,
+                23
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "seed": 2,
+      "folds": [
+        {
+          "fold": 0,
+          "train_indices": [
+            0,
+            2,
+            4,
+            6,
+            7,
+            9,
+            11,
+            13,
+            14,
+            15,
+            18,
+            20,
+            21,
+            22,
+            23,
+            24,
+            26
+          ],
+          "test_indices": [
+            1,
+            3,
+            5,
+            8,
+            10,
+            12,
+            16,
+            17,
+            19,
+            25,
+            27
+          ],
+          "inner_folds": [
+            {
+              "fold": 0,
+              "train_indices": [
+                4,
+                6,
+                7,
+                11,
+                15,
+                18,
+                24,
+                26
+              ],
+              "val_indices": [
+                0,
+                2,
+                9,
+                13,
+                14,
+                20,
+                21,
+                22,
+                23
+              ]
+            },
+            {
+              "fold": 1,
+              "train_indices": [
+                0,
+                2,
+                6,
+                7,
+                9,
+                13,
+                14,
+                18,
+                20,
+                21,
+                22,
+                23,
+                26
+              ],
+              "val_indices": [
+                4,
+                11,
+                15,
+                24
+              ]
+            },
+            {
+              "fold": 2,
+              "train_indices": [
+                0,
+                2,
+                4,
+                9,
+                11,
+                13,
+                14,
+                15,
+                20,
+                21,
+                22,
+                23,
+                24
+              ],
+              "val_indices": [
+                6,
+                7,
+                18,
+                26
+              ]
+            }
+          ]
+        },
+        {
+          "fold": 1,
+          "train_indices": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            7,
+            8,
+            9,
+            10,
+            12,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            25,
+            26,
+            27
+          ],
+          "test_indices": [
+            0,
+            6,
+            11,
+            13,
+            14,
+            15,
+            23,
+            24
+          ],
+          "inner_folds": [
+            {
+              "fold": 0,
+              "train_indices": [
+                2,
+                3,
+                5,
+                8,
+                10,
+                12,
+                16,
+                17,
+                20,
+                21,
+                22,
+                25
+              ],
+              "val_indices": [
+                1,
+                4,
+                7,
+                9,
+                18,
+                19,
+                26,
+                27
+              ]
+            },
+            {
+              "fold": 1,
+              "train_indices": [
+                1,
+                4,
+                5,
+                7,
+                9,
+                10,
+                18,
+                19,
+                20,
+                21,
+                22,
+                26,
+                27
+              ],
+              "val_indices": [
+                2,
+                3,
+                8,
+                12,
+                16,
+                17,
+                25
+              ]
+            },
+            {
+              "fold": 2,
+              "train_indices": [
+                1,
+                2,
+                3,
+                4,
+                7,
+                8,
+                9,
+                12,
+                16,
+                17,
+                18,
+                19,
+                25,
+                26,
+                27
+              ],
+              "val_indices": [
+                5,
+                10,
+                20,
+                21,
+                22
+              ]
+            }
+          ]
+        },
+        {
+          "fold": 2,
+          "train_indices": [
+            0,
+            1,
+            3,
+            5,
+            6,
+            8,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            19,
+            23,
+            24,
+            25,
+            27
+          ],
+          "test_indices": [
+            2,
+            4,
+            7,
+            9,
+            18,
+            20,
+            21,
+            22,
+            26
+          ],
+          "inner_folds": [
+            {
+              "fold": 0,
+              "train_indices": [
+                1,
+                3,
+                6,
+                10,
+                12,
+                13,
+                14,
+                15,
+                19,
+                23,
+                24
+              ],
+              "val_indices": [
+                0,
+                5,
+                8,
+                11,
+                16,
+                17,
+                25,
+                27
+              ]
+            },
+            {
+              "fold": 1,
+              "train_indices": [
+                0,
+                5,
+                6,
+                8,
+                11,
+                12,
+                16,
+                17,
+                19,
+                23,
+                25,
+                27
+              ],
+              "val_indices": [
+                1,
+                3,
+                10,
+                13,
+                14,
+                15,
+                24
+              ]
+            },
+            {
+              "fold": 2,
+              "train_indices": [
+                0,
+                1,
+                3,
+                5,
+                8,
+                10,
+                11,
+                13,
+                14,
+                15,
+                16,
+                17,
+                24,
+                25,
+                27
+              ],
+              "val_indices": [
+                6,
+                12,
+                19,
+                23
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "records": [
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample1 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample1 mipf.tif",
+      "group_id": "D10_sample1",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "5310d3cdf11eb70bdb5afb2ac9bd5610b59cdd30492e099b6b38f090f40b721c",
+      "pixel_sha256": "608c5fc2f065342bfb217769d9c9cae90a90024f0608d74a2d1ed215ff95bc8f"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample2 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample2 mipf.tif",
+      "group_id": "D10_sample2",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "65b51fd83c755a1586651069fc09ece3b04a08a808344ed7b7e172503bf4c9f9",
+      "pixel_sha256": "a34da84473800641db8d59061807b3267f0d1d1ce5b334e36a31e3f497d3682f"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample3 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample3 mipf.tif",
+      "group_id": "D10_sample3",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "b30cbf544b19581806682fd74a34ef020ab1c30498779e8186ce6d15756bf85a",
+      "pixel_sha256": "22b4edc11eae6ac1686cfdf9d5df08757126fbcfaf2cb374a0d5e4f0730d734f"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample4 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample4 mipf.tif",
+      "group_id": "D10_sample4",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "2d7f165a6d240880523c1f235910945adef8897c70dd11dd1305baf258b9b8b7",
+      "pixel_sha256": "42d662da4c7f3e0c28fb881cb0bdae5e61f3de59a7254521ade97a7a82fc8704"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample5 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample5 mipf.tif",
+      "group_id": "D10_sample5",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "bd7dc8cc351be7ca796dec3b9093466bf8bba6c3c2a68697c79e6d9585c898e3",
+      "pixel_sha256": "a8345ca5e49b28ee8d3b8cd75433ec312001017b6a710f3b05d868dc0d81c490"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample6 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample6 mipf.tif",
+      "group_id": "D10_sample6",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "80557ff1b5f3613f7b69a7ee17bd0ff869fee8ecb6ac55dcf72da384f89ac746",
+      "pixel_sha256": "4548a96d1d2fa83e4b2cf4dcadb6752c76ce914efc917dd683e21fcde61c1d2b"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample7 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample7 mipf.tif",
+      "group_id": "D10_sample7",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "83de254e1cf92e5794dd91450c6f5728d4c8b5e23e59ec1d1d0b9f7268b53edd",
+      "pixel_sha256": "1dcc2904e4a3d9b80bd92c89fb6bd6663071f629851be408a202ee070e80198c"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample1 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample1 mipf.tif",
+      "group_id": "D2_sample1",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "3657c582424d48cecbac046ecf8bd4ceeca614b9bb9a76490e86c86453f3cb75",
+      "pixel_sha256": "d4f4262e4e9c3156d1e4a08e32a56c68cef4f74276889cb4c9fdcab7c80a893c"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample2 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample2 mipf.tif",
+      "group_id": "D2_sample2",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "6c8438270bea89801e9db09c3ca91424260b1c5cfaaa385ea6660b6c1432cd79",
+      "pixel_sha256": "6142d06dfcbd129e6c0aace17f686171ce37f2f328e2bd8dc9461e280f2ba248"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample3 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample3 mipf.tif",
+      "group_id": "D2_sample3",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "5f95ecc5e65974a0cabd0605be523d7b20c8e86e8e2513a58ba52913947710ab",
+      "pixel_sha256": "89707c53d744d93637f3f70d9aaf8316b987b89c2657d8a44c59156138c3d174"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample4 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample4 mipf.tif",
+      "group_id": "D2_sample4",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "b919d608bfe466e0e020b71f774aef207f978f99a2d801869e89455ee9c708db",
+      "pixel_sha256": "90fb5e69fece3dc1f7cc08acb412fe8c441b257730f1c04f1d19243df1cd87d3"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample5 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample5 mipf.tif",
+      "group_id": "D2_sample5",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "4f00ff7b9297c645e0d5c8fe92fa2457d029e2f317b047f8016811754cd83d46",
+      "pixel_sha256": "e2b8408f531901c92c19b4a57837b7134b8adbe297abec1806c78c720e98de5c"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample6 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample6 mipf.tif",
+      "group_id": "D2_sample6",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "8333b178c2f229474b4783c90aed28bd22e5d84d6a584de41a7b1a84686347fc",
+      "pixel_sha256": "bbcf843d5f3071ca1b7aeee2a5b3aa585872f864705d2dcda9682a77566eb72d"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample7 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample7 mipf.tif",
+      "group_id": "D2_sample7",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "b7bd63a32e265928ade047758142a6abe76f551f5e6e44e7fe1c10345b97051a",
+      "pixel_sha256": "43c6059e60197cd70b4e6c2672e6f58f81d28a6a571e51c4ab006631bd691a37"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample1 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample1 mipf.tif",
+      "group_id": "D4_sample1",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "b7fd2021f2ee940a4397f4d39093935c2f028d430c941a8b9d1b8da186deefe6",
+      "pixel_sha256": "431ee755be4e25eee2856e1f6bc600ea493ad35ba325d7bdc36915af1660f73c"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample2 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample2 mipf.tif",
+      "group_id": "D4_sample2",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "dbdaea5d06e013bbf86ec00af584fa6c5c7c6851a9fc1fdcf70d8f17ee89eedf",
+      "pixel_sha256": "ad88e6118cb5359e5034beafba0a6473115c3898d1b18cb45ed8ee789266dc75"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample3 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample3 mipf.tif",
+      "group_id": "D4_sample3",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "308951bbdcd2aea6628fa7b1964334868e8cdf465af4b31bd494e25d9f16f8ff",
+      "pixel_sha256": "831f1e6045aa8bfa3113e22c7740d1ea058285299fc214f62a0773520201a519"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample4 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample4 mipf.tif",
+      "group_id": "D4_sample4",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "2716fcdde26179bc4d9f7de967bb9115930ce9aba0a2171765f798e47853e3e5",
+      "pixel_sha256": "48d9a293db60d025b63ca13f0b4af137c8f00703025fba670c48a7d908a537c4"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample5 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample5 mipf.tif",
+      "group_id": "D4_sample5",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "13c2db0afdb7ab68cc0c47bcdf2ef24198c327f090ca340ccb6b11d1ca2e979a",
+      "pixel_sha256": "1de3e3411472be5937a97a1a1de74831b7f654f6e751be72e39ff0e075a31643"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample6 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample6 mipf.tif",
+      "group_id": "D4_sample6",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "2137b29b6f29f3d617ee07fd6d7d162b2d80ced770ea30d183513db414d3d848",
+      "pixel_sha256": "3d21ef1be65bc6ce0b2d134834a0c97c8eb3f90452bffe7e1d32c3eb21dcebef"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample7 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample7 mipf.tif",
+      "group_id": "D4_sample7",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "5101183ae1a009aef3f0967316ad50265b02720c676a2af2497b45321c6b59a0",
+      "pixel_sha256": "e848b5077b6f1e92e77bf7a5ce0e20cba50b92672338918a4742a362bb0ab689"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample1 fov2 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample1 fov2 mipf.tif",
+      "group_id": "D6_sample1",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "8b5066474ca1d4764cd52bcad45368fa78a19f8ce1da98859ac1d7ab0a9cc850",
+      "pixel_sha256": "b5db09a8723bc10c3f8f431d0caef8051f253d4cc77cf07cd45aef39b63f413b"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample1 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample1 mipf.tif",
+      "group_id": "D6_sample1",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "ead3cfd0979b3e0becc4405b183ce6f99847247721caa2c0563df752f8bc0066",
+      "pixel_sha256": "a4fbd9e46c4c54b3772f5057845aeceb159ef4e4767d1b2024c5598279520d28"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample2 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample2 mipf.tif",
+      "group_id": "D6_sample2",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "f5f3a8bd6101b9c592dd96b6f68bcfb717be220d1c6d4f004050c40ec46934ac",
+      "pixel_sha256": "ec3da16306fff586af3cdb436c2f050e3a6bbc2eeb3706c25867c7adf2a37ccb"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample3 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample3 mipf.tif",
+      "group_id": "D6_sample3",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "e88185eae7a19c1edb2ea294678c5bdc91106f1bdc3c62462e3964c5f2e3d24a",
+      "pixel_sha256": "9790d409071e6b44759e2333316f20a12ea3a27caa699095440328319abbf201"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample4 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample4 mipf.tif",
+      "group_id": "D6_sample4",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "e39f1b0a74fa67ca619e5f7a99936d937fe2ce3d52e1eb141b9f6a68f4396a48",
+      "pixel_sha256": "9a7f6bc8aaa3dff2d74b6ba913b5b626561f0dbec489a00919def37d12c7e2e2"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample5 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample5 mipf.tif",
+      "group_id": "D6_sample5",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "8f20295b37bdef3c198624ad535c58af1785625ac7e3b97d945db5a8793557c2",
+      "pixel_sha256": "db632ab914da7e3f2e7cedb7038405069a8811ab40e3255bc64d9da1818f2ebc"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample6 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample6 mipf.tif",
+      "group_id": "D6_sample6",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "3682928c6fad4be5fb5dc9003d037923d27b78a832ca5b37d99fe79b94c20d67",
+      "pixel_sha256": "829a993edc3621152ad1949848e761418f1fd4c8fa0c185ffb2a423b857e0029"
+    }
+  ],
+  "proposed_search": {
+    "features": [
+      "last",
+      "4-even"
+    ],
+    "logistic_C": [
+      0.01,
+      0.1,
+      1,
+      10,
+      100
+    ],
+    "max_iter": 10000
+  },
+  "selection": "Within each outer fold select on1TB inner grouped3fold validation only, freeze fold-specific feature/C/channel config, reuse exactly on5TB/20TB; no outer-test selection",
+  "selected_using_1TB": false,
+  "frozen": false,
+  "data_preflight": "PASS",
+  "limitations": [
+    "Only27 observed named samplegroups; biological batch/animal linkage beyond filenames unavailable",
+    "Observational age labels; not an official classification benchmark",
+    "Author SPEND training provenance is not assigned to our folds; released denoised-data benchmark only",
+    "No fluorescence/power spectral calibration or lysosome segmentation reconstructed; not paper quantitative metabolic assay"
+  ],
+  "loader_smoke": {
+    "status": "PASS",
+    "all_stacks_read": 28
+  }
+}

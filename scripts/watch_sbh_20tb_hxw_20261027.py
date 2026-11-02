@@ -47,6 +47,10 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         return
+    if (root / 'STOP_AFTER_TARGET_CHECKPOINTS.json').exists():
+        subprocess.run(['/usr/bin/python3', str(Path(__file__).with_name(
+            'stop_sbh_after_target_checkpoints_20261030.py')), '--campaign', str(root)],
+            check=True, timeout=45)
     plan = read(root / 'plan.json')
     supervisor = str(Path(plan['snapshot']) / 'scripts/supervise_sbh_20tb_hxw_20261027.py')
     if not matching_processes(supervisor, root) and not (root / 'STOP_NEW_TRAINING').exists():
@@ -148,7 +152,8 @@ def main():
         for pid in supervisors:
             os.kill(pid, signal.SIGTERM)
         supervisors = []
-    if manifest['tasks'] and not supervisors and not capacity_policy.get('deployment_pending'):
+    if (manifest['tasks'] and not supervisors and not capacity_policy.get('deployment_pending')
+            and not (root / 'PAUSE_NEW_EVALUATION').exists()):
         launch([plan['python'], runner, '--repo', str(repo), '--campaign', str(eval_root),
                 '--python', plan['python'], '--gpus', *map(str, eval_gpus), '--max-per-gpu', '5',
                 '--ceiling', '0.80', '--minimum-free-ram-mib', '65536'], root / 'eval_supervisor.log')

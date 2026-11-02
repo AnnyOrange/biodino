@@ -16,14 +16,20 @@ def alive(host,pid):
  except subprocess.TimeoutExpired:return True
 
 def recover():
- claims=[];hosts={};children_by_owner={}
+ claims=[];orphaned=[];hosts={};children_by_owner={}
  for p in (OUT/'states').glob('worker_*.json'):
   state=load(p)
   if state.get('child_pid'):children_by_owner.setdefault((state.get('host'),state.get('pid')),[]).append(state['child_pid'])
  for claim in (OUT/'locks').glob('*.claimdir'):
   owner=claim/'owner.json'
   try:raw=os.readlink(claim)if claim.is_symlink()else owner.read_text();d=json.loads(raw)
-  except (FileNotFoundError,json.JSONDecodeError):continue
+  except FileNotFoundError:
+   try:
+    if claim.is_dir() and not claim.is_symlink() and time.time()-claim.stat().st_mtime>300 and not any(claim.iterdir()):
+     orphaned.append((claim,claim.stat().st_mtime_ns))
+   except FileNotFoundError:pass
+   continue
+  except json.JSONDecodeError:continue
   pids={p for p in [d['pid'],d.get('child_pid'),*children_by_owner.get((d['host'],d['pid']),[])] if p}
   hosts.setdefault(d['host'],set()).update(pids);claims.append((claim,raw,d,pids))
  def inspect(item):
@@ -45,6 +51,13 @@ def recover():
   archive=OUT/'recovered_locks';archive.mkdir(exist_ok=True)
   claim.rename(archive/f'{claim.name}.{time.time_ns()}')
   print('recovered dead owner',d,flush=True)
+ for claim,mtime in orphaned:
+  try:
+   if claim.stat().st_mtime_ns!=mtime or (claim/'owner.json').exists() or any(claim.iterdir()):continue
+   archive=OUT/'recovered_locks';archive.mkdir(exist_ok=True)
+   claim.rename(archive/f'{claim.name}.{time.time_ns()}')
+   print('recovered empty ownerless claim',claim.name,flush=True)
+  except FileNotFoundError:continue
 
 def load(path):
  for attempt in range(3):

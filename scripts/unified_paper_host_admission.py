@@ -16,6 +16,11 @@ DIRECTORY = Path('/tmp') / f'dinov3-host-admission-{os.getuid()}'
 
 
 def expected_peak(entry):
+    # Spheroid streams one 46x256x256 patch; frozen feature files are loaded
+    # one at a time, with no DataLoader/process pool. 16 GiB includes L loader
+    # copies, CUDA host workspace and the bounded volume decoder.
+    if entry == 'run_unified_paper_spheroid.py':
+        return 16 * GIB
     return (96 if 'ctc' in entry else 32) * GIB
 
 

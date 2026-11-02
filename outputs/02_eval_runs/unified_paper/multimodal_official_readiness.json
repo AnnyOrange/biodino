@@ -1,0 +1,29 @@
+{
+  "protocol": "neurips22-author-public52-v2",
+  "root": "/mnt/huawei_deepcad/benchmark/segmentation/Multimodal_CellSeg/neurips22_cellseg",
+  "counts": {
+    "train": 1000,
+    "val": 101,
+    "test": 52
+  },
+  "archive_md5": {
+    "Training-labeled.zip": "8eb178393f004a4634acc8fc75abfdee",
+    "Tuning.zip": "0b614e6a3a1cfc99ad424ce341bce12e",
+    "Testing.zip": "3e91a3a9f39e2af225e7e6b3ea1dc31d"
+  },
+  "source": "https://zenodo.org/records/10719375",
+  "split_origin": "Author labeled training1000, tuning101, public testing50microscopy+2WSI; hidden400images lack released labels and are not scored",
+  "task": "Existing binary semantic frozen probe, not official instance-segmentation leaderboard",
+  "group_limitation": "Original image identity retained; biological donor and acquisition mapping not supplied",
+  "manifests": {
+    "train": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/unified_paper/manifests/neurips22-author-public52-v2/train.csv",
+    "val": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/unified_paper/manifests/neurips22-author-public52-v2/val.csv",
+    "test": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/unified_paper/manifests/neurips22-author-public52-v2/test.csv"
+  },
+  "manifest_sha256": {
+    "train": "6bcc726b8bd3dc3acf761886c53e0cac821b2e6c0bd625ccee7a27a636ac7d39",
+    "val": "833423bce65f916942a0183b5cbffd5c1d715d25858f91cd904fe2a728547128",
+    "test": "a7f77a24beb1107c06e014dc207cbfe8e79d804989777141fbee0740714e112a"
+  },
+  "correction": "Old global basename join paired Tuning images to Training masks; all old formal-static-v1 scores rejected; all models require fresh common fits"
+}

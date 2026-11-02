@@ -1,0 +1,92 @@
+[
+  {
+    "entrypoint": "run_unified_paper_bbbc038_official.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_biodino_segmentation_cache.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_bone_age.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_ctc.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_detection.py",
+    "returncode": 0,
+    "error": "can't import openpyxl package\n"
+  },
+  {
+    "entrypoint": "run_unified_paper_film.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_global.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_hpa_retrieval.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_lc25000_grouped.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_native_detection.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_nucls.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_ood.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_retrieval.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_rsna.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_rxrx1.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_rxrx3.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_segmentation.py",
+    "returncode": 0,
+    "error": ""
+  },
+  {
+    "entrypoint": "run_unified_paper_spheroid.py",
+    "returncode": 0,
+    "error": ""
+  }
+]

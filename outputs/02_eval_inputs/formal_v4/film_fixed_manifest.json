@@ -1,0 +1,461 @@
+{
+  "protocol": "film-fixed-biological-groups-linear5-v1",
+  "source_manifest": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_runs/unprotocolized_continuation_20260917/data_repair/film_manifest.json",
+  "source_manifest_sha256": "267dc61e1a624b2071fa44e1b8acec6f4330908025e1f69d9cbbfd54f3580d11",
+  "records": [
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample1 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample1 mipf.tif",
+      "group_id": "D10_sample1",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "5310d3cdf11eb70bdb5afb2ac9bd5610b59cdd30492e099b6b38f090f40b721c",
+      "pixel_sha256": "608c5fc2f065342bfb217769d9c9cae90a90024f0608d74a2d1ed215ff95bc8f"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample2 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample2 mipf.tif",
+      "group_id": "D10_sample2",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "65b51fd83c755a1586651069fc09ece3b04a08a808344ed7b7e172503bf4c9f9",
+      "pixel_sha256": "a34da84473800641db8d59061807b3267f0d1d1ce5b334e36a31e3f497d3682f"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample3 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample3 mipf.tif",
+      "group_id": "D10_sample3",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "b30cbf544b19581806682fd74a34ef020ab1c30498779e8186ce6d15756bf85a",
+      "pixel_sha256": "22b4edc11eae6ac1686cfdf9d5df08757126fbcfaf2cb374a0d5e4f0730d734f"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample4 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample4 mipf.tif",
+      "group_id": "D10_sample4",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "2d7f165a6d240880523c1f235910945adef8897c70dd11dd1305baf258b9b8b7",
+      "pixel_sha256": "42d662da4c7f3e0c28fb881cb0bdae5e61f3de59a7254521ade97a7a82fc8704"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample5 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample5 mipf.tif",
+      "group_id": "D10_sample5",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "bd7dc8cc351be7ca796dec3b9093466bf8bba6c3c2a68697c79e6d9585c898e3",
+      "pixel_sha256": "a8345ca5e49b28ee8d3b8cd75433ec312001017b6a710f3b05d868dc0d81c490"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample6 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample6 mipf.tif",
+      "group_id": "D10_sample6",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "80557ff1b5f3613f7b69a7ee17bd0ff869fee8ecb6ac55dcf72da384f89ac746",
+      "pixel_sha256": "4548a96d1d2fa83e4b2cf4dcadb6752c76ce914efc917dd683e21fcde61c1d2b"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample7 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D10/my_model_Jianpeng_master_4unet_sample7 mipf.tif",
+      "group_id": "D10_sample7",
+      "age": "D10",
+      "target": 3,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "83de254e1cf92e5794dd91450c6f5728d4c8b5e23e59ec1d1d0b9f7268b53edd",
+      "pixel_sha256": "1dcc2904e4a3d9b80bd92c89fb6bd6663071f629851be408a202ee070e80198c"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample1 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample1 mipf.tif",
+      "group_id": "D2_sample1",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "3657c582424d48cecbac046ecf8bd4ceeca614b9bb9a76490e86c86453f3cb75",
+      "pixel_sha256": "d4f4262e4e9c3156d1e4a08e32a56c68cef4f74276889cb4c9fdcab7c80a893c"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample2 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample2 mipf.tif",
+      "group_id": "D2_sample2",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "6c8438270bea89801e9db09c3ca91424260b1c5cfaaa385ea6660b6c1432cd79",
+      "pixel_sha256": "6142d06dfcbd129e6c0aace17f686171ce37f2f328e2bd8dc9461e280f2ba248"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample3 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample3 mipf.tif",
+      "group_id": "D2_sample3",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "5f95ecc5e65974a0cabd0605be523d7b20c8e86e8e2513a58ba52913947710ab",
+      "pixel_sha256": "89707c53d744d93637f3f70d9aaf8316b987b89c2657d8a44c59156138c3d174"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample4 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample4 mipf.tif",
+      "group_id": "D2_sample4",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "b919d608bfe466e0e020b71f774aef207f978f99a2d801869e89455ee9c708db",
+      "pixel_sha256": "90fb5e69fece3dc1f7cc08acb412fe8c441b257730f1c04f1d19243df1cd87d3"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample5 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample5 mipf.tif",
+      "group_id": "D2_sample5",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "4f00ff7b9297c645e0d5c8fe92fa2457d029e2f317b047f8016811754cd83d46",
+      "pixel_sha256": "e2b8408f531901c92c19b4a57837b7134b8adbe297abec1806c78c720e98de5c"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample6 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample6 mipf.tif",
+      "group_id": "D2_sample6",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "8333b178c2f229474b4783c90aed28bd22e5d84d6a584de41a7b1a84686347fc",
+      "pixel_sha256": "bbcf843d5f3071ca1b7aeee2a5b3aa585872f864705d2dcda9682a77566eb72d"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample7 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D2/my_model_Jianpeng_4unet_sample7 mipf.tif",
+      "group_id": "D2_sample7",
+      "age": "D2",
+      "target": 0,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "b7bd63a32e265928ade047758142a6abe76f551f5e6e44e7fe1c10345b97051a",
+      "pixel_sha256": "43c6059e60197cd70b4e6c2672e6f58f81d28a6a571e51c4ab006631bd691a37"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample1 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample1 mipf.tif",
+      "group_id": "D4_sample1",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "b7fd2021f2ee940a4397f4d39093935c2f028d430c941a8b9d1b8da186deefe6",
+      "pixel_sha256": "431ee755be4e25eee2856e1f6bc600ea493ad35ba325d7bdc36915af1660f73c"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample2 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample2 mipf.tif",
+      "group_id": "D4_sample2",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "dbdaea5d06e013bbf86ec00af584fa6c5c7c6851a9fc1fdcf70d8f17ee89eedf",
+      "pixel_sha256": "ad88e6118cb5359e5034beafba0a6473115c3898d1b18cb45ed8ee789266dc75"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample3 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample3 mipf.tif",
+      "group_id": "D4_sample3",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "308951bbdcd2aea6628fa7b1964334868e8cdf465af4b31bd494e25d9f16f8ff",
+      "pixel_sha256": "831f1e6045aa8bfa3113e22c7740d1ea058285299fc214f62a0773520201a519"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample4 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample4 mipf.tif",
+      "group_id": "D4_sample4",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "2716fcdde26179bc4d9f7de967bb9115930ce9aba0a2171765f798e47853e3e5",
+      "pixel_sha256": "48d9a293db60d025b63ca13f0b4af137c8f00703025fba670c48a7d908a537c4"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample5 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample5 mipf.tif",
+      "group_id": "D4_sample5",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "13c2db0afdb7ab68cc0c47bcdf2ef24198c327f090ca340ccb6b11d1ca2e979a",
+      "pixel_sha256": "1de3e3411472be5937a97a1a1de74831b7f654f6e751be72e39ff0e075a31643"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample6 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample6 mipf.tif",
+      "group_id": "D4_sample6",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "2137b29b6f29f3d617ee07fd6d7d162b2d80ced770ea30d183513db414d3d848",
+      "pixel_sha256": "3d21ef1be65bc6ce0b2d134834a0c97c8eb3f90452bffe7e1d32c3eb21dcebef"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample7 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D4/my_model_Jianpeng_4unet_sample7 mipf.tif",
+      "group_id": "D4_sample7",
+      "age": "D4",
+      "target": 1,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "5101183ae1a009aef3f0967316ad50265b02720c676a2af2497b45321c6b59a0",
+      "pixel_sha256": "e848b5077b6f1e92e77bf7a5ce0e20cba50b92672338918a4742a362bb0ab689"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample1 fov2 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample1 fov2 mipf.tif",
+      "group_id": "D6_sample1",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "8b5066474ca1d4764cd52bcad45368fa78a19f8ce1da98859ac1d7ab0a9cc850",
+      "pixel_sha256": "b5db09a8723bc10c3f8f431d0caef8051f253d4cc77cf07cd45aef39b63f413b"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample1 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample1 mipf.tif",
+      "group_id": "D6_sample1",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "ead3cfd0979b3e0becc4405b183ce6f99847247721caa2c0563df752f8bc0066",
+      "pixel_sha256": "a4fbd9e46c4c54b3772f5057845aeceb159ef4e4767d1b2024c5598279520d28"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample2 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample2 mipf.tif",
+      "group_id": "D6_sample2",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "f5f3a8bd6101b9c592dd96b6f68bcfb717be220d1c6d4f004050c40ec46934ac",
+      "pixel_sha256": "ec3da16306fff586af3cdb436c2f050e3a6bbc2eeb3706c25867c7adf2a37ccb"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample3 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample3 mipf.tif",
+      "group_id": "D6_sample3",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "e88185eae7a19c1edb2ea294678c5bdc91106f1bdc3c62462e3964c5f2e3d24a",
+      "pixel_sha256": "9790d409071e6b44759e2333316f20a12ea3a27caa699095440328319abbf201"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample4 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample4 mipf.tif",
+      "group_id": "D6_sample4",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "e39f1b0a74fa67ca619e5f7a99936d937fe2ce3d52e1eb141b9f6a68f4396a48",
+      "pixel_sha256": "9a7f6bc8aaa3dff2d74b6ba913b5b626561f0dbec489a00919def37d12c7e2e2"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample5 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample5 mipf.tif",
+      "group_id": "D6_sample5",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "8f20295b37bdef3c198624ad535c58af1785625ac7e3b97d945db5a8793557c2",
+      "pixel_sha256": "db632ab914da7e3f2e7cedb7038405069a8811ab40e3255bc64d9da1818f2ebc"
+    },
+    {
+      "sample_id": "Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample6 mipf.tif",
+      "path": "extracted/Fig4 Aging/replicates/D6/my_model_Jianpeng_master_4unet_sample6 mipf.tif",
+      "group_id": "D6_sample6",
+      "age": "D6",
+      "target": 2,
+      "shape": [
+        126,
+        200,
+        200
+      ],
+      "sha256": "3682928c6fad4be5fb5dc9003d037923d27b78a832ca5b37d99fe79b94c20d67",
+      "pixel_sha256": "829a993edc3621152ad1949848e761418f1fd4c8fa0c185ffb2a423b857e0029"
+    }
+  ],
+  "splits": {
+    "train": [
+      3,
+      4,
+      7,
+      10,
+      15,
+      16,
+      21,
+      22,
+      27
+    ],
+    "val": [
+      1,
+      2,
+      11,
+      12,
+      14,
+      18,
+      24,
+      26
+    ],
+    "test": [
+      0,
+      5,
+      6,
+      8,
+      9,
+      13,
+      17,
+      19,
+      20,
+      23,
+      25
+    ]
+  },
+  "split_origin": "Reuse existing seed0 outer fold0 test and inner fold0 train/validation, fixed once before model extraction; no new per-seed split.",
+  "split_counts": {
+    "train": 8,
+    "val": 8,
+    "test": 11
+  },
+  "preprocessing": "Shared raw126-band stack p1/p99, spectral mean replicated RGB, resize256/crop224; published encoder normalization",
+  "feature": "Frozen final CLS + patch mean (published no-CLS fallback); no 4-even selection",
+  "head": "Train-only StandardScaler; torch Linear(D,4); class-balanced CE; full-batch Adam lr0.001 wd0; 500 epochs; validation balanced_accuracy every25epochs, tie earliest. Seeds0..4 change head initialization only.",
+  "epochs": 500,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "primary_metric": "balanced_accuracy",
+  "official": false,
+  "reason": "Later fixed-test seed supplement supersedes earlier repeated outer-split development; source task is project-defined age classification, not source-author assay.",
+  "limitations": [
+    "Only27 observed named samplegroups; biological batch/animal linkage beyond filenames unavailable",
+    "Observational age labels; not an official classification benchmark",
+    "Author SPEND training provenance is not assigned to our folds; released denoised-data benchmark only",
+    "No fluorescence/power spectral calibration or lysosome segmentation reconstructed; not paper quantitative metabolic assay"
+  ]
+}

@@ -91,7 +91,7 @@ def run_ctc(invocation, output):
     else:
         from omegaconf import OmegaConf
         config = OmegaConf.load(invocation['checkpoint']['config_path'])
-        layer = {'vit_small': 11, 'vit_base': 11, 'vit_large': 23, 'vit_huge2': 31}[config.student.arch]
+        layer = {'vit_small': 11, 'vit_base': 11, 'vit_large': 23, 'vit_huge2': 31, 'vit_7b': 39}[config.student.arch]
         model = build_dino_hovernet(checkpoint=invocation['checkpoint']['path'],
             train_config=invocation['checkpoint']['config_path'], layers=[layer],
             num_types=0, freeze_backbone=True, feature_size=32, embed_proj=384, device=torch.device('cuda:0'))

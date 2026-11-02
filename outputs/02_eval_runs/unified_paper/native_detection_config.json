@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "implementation": "dinov3.eval.bio_detection.native",
+  "protocol_source": "PROPOSED_BY_US",
+  "task": "Native bounding-box detection, not center classification/count proxy",
+  "evaluator": "Torchvision Faster R-CNN frozen DINOBackbone, trainable1x1 neck256/RPN/RoI heads; pycocotools COCO-style AP maxDets300",
+  "selection_model_budget": "fixed declared model checkpoint",
+  "frozen": false,
+  "selected_hyperparameters": null,
+  "seed": 0,
+  "search": {
+    "features": [
+      "last"
+    ],
+    "learning_rate": [
+      0.001,
+      0.005
+    ],
+    "epochs": [
+      10
+    ],
+    "weight_decay": [
+      0.0005
+    ],
+    "momentum": [
+      0.9
+    ],
+    "schedule": "StepLR every3epochs gamma0.1"
+  },
+  "preprocessing": {
+    "min_size": 512,
+    "max_size": 1024,
+    "full_field": true,
+    "normalization": "Torchvision ImageNet RGB",
+    "frozen_backbone_autocast": "bf16",
+    "head_dtype": "float32",
+    "augmentation": "none",
+    "rpn_anchor_sizes": [
+      16,
+      32,
+      64,
+      128,
+      256
+    ],
+    "aspect_ratios": [
+      0.5,
+      1.0,
+      2.0
+    ]
+  },
+  "primary_metric": "bbox_ap_50_95",
+  "direction": "max",
+  "aggregation": "Native image/object COCO-style interpolation, all images and negative images retained; maxDets300 is a declared crowded-microscopy extension to default100",
+  "datasets": {
+    "BCCD": {
+      "split_source": "OFFICIAL",
+      "grouping": "Released source image; patient provenance unavailable",
+      "split": "205train/87validation/72test",
+      "license": "MIT",
+      "box_convention": "Released continuous XYXY, no invented one-pixel shift",
+      "cleaning_source": "PROPOSED_BY_US",
+      "quarantine": "Only two source-degenerate point objects in BloodImage_00343 and BloodImage_00338; retain allotherboxes andimages",
+      "source": "https://github.com/Shenggan/BCCD_Dataset",
+      "data_preflight": "PASS_FULL_DECODE_CLASS_BOX_SPLIT_AND_PIXEL_DUPLICATE_CHECK"
+    },
+    "BBBC041": {
+      "split_source": "OFFICIAL test / PROPOSED_BY_US validation",
+      "grouping": "Source image; patient/researcher mapping unavailable",
+      "split": "SHA256-ranked seed0 ceil10% officialtraining forval; 1087train/121validation/120test",
+      "license": "CC-BY-NC-SA-3.0",
+      "classes": "All seven released categories, including ambiguous difficult; explicitlynot6-class staging reproduction",
+      "scope": "1328 annotation-linked images; portal reports1364 image releases",
+      "source": "https://bbbc.broadinstitute.org/BBBC041",
+      "data_preflight": "PASS_FULL_MD5_DECODE_CLASS_BOX_SPLIT_AND_PIXEL_DUPLICATE_CHECK"
+    }
+  },
+  "protocol_id": "unified-native-box-primary-last-v1",
+  "source_registry": "/mnt/huawei_deepcad/dinov3/Evaluation Rules/native_detection_candidates.json",
+  "source_registry_sha256": "00d5ca6298d2d123746ea54672accbc5e8da97c799bb957820d7001cbf91f1f4",
+  "batch_size": 2,
+  "training_seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "feature_scope": "Primary-last final spatial map for every encoder; unfrozen exploratory4-even search is separate and has no valid historical score in this comparison",
+  "selection": "Per model/dataset seed0 final-epoch validation AP selects prescribed LR; tie lower LR; seed0 selected fit and four fresh downstream fits; test never selects",
+  "seed_semantics": "training_randomness: head initialization, training shuffle, RPN/RoI sampling; fixed membership",
+  "manifests": {
+    "bccd": {
+      "path": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/formal_v4/bccd_native_manifest.json",
+      "sha256": "3eb1d1517a08884d050863806525eeb7c467f7d048a0164a43e1979ec3d07138",
+      "counts": {
+        "train": 205,
+        "val": 87,
+        "test": 72
+      }
+    },
+    "bbbc041": {
+      "path": "/mnt/huawei_deepcad/dinov3/outputs/02_eval_inputs/formal_v4/bbbc041_native_manifest.json",
+      "sha256": "65da709d0711119eb94527fe92e8ebc107a1ae9910696550d6fe4e42c99b250f",
+      "counts": {
+        "train": 1087,
+        "val": 121,
+        "test": 120
+      }
+    }
+  },
+  "invalid_candidate_rule": "Across every model/dataset, nonfinite training candidate is ineligible; archive failure and select from completed prescribed candidates by validation AP only; all-invalid task remains failed"
+}

@@ -23,10 +23,7 @@ DATASETS = {
     'film_age': ('FILM', 'native_downstream', '年龄分类'),
     'xray_bone': ('RSNA Bone Age', 'native_downstream', '骨龄回归（官方 validation）'),
     'xray_chest': ('RSNA Pneumonia', 'native_downstream', '肺部异常框检测'),
-    'bccd': ('BCCD', 'native_downstream', '细胞框检测'),
     'bbbc041': ('BBBC041', 'native_downstream', '疟疾细胞框检测'),
-    'nucls_qc': ('NuCLS', 'native_downstream', '核检测、匹配实例分割、检测匹配条件下分类'),
-    'spheroid_lsfm': ('Spheroid LSFM', 'native_downstream', '3D 质心检测；独立性冲突阻塞'),
 }
 
 
@@ -135,8 +132,9 @@ def refresh(report=REPORT):
         '',
         'NuCLS 的任务、fold、指标分列，Cryo 四个 project 的来源行不算四个新增数据族；上述指标行和模型数均不是独立重复次数。`complete` 也不表示置信区间与配对检验已经完成，须另查原表统计状态。',
         '扩充任务按数据集和任务报告。是否属于新模态、来源迁移或任务迁移，须相对于具体模型的预训练来源判断；目录的 `OOD` 标签不是全部模型均未见过该数据的证明。BCCD/BBBC041/NuCLS 等不可仅因放入此表便称为全新模态。',
+        '**2026-10-31用户指定分类：BCCD、NuCLS、Spheroid已移入ID统计。** BBBC041保留为已知清单下的寄生虫物种OOD；Unknown保持未知。X-ray/PXCT与Cryo仍保留待核实标记。见 [来源复核](audits/cpu1_ood_taxonomy_20261030/README.md)。',
         f'候选清单合计 {summary["all_audited_source_families"]} 个来源族，其中 {summary["candidate_families_without_admitted_protocol"]} 个尚未纳入冻结的执行协议；它们包括仍待审查、已知重叠或重复来源，并非全部已认证 OOD。原始 36 来源审查清单保留在 [覆盖交叉表](ood_coverage_crosswalk.md)。九个已登记族不是用户扩充范围的全集；撤回的 24 域 survey 分数不恢复。',
-        'Spheroid 仍因训练/测试来自相同完整 spheroid 且 patch 重叠而阻塞，不补零、不当作已完成。未登记的 OOD retrieval/clustering 协议也不能借 ID 对应结果宣称已完成。',
+        '已移入ID的Spheroid采用用户认可的作者官方patch划分，同源与重叠保留披露；尚未完成的评测不补零。未登记的OOD retrieval/clustering协议也不能借ID对应结果宣称已完成。',
         'X-ray/Cryo 当前采用 `ood_groupfix_v3`：同一批 3,000 ID 图像按 FOV 组固定为 2,098 bank / 902 ID test，cosine kNN10；X-ray 992 slices / 124 volumes，Cryo 80,000 particles / 4 projects。`ood/` 与 `ood_inputfix_v2/` 的旧分数仅供追溯。此协议和“条件于固定 ID bank”的区间解释仅适用于来源判别子集。',
         '**允许的结论：** 在指定 ID 参考库下区分 X-ray/Cryo；在各扩充数据集及其冻结协议下的分类、回归、检测等表现。**不支持的结论：** 由两个来源判别分数推断全部 OOD 泛化，或将这些异质指标直接平均成一个总体 OOD 分数。',
         '## 文件口径',
