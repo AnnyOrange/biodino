@@ -1,0 +1,57 @@
+--- a/dinov3/train/train.py
++++ b/dinov3/train/train.py
+@@ -1212,14 +1212,22 @@
+         optimizer.zero_grad(set_to_none=True)
+ 
+         save_final = bool(getattr(cfg.checkpointing, "save_final", False)) and iteration + 1 == max_iter
++        # Fixed origin survives intermediate resumes; default preserves absolute scheduling.
++        save_origin = int(getattr(cfg.checkpointing, "period_origin_iteration", -1))
++        updates_since_save_origin = iteration - save_origin
+         if save_final or (
+             cfg.evaluation.eval_period_iterations > 0
+-            and (iteration + 1) % cfg.evaluation.eval_period_iterations == 0
++            and updates_since_save_origin > 0
++            and updates_since_save_origin % cfg.evaluation.eval_period_iterations == 0
+         ):
+             do_test(cfg, model, f"training_{iteration}", process_group=process_subgroup)
+             torch.cuda.synchronize()
+ 
+-        if save_final or (iteration + 1) % cfg.checkpointing.period == 0:
++        if save_final or (
++            cfg.checkpointing.period > 0
++            and updates_since_save_origin > 0
++            and updates_since_save_origin % cfg.checkpointing.period == 0
++        ):
+             if audit_file is not None:
+                 audit_file.flush()
+                 os.fsync(audit_file.fileno())
+--- a/dinov3/configs/ssl_default_config.yaml
++++ b/dinov3/configs/ssl_default_config.yaml
+@@ -401,2 +401,3 @@
+   period: 3750
+   save_final: false
++  period_origin_iteration: -1
+--- a/scripts/prepare_7b_global_distillation.py
++++ b/scripts/prepare_7b_global_distillation.py
+@@ -130,6 +130,9 @@
+         cfg.setdefault("checkpointing", {})
+         cfg.checkpointing.sharded = True
+         cfg.checkpointing.save_final = True
++        cfg.checkpointing.period_origin_iteration = origin
++        cfg.checkpointing.period = 1024
++        cfg.evaluation.eval_period_iterations = 1024
+         cfg.checkpointing.max_to_keep = None
+         path = branch / "config.yaml"
+         OmegaConf.save(cfg, path)
+@@ -147,6 +150,11 @@
+         "historical_auxiliary_teacher_iteration": 13311,
+         "checkpoint_content_validation": "pending runtime DCP guard; metadata hash is not a shard content hash",
+         "additional_updates": args.updates, "branches": records,
++        "checkpoint_and_ema_interval_updates": 1024,
++        "checkpoint_period_origin_iteration": origin,
++        "scheduled_checkpoint_iterations": sorted(set(
++            list(range(origin + 1024, end, 1024)) + [end - 1]
++        )),
+         "protocol": "CLS-only auxiliary distillation; original DINO/iBOT retained; equal teacher mean",
+         "schedule": "inherited; only stop budget changed; no cooldown",
+         "preserved": ["batch", "accumulation", "LR rule/schedule", "temperature/EMA schedule", "seed", "data/augmentation", "Gram policy"],

@@ -843,7 +843,12 @@ def do_train(cfg, model, resume=False, expected_start_iteration=None):
             dont_save=[k for k, _ in model.state_dict().items() if k.startswith("teacher")],
         )
     start_iter = 0
-    if resume and (last_checkpoint_dir := find_latest_checkpoint(ckpt_dir)):
+    last_checkpoint_dir = find_latest_checkpoint(ckpt_dir) if resume else None
+    external_objective = getattr(model, "external_distill", None)
+    checkpoint_guard = getattr(external_objective, "validate_checkpoint", None)
+    if checkpoint_guard is not None:
+        checkpoint_guard(last_checkpoint_dir, model)
+    if last_checkpoint_dir is not None:
         logger.info(f"Checkpoint found {last_checkpoint_dir}")
         start_iter = (
             load_checkpoint(
@@ -856,6 +861,8 @@ def do_train(cfg, model, resume=False, expected_start_iteration=None):
             )
             + 1
         )
+    if checkpoint_guard is not None:
+        external_objective.validate_restored(start_iter)
     if expected_start_iteration is not None and start_iter != expected_start_iteration:
         raise ValueError(f"Training starts at iteration {start_iter}, expected "
                          f"{expected_start_iteration}; check the output directory and checkpoint")
@@ -1204,14 +1211,23 @@ def do_train(cfg, model, resume=False, expected_start_iteration=None):
         # state. Release their shards before teacher export / optimizer saving.
         optimizer.zero_grad(set_to_none=True)
 
-        if (
+        save_final = bool(getattr(cfg.checkpointing, "save_final", False)) and iteration + 1 == max_iter
+        # Fixed origin survives intermediate resumes; default preserves absolute scheduling.
+        save_origin = int(getattr(cfg.checkpointing, "period_origin_iteration", -1))
+        updates_since_save_origin = iteration - save_origin
+        if save_final or (
             cfg.evaluation.eval_period_iterations > 0
-            and (iteration + 1) % cfg.evaluation.eval_period_iterations == 0
+            and updates_since_save_origin > 0
+            and updates_since_save_origin % cfg.evaluation.eval_period_iterations == 0
         ):
             do_test(cfg, model, f"training_{iteration}", process_group=process_subgroup)
             torch.cuda.synchronize()
 
-        if (iteration + 1) % cfg.checkpointing.period == 0:
+        if save_final or (
+            cfg.checkpointing.period > 0
+            and updates_since_save_origin > 0
+            and updates_since_save_origin % cfg.checkpointing.period == 0
+        ):
             if audit_file is not None:
                 audit_file.flush()
                 os.fsync(audit_file.fileno())
