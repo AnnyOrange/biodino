@@ -1,3 +1,5 @@
+[返回 7B 训练交付入口](../../README.md)
+
 # 7B：从 21503 恢复的四组 CLS 辅助蒸馏
 
 2026-11-09。代码交接包；未启动训练，未完成真实教师加载及完整 DCP 恢复验证。不包含权重、评测数据或实际训练配置。
@@ -41,8 +43,8 @@
 在合作方工作副本保留其本地修改，并先检查补丁冲突：
 
 ```bash
-git apply --check /path/to/BioDINO_7B_CLS_4ARM_20261109/integration.patch
-git apply /path/to/BioDINO_7B_CLS_4ARM_20261109/integration.patch
+git apply --check /path/to/biodino/collaborator_handoff/BioDINO_7B/train/cls_distillation/integration.patch
+git apply /path/to/biodino/collaborator_handoff/BioDINO_7B/train/cls_distillation/integration.patch
 ```
 
 如有冲突，人工合并相关 hunk，尤其保留 S3 数据读取及本地 checkpoint 保存修改；不要用当前主楼整份训练源码覆盖合作方代码。
@@ -63,7 +65,7 @@ python scripts/prepare_7b_global_distillation.py \
 
 此命令只准备四组独立目录，不启动训练。正式启动需沿用合作方实际分布式入口，并核对首次恢复 `--expected-start-iteration 21504`。冻结 7B 教师当前逐 GPU 复制；正式分配卡数前需要测量真实显存、吞吐及完整恢复。此前 CPU 合成输入核对不覆盖这些事项。
 
-原 `BioDINO_7B/` 交接目录与 ZIP 均保留；本包不改动已冻结的 FM 评测协议。
+本续训方案已整合至原 `collaborator_handoff/BioDINO_7B/` 交付目录；代码直接使用当前分支，不需要额外 ZIP。FM 评测沿用 [已有交付入口](../../../FM_evaluation/README.md)，不改动已冻结的评测协议。
 
 ## 2026-11-09 保存周期更新
 
