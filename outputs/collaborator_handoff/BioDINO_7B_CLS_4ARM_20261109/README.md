@@ -71,4 +71,4 @@ python scripts/prepare_7b_global_distillation.py \
 
 ## GitHub 交付
 
-分支：`collaborator/7b-cls-four-arms-20261109`（AnnyOrange/biodino）。此分支的源码已包含完整补丁，直接使用该分支时不要再次应用 `integration.patch` 或增量补丁。若在自己的定制工作副本合并，请保留本地 S3/保存改动，并按前文选择对应补丁。
+分支：`collaborator/fm-id-ood-20261102`（AnnyOrange/biodino）。此分支的源码已包含完整补丁，直接使用该分支时不要再次应用 `integration.patch` 或增量补丁。若在自己的定制工作副本合并，请保留本地 S3/保存改动，并按前文选择对应补丁。
