@@ -1328,8 +1328,16 @@ class SSLMetaArch(nn.Module):
                         getattr(self.cfg.recovery, "anchor_momentum", 0.0))
         if self.external_distill_enabled:
             from dinov3.checkpointer import register_dont_save_hooks
-            from dinov3.train.external_distill import ExternalDistillation
-            self.external_distill = ExternalDistillation(self.cfg, self.student.backbone.embed_dim).cuda()
+            mode = str(getattr(self.cfg.external_distill, "mode", "spatial_recovery"))
+            if mode == "global_recovery":
+                from dinov3.train.global_teacher_distill import GlobalTeacherDistillation
+                objective_class = GlobalTeacherDistillation
+            elif mode == "spatial_recovery":
+                from dinov3.train.external_distill import ExternalDistillation
+                objective_class = ExternalDistillation
+            else:
+                raise ValueError(f"Unknown external_distill.mode: {mode}")
+            self.external_distill = objective_class(self.cfg, self.student.backbone.embed_dim).cuda()
             self.external_distill.reset_buffers()
             # Frozen teachers are reloaded from their own files; keep them out of every checkpoint.
             register_dont_save_hooks(self.external_distill, self.external_distill.teacher_state_keys())
@@ -3285,7 +3293,10 @@ class SSLMetaArch(nn.Module):
         if self.external_distill_enabled and external_inputs is not None:
             if self.external_distill is None:
                 raise RuntimeError("external_distill enabled but not built; init_weights() must run first")
-            external_loss, external_stats = self.external_distill(**external_inputs)
+            if str(getattr(self.cfg.external_distill, "mode", "spatial_recovery")) == "global_recovery":
+                external_loss, external_stats = self.external_distill(iteration=iteration, **external_inputs)
+            else:
+                external_loss, external_stats = self.external_distill(**external_inputs)
             loss_accumulator += float(self.cfg.external_distill.loss_weight) * external_loss
             loss_dict.update(external_stats)
             loss_dict["extd_weight"] = float(self.cfg.external_distill.loss_weight)

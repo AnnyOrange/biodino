@@ -399,6 +399,8 @@ evaluation:
     low_freq: benchmark_low_frequency.yaml  # Less often
 checkpointing:
   period: 3750
+  save_final: false
+  period_origin_iteration: -1
   max_to_keep: 500
   keep_every: 99999999999999999  # Save a checkpoint every N iterations, regardless of max_to_keep and period
   sharded: false
@@ -431,6 +433,17 @@ checkpointing:
 # teachers: list of {name, kind: timm_dir|dinov3, path|weights, img_size, mean, std, weight, model_args}.
 external_distill:
   enabled: false
+  mode: spatial_recovery  # legacy CLS + spatial patches; global_recovery uses the fields below
+  teacher_manifest: ''
+  teacher_name: ''  # legacy single-teacher selector; leave empty when using teacher_names
+  teacher_names: []  # global_recovery: manifest entries used by this branch
+  teacher_weights: []  # positive weights, normalized to sum 1; empty means equal weights
+  teacher_chunk_size: 2
+  global_readout: cls_patchmean  # cls | cls_patchmean (two independent global ridge decoders)
+  patchmean_weight: 1.0
+  resume_origin_iteration: null  # global_recovery requires a complete DCP origin
+  start_update: 0
+  ramp_updates: 256
   loss_weight: 1.0
   cls_weight: 1.0
   patch_weight: 1.0

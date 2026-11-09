@@ -1,0 +1,21 @@
+{
+  "base_commit": "1b1c9b9b1f4ad9ba16a7fbfe897083086c01e476",
+  "scope": "CLS-only four-arm implementation; no weights; no training launched",
+  "integration_files": {
+    "dinov3/train/train.py": {
+      "base_sha256": "94d7b8526155b6e82665e77beac08f8e8b6b01759cb1dd84dc09e7f256f29545",
+      "patched_sha256": "6c3e99c08a410ba32961aded6ff715ee7c001aad4d3cf343eb8bcb3c63eb5d49"
+    },
+    "dinov3/train/ssl_meta_arch.py": {
+      "base_sha256": "869c4aa51cf1f313a952722c859f8c956d14fd4f5898f87f163e341a677ebbdd",
+      "patched_sha256": "efad94b9f0bdc42f89ec9464cd5372b5b5b009ce50b4e5adc08ec4252842f8b7"
+    },
+    "dinov3/configs/ssl_default_config.yaml": {
+      "base_sha256": "138a76e22d360782ed2198ca39f9e4a633b9dd5ce599427a95c13255bbe3fe71",
+      "patched_sha256": "40ea3187e6c48822a514e6958c62387bc5638b51d043f8951617f772944d9e20"
+    },
+    "dinov3/train/external_distill.py": {
+      "unchanged_sha256": "b43bd9e72988ffe4fc0f25dc4777515ff1a22eafb2e0238d69f6d56f403cebc0"
+    }
+  }
+}

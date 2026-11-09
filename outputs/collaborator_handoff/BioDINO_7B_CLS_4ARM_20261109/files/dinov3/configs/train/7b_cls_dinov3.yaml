@@ -1,0 +1,25 @@
+# Arm A: a 7B student resumed from the common full checkpoint 21503.
+# Frozen auxiliary teacher: official DINOv3-7B CLS. DINO/iBOT stay unchanged.
+external_distill:
+  enabled: true
+  mode: global_recovery
+  teacher_manifest: ???
+  teacher_name: ''
+  teacher_names: [dinov3_7b]
+  teacher_weights: [1.0]
+  teachers: []
+  teacher_chunk_size: 2
+  global_readout: cls
+  cls_weight: 1.0
+  patchmean_weight: 0.0
+  patch_weight: 0.0
+  loss_weight: 1.0
+  ridge: 0.1
+  momentum: 0.98
+  warmup: 32
+  solve_every: 8
+  resume_origin_iteration: 21503
+  start_update: 21504
+  ramp_updates: 256
+joint_teacher:
+  enabled: false
