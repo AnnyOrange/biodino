@@ -46,6 +46,27 @@ def select_recipes(root, cfg):
                       candidates=candidates, test_used=False, criterion='mean best-validation across seeds101,102'))
 
 
+def reap_completed_optimizer_states(root, cfg):
+    for job in cfg['jobs']:
+        directory = Path(job['output']).resolve()
+        if not directory.is_relative_to(root):
+            raise ValueError('Job output escaped campaign directory')
+        latest, complete, best = directory/'latest.pth', directory/'complete.json', directory/'best.pth'
+        if not latest.is_file() or not complete.is_file() or not best.is_file() or latest.is_symlink():
+            continue
+        with (directory/'train.lock').open('a') as lock:
+            try:
+                fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            result=read_json(complete)
+            if sha256(best)!=result['best_checkpoint_sha256']:
+                raise ValueError('Refusing cleanup: selected checkpoint is not verified')
+            save_json(directory/'optimizer_state_reclaimed.json',dict(path=str(latest),bytes=latest.stat().st_size,
+                      time=time.time(),reason='Completed prescribed training; verified best checkpoint and full history retained'))
+            latest.unlink()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--campaign', required=True)
@@ -61,6 +82,7 @@ def main():
             state_path = root / 'scheduler_state.json'
             states = read_json(state_path) if state_path.exists() else {}
             select_recipes(root, cfg)
+            reap_completed_optimizer_states(root,cfg)
             for child in children:
                 child.poll()
             children = [p for p in children if p.returncode is None]
