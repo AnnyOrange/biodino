@@ -23,6 +23,35 @@ def alive(job):
         return False
 
 
+def gpu_budget(job, caps):
+    """Use explicitly recorded task budgets; unknown tasks retain the default."""
+    return int(caps.get('gpu_peak_mib_by_task', {}).get(job['task'], caps['gpu_peak_mib']))
+
+
+def available_gpus(job, cfg, caps, gpu_rows, process_memory, active):
+    jobs = {item['id']: item for item in cfg.get('frozen_jobs', []) + cfg['jobs']}
+    choices = []
+    for gpu, total, used, utilization in gpu_rows:
+        if gpu not in caps['gpus']:
+            continue
+        residents = [record for record in active if record['gpu'] == gpu]
+        slots = int(caps.get('gpu_slots', {}).get(str(gpu), caps.get('max_jobs_per_gpu', 1)))
+        if len(residents) >= slots:
+            continue
+        # Reserve the unused part of every resident job's peak, including jobs
+        # still loading and therefore absent from nvidia-smi's process list.
+        pending = 0
+        for record in residents:
+            resident = jobs[record['job_id'].removesuffix('_test')]
+            budget = max(gpu_budget(resident, caps), int(record.get('gpu_budget_mib', 0)))
+            pending += max(0, budget - process_memory.get(record['pid'], 0))
+        budget = gpu_budget(job, caps)
+        projected = used + pending + budget
+        if projected <= total * (1 - caps['gpu_reserve_fraction']):
+            choices.append((len(residents), utilization, projected, gpu))
+    return [item[-1] for item in sorted(choices)]
+
+
 def select_recipes(root, cfg):
     for branch, spec in cfg['branches'].items():
         target = root / 'selected' / branch
@@ -79,6 +108,12 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         while True:
             cfg, caps = read_json(root / 'campaign.json'), read_json(root / 'caps.json')
+            runner_root = Path(cfg.get('runner_repo', Path(__file__).resolve().parents[1])).resolve()
+            if cfg.get('runner_commit'):
+                commit = subprocess.check_output(['git', '-C', str(runner_root), 'rev-parse', 'HEAD'], text=True).strip()
+                dirty = subprocess.check_output(['git', '-C', str(runner_root), 'status', '--porcelain'], text=True)
+                if commit != cfg['runner_commit'] or dirty:
+                    raise ValueError('Pinned scientific runner checkout changed')
             state_path = root / 'scheduler_state.json'
             states = read_json(state_path) if state_path.exists() else {}
             select_recipes(root, cfg)
@@ -90,21 +125,27 @@ def main():
             all_jobs = cfg.get('frozen_jobs', []) + cfg['jobs'] + test_jobs
             for job in all_jobs:
                 record = states.setdefault(job['id'], dict(status='pending', attempts=0))
+                record['job_id'] = job['id']
                 marker = 'test_result.json' if job['phase']=='test' else 'complete.json'
                 if (Path(job['output']) / marker).exists():
                     record['status'] = 'complete'
                 elif record['status'] == 'running' and not alive(record):
                     record['status'] = 'failed'
             active = [s for s in states.values() if s['status'] == 'running' and alive(s)]
-            gpu_text = subprocess.check_output(['nvidia-smi', '--query-gpu=index,memory.total,memory.used',
+            gpu_text = subprocess.check_output(['nvidia-smi', '--query-gpu=index,memory.total,memory.used,utilization.gpu',
                                                 '--format=csv,noheader,nounits'], text=True)
             gpu_rows = [list(map(int, row.split(','))) for row in gpu_text.strip().splitlines()]
-            occupied = {s['gpu'] for s in active}
-            candidates = [gpu for gpu, total, used in gpu_rows if gpu in caps['gpus'] and gpu not in occupied
-                          and total-used >= caps['gpu_peak_mib'] + total*caps['gpu_reserve_fraction']]
+            processes = subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid,used_gpu_memory',
+                                                  '--format=csv,noheader,nounits'], text=True)
+            process_memory = {}
+            for line in processes.splitlines():
+                fields = [value.strip() for value in line.split(',')]
+                if len(fields) == 2 and all(value.isdigit() for value in fields):
+                    pid, used = map(int, fields)
+                    process_memory[pid] = process_memory.get(pid, 0) + used
             memory = psutil.virtual_memory()
             cpu = psutil.cpu_percent(interval=.25) / 100
-            allowed = (cfg['enabled'] and not (root / 'PAUSE').exists() and candidates
+            allowed = (cfg['enabled'] and not (root / 'PAUSE').exists()
                        and len(active) < caps['max_jobs'] and cpu <= caps['max_cpu_util']
                        and memory.available >= memory.total*caps['ram_reserve_fraction'] + (len(active)+1)*caps['ram_peak_gib']*1024**3
                        and shutil.disk_usage(root).free >= (caps['min_disk_free_gib'] + 12*(len(active)+1))*1024**3)
@@ -127,20 +168,23 @@ def main():
                         branch_runs = [j for j in cfg['jobs'] if j['branch']==job['branch'] and j['phase']=='formal']
                         if not caps.get('allow_test',False) or not all((Path(j['output'])/'complete.json').exists() for j in branch_runs):
                             continue
+                    candidates = available_gpus(job, cfg, caps, gpu_rows, process_memory, active)
+                    if not candidates:
+                        continue
                     output = Path(job['output']); output.mkdir(parents=True, exist_ok=True)
                     data_root = cfg.get('task_data_roots',{}).get(job['task'],cfg['data_root'])
                     if frozen:
-                        command = [cfg['python'], str(Path(__file__).with_name('run_ood_frozen_transfer.py')),
+                        command = [cfg['python'], str(runner_root / 'scripts/run_ood_frozen_transfer.py'),
                                    '--manifest',str(manifest),'--input-receipt',str(receipt),
                                    '--checkpoint',cfg['checkpoint'],'--train-config',cfg['train_config'],
                                    '--data-root',data_root,'--output',str(output)]
                     elif testing:
-                        command=[cfg['python'],str(Path(__file__).with_name('run_ood_full_finetune.py')),'test',
+                        command=[cfg['python'],str(runner_root / 'scripts/run_ood_full_finetune.py'),'test',
                                  '--trained-run',str(output),'--test-manifest',str(manifest),'--input-receipt',str(receipt),
                                  '--checkpoint',cfg['checkpoint'],'--train-config',cfg['train_config'],
                                  '--data-root',data_root,'--microbatch',str(job['microbatch'])]
                     else:
-                        command = [cfg['python'], str(Path(__file__).with_name('run_ood_full_finetune.py')), 'train',
+                        command = [cfg['python'], str(runner_root / 'scripts/run_ood_full_finetune.py'), 'train',
                                    '--recipe', job['recipe'], '--phase', job['phase'], '--seed', str(job['seed']),
                                    '--development-manifest', str(manifest), '--input-receipt', str(receipt),
                                    '--checkpoint', cfg['checkpoint'], '--train-config', cfg['train_config'],
@@ -159,14 +203,18 @@ def main():
                     children.append(proc)
                     ticks = Path('/proc', str(proc.pid), 'stat').read_text().split(') ', 1)[1].split()[19]
                     record.update(status='running', pid=proc.pid, start_ticks=ticks, gpu=gpu,
+                                  gpu_budget_mib=gpu_budget(job, caps),
                                   attempts=record['attempts']+1, started=time.time(), command=command)
                     break
             save_json(state_path, states)
+            active = [s for s in states.values() if s['status'] == 'running' and alive(s)]
             save_json(root / 'live_status.json', dict(time=time.time(), enabled=cfg['enabled'], running=len(active),
                       complete=sum(s['status']=='complete' for s in states.values()),
                       failed=sum(s['status']=='failed' for s in states.values()), total=len(all_jobs),
                       cpu_util=cpu, memory_available_gib=memory.available/1024**3,
                       disk_free_gib=shutil.disk_usage(root).free/1024**3,
+                      jobs_per_gpu={str(gpu): sum(s['gpu']==gpu for s in active) for gpu in caps['gpus']},
+                      max_jobs_per_gpu=caps.get('max_jobs_per_gpu',1), runner_repo=str(runner_root),
                       test_jobs_started=sum(states[j['id']]['attempts']>0 for j in test_jobs),
                       note='Separate test command only after all5 formal seeds of a branch finish and allow_test is enabled.'))
             if args.once:

@@ -84,6 +84,22 @@ base repository dependencies. FILM preparation additionally needs the author's
 released SPEND/CSBDeep package; generated pairs must match the canonical array hashes.
 Record installed package versions on the execution host.
 
+### Concurrent jobs on one GPU
+
+After measuring real jobs, `caps.json` can set `max_jobs_per_gpu`, optional
+per-GPU `gpu_slots`, and `gpu_peak_mib_by_task`. The scheduler reserves each
+resident job's remaining peak allocation in addition to all memory currently
+used on the GPU, including other users' processes. The20% GPU/RAM reserves,
+CPU limit and disk reserve still apply. Unknown tasks retain the original
+conservative peak budget. Concurrent jobs retain their prescribed training
+budgets and independent seeds; throughput must be measured after stacking.
+
+To update only scheduling while training is active, set `runner_repo` and
+`runner_commit` in the campaign to the original clean scientific checkout.
+Run the newer scheduler from a separate committed checkout. Every child train,
+frozen analysis and test command uses the pinned original runner. This preserves
+resume/test code identity without restarting active training.
+
 Frozen complementary analyses use256 inputs and the model's recorded normalization;
 this is a separately named adaptation protocol and does not overwrite frozen-v2 scores.
 Cryo excludes each query from its cosine1-NN bank and reports structure/quality jointly.
