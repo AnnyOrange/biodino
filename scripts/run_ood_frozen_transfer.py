@@ -49,7 +49,7 @@ def minmax(x):
     return (x-x.min()) / max(float(x.max()-x.min()), 1e-12)
 
 
-def cryo(args, manifest, encoder, out):
+def cryo(args, manifest, encoder, out, image_transform=minmax):
     records, stacks = [], {}
     for project in manifest['projects']:
         particles = np.load(resolve_input(args.data_root, project['particles']), allow_pickle=False)
@@ -72,7 +72,7 @@ def cryo(args, manifest, encoder, out):
             path = row['path']
             if path not in stacks:
                 stacks[path] = MRCStack(resolve_input(args.data_root, path))
-            images.append(minmax(stacks[path].read(row['index'])))
+            images.append(image_transform(stacks[path].read(row['index'])))
         value = encoder(images)
         if features is None:
             features = np.lib.format.open_memmap(cache, mode='w+', dtype=np.float32, shape=(len(records), value.shape[1]))
