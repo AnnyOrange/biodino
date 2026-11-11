@@ -94,6 +94,13 @@ CPU limit and disk reserve still apply. Unknown tasks retain the original
 conservative peak budget. Concurrent jobs retain their prescribed training
 budgets and independent seeds; throughput must be measured after stacking.
 
+`disk_peak_gib_per_active` controls the additional free-space reservation for
+each concurrent job; the original default is 12 GiB. On the suxin lw5
+campaign, the measured full 1.2 GiB best checkpoint, 3.5 GiB latest optimizer
+checkpoint and its temporary 3.5 GiB replacement fit under 9 GiB. The separate
+120 GiB host reserve remains. Ready independent test calls and validation-locked
+formal seeds receive scheduling priority over unrelated development runs.
+
 To update only scheduling while training is active, set `runner_repo` and
 `runner_commit` in the campaign to the original clean scientific checkout.
 Run the newer scheduler from a separate committed checkout. Every child train,

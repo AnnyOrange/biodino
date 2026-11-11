@@ -123,6 +123,10 @@ def main():
             children = [p for p in children if p.returncode is None]
             test_jobs = [dict(job, id=job['id']+'_test', phase='test') for job in cfg['jobs'] if job['phase']=='formal']
             all_jobs = cfg.get('frozen_jobs', []) + cfg['jobs'] + test_jobs
+            # Ready test calls and validation-locked formal training should not
+            # wait behind unrelated development jobs when resources are scarce.
+            all_jobs.sort(key=lambda job: (0 if job['phase'] == 'test' else
+                                           1 if job['phase'] == 'formal' and Path(job['recipe_lock']).exists() else 2))
             for job in all_jobs:
                 record = states.setdefault(job['id'], dict(status='pending', attempts=0))
                 record['job_id'] = job['id']
@@ -148,7 +152,8 @@ def main():
             allowed = (cfg['enabled'] and not (root / 'PAUSE').exists()
                        and len(active) < caps['max_jobs'] and cpu <= caps['max_cpu_util']
                        and memory.available >= memory.total*caps['ram_reserve_fraction'] + (len(active)+1)*caps['ram_peak_gib']*1024**3
-                       and shutil.disk_usage(root).free >= (caps['min_disk_free_gib'] + 12*(len(active)+1))*1024**3)
+                       and shutil.disk_usage(root).free >=
+                       (caps['min_disk_free_gib'] + caps.get('disk_peak_gib_per_active', 12)*(len(active)+1))*1024**3)
             if allowed:
                 for job in all_jobs:
                     record = states[job['id']]
@@ -213,6 +218,7 @@ def main():
                       failed=sum(s['status']=='failed' for s in states.values()), total=len(all_jobs),
                       cpu_util=cpu, memory_available_gib=memory.available/1024**3,
                       disk_free_gib=shutil.disk_usage(root).free/1024**3,
+                      disk_peak_gib_per_active=caps.get('disk_peak_gib_per_active',12),
                       jobs_per_gpu={str(gpu): sum(s['gpu']==gpu for s in active) for gpu in caps['gpus']},
                       max_jobs_per_gpu=caps.get('max_jobs_per_gpu',1), runner_repo=str(runner_root),
                       test_jobs_started=sum(states[j['id']]['attempts']>0 for j in test_jobs),
