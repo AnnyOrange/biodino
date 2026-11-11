@@ -105,6 +105,14 @@ def main():
     xtrain = features(train, args, 'train', encoder, out)
     xtest = features(test, args, 'test', encoder, out)
     del encoder
+    save_json(out/'feature_identity.json', dict(
+        train_feature_sha256=sha256(out/'train_features.npy'),
+        test_feature_sha256=sha256(out/'test_features.npy'),
+        train_sample_ids_sha256=hashlib.sha256('\n'.join(r['sample_id'] for r in train).encode()).hexdigest(),
+        test_sample_ids_sha256=hashlib.sha256('\n'.join(r['sample_id'] for r in test).encode()).hexdigest(),
+        source_manifest_sha256=identity['manifest_sha256'], checkpoint_sha256=identity['checkpoint_sha256'],
+        representation='BioDINO CLS plus patch-token mean, minmax resize256'))
+    save_json(out/'test_sample_ids.json', [r['sample_id'] for r in test])
     ytrain = np.asarray([r['tier'] for r in train])
     ytest = np.asarray([r['tier'] for r in test])
     index_by_id = {r['sample_id']:i for i,r in enumerate(train)}
@@ -124,11 +132,15 @@ def main():
                 indices = np.asarray(indices)
                 prediction = ytrain[indices[neighbors(xtest, xtrain[indices])]]
                 score = metrics(ytest, prediction)
+                prediction_path = out/f'predictions_class{sum(map(len, classes.values()))}_seed{seed}_k{per_class}.npz'
+                np.savez_compressed(prediction_path, truth=ytest.astype(np.uint8),
+                                    predicted=prediction.astype(np.uint8))
                 row = dict(class_fraction=fraction, seed=seed, reference_particles_per_class=per_class,
                            labeled_quality_classes=sum(map(len, classes.values())),
                            reference_particles=len(indices), test_project=args.test_project,
                            metrics=score, reference_sample_ids_sha256=hashlib.sha256(
-                               '\n'.join(train[i]['sample_id'] for i in indices).encode()).hexdigest())
+                               '\n'.join(train[i]['sample_id'] for i in indices).encode()).hexdigest(),
+                           predictions=str(prediction_path), predictions_sha256=sha256(prediction_path))
                 rows.append(row)
                 save_json(out/'results.json', dict(identity=identity, rows=rows,
                                                    unit='labeled author 2-D quality class; reference particle count',
