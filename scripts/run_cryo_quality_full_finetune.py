@@ -101,11 +101,7 @@ def source_records(manifest, root):
 
 
 def class_budget(rows, fraction, seed):
-    """Sample labeled 2-D classes; all particles of chosen classes are eligible.
-
-    Class labels are the independent annotations in the author release. Using a
-    fraction of particles from every class would falsely imply more labels.
-    """
+    """Sample 2-D class IDs without inspecting their quality labels."""
     rng = np.random.default_rng(seed)
     chosen = {}
     for project in sorted({r['project'] for r in rows}):
@@ -114,19 +110,10 @@ def class_budget(rows, fraction, seed):
         for r in candidates:
             by_class.setdefault(r['class_id'], []).append(r)
         classes = np.asarray(sorted(by_class))
-        count = max(3, math.ceil(len(classes)*fraction))
-        # At least one class per quality tier if the budget permits.
-        groups = {tier: [c for c in classes if by_class[int(c)][0]['tier'] == tier] for tier in range(3)}
-        picked = set()
-        for tier in range(3):
-            if groups[tier]:
-                picked.add(int(rng.choice(groups[tier])))
-        rest = [int(c) for c in rng.permutation(classes) if int(c) not in picked]
-        picked.update(rest[:max(0, count-len(picked))])
+        count = max(1, math.ceil(len(classes)*fraction))
+        picked = set(map(int, rng.choice(classes, size=count, replace=False)))
         chosen[project] = sorted(picked)
     selected = [r for r in rows if r['class_id'] in chosen[r['project']]]
-    if len({r['tier'] for r in selected}) != 3:
-        raise ValueError('Missing training quality tier')
     return selected, chosen
 
 
@@ -187,6 +174,7 @@ def main():
                     checkpoint_sha256=sha256(args.checkpoint), config_sha256=sha256(args.train_config),
                     train_projects=args.train_projects, val_project=args.val_project,
                     test_project=args.test_project, class_fraction=args.class_fraction,
+                    class_selection='uniform_random_class_ids_without_quality_labels',
                     seed=args.seed, epochs=args.epochs, batch=args.batch,
                     encoder_lr=args.encoder_lr, head_lr=args.head_lr)
     if (out/'identity.json').exists() and read_json(out/'identity.json') != identity:
@@ -203,6 +191,8 @@ def main():
                                     n_train_particles=len(train_rows), n_val_particles=len(val_rows),
                                     n_test_particles=len(test_rows),
                                     labeled_quality_classes=sum(map(len, classes.values())),
+                                    selected_particle_tiers=np.bincount([r['tier'] for r in train_rows], minlength=3).tolist(),
+                                    class_selection='uniform_random_class_ids_without_quality_labels',
                                     unit_of_label='author 2-D class quality score',
                                     train_sample_ids_sha256=__import__('hashlib').sha256(
                                         '\n'.join(r['sample_id'] for r in train_rows).encode()).hexdigest()))
@@ -235,7 +225,7 @@ def main():
                     if not count:
                         raise ValueError('No backbone gradients: not full fine-tuning')
                     save_json(out/'first_step.json', dict(backbone_gradient_tensors=count,
-                                                         loss=float(loss), peak_gpu_bytes=torch.cuda.max_memory_allocated()))
+                                                         loss=float(loss.detach()), peak_gpu_bytes=torch.cuda.max_memory_allocated()))
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
                 total_loss += float(loss.detach())
