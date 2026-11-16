@@ -4,4 +4,4 @@
 da7bfde9b643c5257a3fe9755d5a3732c3d423fdec032837c8b947bb49ce72cc  ./files/dinov3/configs/train/7b_ssl_ld094.yaml
 6303f7f9127ac58c17ccdfcda789d24a352aa8c5c2c6e04856e73cc4fa82aa45  ./files/dinov3/train/phis_multi_teacher_distill.py
 f9ee3092dd4aea49f57efef2fcf7b9bb338a127a54d0b6ef6aa96c2f7b4e62a0  ./files/scripts/prepare_7b_e4880_distillation.py
-6fe934b047d35110c19ca1a6e6fea0321d271e7915818f15609a351009968e23  ./README.md
+a644d4d60def76b393010603590e0b68cfc5d5052be4708671d1eaea735b71e3  ./README.md
