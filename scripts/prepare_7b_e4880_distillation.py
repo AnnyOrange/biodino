@@ -69,6 +69,14 @@ def main():
             raise ValueError(f"Manifest must contain exactly one {name}/{kind}")
         selected.append(matches[0])
     official = selected[0]
+    # E recipe: the official-7B teacher sees the student's own global crop (256 px -> 16x16 patch grid, no resize, no grid
+    # interpolation; same as the official-H+ teacher in the H+ runs).  The CLS-only arms may have used the manifest default
+    # (224 -> 14x14 grid, which the patch loss would have to bilinearly upsample); here it is set explicitly.
+    student_crop = int(base.crops.global_crops_size if isinstance(base.crops.global_crops_size, int)
+                       else max(base.crops.global_crops_size))
+    manifest_img_size = int(official.get("img_size", 224))
+    official = dict(official, img_size=student_crop)
+    selected[0] = official
     if (str(OmegaConf.load(official["config"]).student.arch) != "vit_7b"
             or official.get("provenance", {}).get("checkpoint_origin") != "official_dinov3_release"):
         raise ValueError("dinov3_7b must identify the official frozen 7B release")
@@ -117,6 +125,7 @@ def main():
         "config": str(path), "config_sha256": digest(path),
         "teacher_manifest": str(manifest), "teacher_manifest_sha256": digest(manifest),
         "scheduled_checkpoint_iterations": saves,
+        "official_7b_teacher_img_size": student_crop, "official_7b_teacher_img_size_in_input_manifest": manifest_img_size,
         "recipe": "E4880: linear cooldown (LR->1e-6, momentum->1, teacher temp frozen, wd continues) + "
                   "3-teacher CLS+patch recoverability, lw5 inverse-variance balance, loss_weight 5, 64 patches",
         "preserved": ["batch", "accumulation", "data/augmentation", "seed", "DINO/iBOT/KoLeo", "Gram policy (off)"],

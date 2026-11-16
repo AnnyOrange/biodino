@@ -32,12 +32,14 @@ CLS 蒸馏四组（C/D 最好）把 7B 在分类、检索、聚类、分割上�
 | 起点 | 21503 的**完整** DCP（student / EMA / heads / AdamW），下一步 21504 |
 | 退火 | `optim.cooldown`：从 21504 起 **4880 次更新**线性退火，LR 从当时值（约 4.73e-5）到 **1e-6**（显式设置，原 run 的 min_lr 是 2e-6）；EMA momentum 升到 1；teacher 温度冻结在当时值；weight decay 照原计划；最后一步 26383 |
 | 蒸馏 | `external_distill.mode: phis_spatial_recovery`，`weighting: inverse_variance`（= lw5 平衡） |
-| 教师 | `dinov3_7b`（官方，img_size **256**）、`hoptimus0`（224）、`genbio_pathfm`（224），各 1.0；就是 CLS 四组用的同一份 FrozenJointTeacher manifest |
+| 教师 | `dinov3_7b`（官方，**img_size 256**）、`hoptimus0`（224）、`genbio_pathfm`（224），各 1.0。清单格式和 CLS 四组一样（FrozenJointTeacher manifest，三个教师的权重 SHA 不变）；**只有 `dinov3_7b` 这一项的 `img_size` 与 CLS 四组不同**：CLS 四组默认 224，E4880 用 256（见下）。准备脚本会自动把输入清单里官方 7B 的 `img_size` 改成学生的全局 crop 大小（256）写进新目录的清单，并在 `PREPARED.json` 里记录改前改后的值 |
 | 损失 | loss_weight 5，cls_weight 1，patch_weight 1，每图 64 个 patch，ridge 0.1，解码器 momentum 0.995，warmup 32，每 8 步求解一次 |
 | 不变 | batch 4096、数据配比、增广、归一化、clip 3.0、DINO/iBOT/KoLeo、不开 Gram、seed |
 | 保存 | 每 976 次更新存完整 DCP + 导出 EMA：**22479、23455、24431、25407、26383**；全部保留 |
 
 **为什么是 4880 次更新而不是按样本数换算（1220）**：退火斜率、EMA momentum 的上升、ridge 解码器的求解次数（每 8 次更新一次，momentum 0.995）都是按更新次数定义的。4880 次更新复现的是我们验证过的动态（解码器求解 610 次）；1220 次只求解 152 次，是没测过的状态。代价是样本数为我们的 4 倍（约 2000 万），请先评估算力。
+
+**为什么官方 7B 教师用 256 而不是 224**：E 里有 patch 蒸馏，教师的 patch 网格要和学生对齐。学生全局 crop 是 256、patch 16，网格是 16×16；官方 7B 教师也是 patch 16，256 输入得到 16×16，与学生一一对应，不需要缩放图像、也不需要对教师 patch 做插值；224 输入只有 14×14，要双线性上采样到 16×16（代码里 GenBio 就是这样处理的），而且教师看到的是缩小后的图。我们 H+ 的 E 里官方 H+ 教师就是 256、与学生同尺寸，所以 256 才是与我们验证过的配方一致的做法。H-optimus-0（patch 14，224→16×16）网格天然对齐；GenBio（224→14×14）按代码里的插值对齐，与 H+ 上一样。CLS 四组只蒸馏 CLS，网格大小没有影响，所以当时用 224 没问题。教师在 256 下的前向开销比 224 多约 30%（256 对 196 个 token）。
 
 **显存**：三个教师在每张卡上各存一份（没有分片），官方 7B 教师 bf16 约 13GB；请在日志里记录每卡显存峰值和每步耗时。
 
