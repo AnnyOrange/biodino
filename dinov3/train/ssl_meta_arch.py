@@ -1335,6 +1335,9 @@ class SSLMetaArch(nn.Module):
             elif mode == "spatial_recovery":
                 from dinov3.train.external_distill import ExternalDistillation
                 objective_class = ExternalDistillation
+            elif mode == "phis_spatial_recovery":  # E recipe: multi-teacher CLS + patch recoverability (lw5 balance: weighting=inverse_variance)
+                from dinov3.train.phis_multi_teacher_distill import PhisMultiTeacherDistillation
+                objective_class = PhisMultiTeacherDistillation
             else:
                 raise ValueError(f"Unknown external_distill.mode: {mode}")
             self.external_distill = objective_class(self.cfg, self.student.backbone.embed_dim).cuda()

@@ -1,0 +1,31 @@
+# E recipe on ViT-7B: resume the FULL 21503 state, 4880-update linear cooldown + three-teacher CLS & patch
+# recoverability distillation with lw5 (inverse-variance) balancing.  Identical objective to the H+ arm
+# E4880_mt3_lw5weights (2026-11-12, six-family E20 75.03 at its end point); only the teacher set's first member is
+# the official 7B instead of the official H+.  Everything not listed here is inherited from the 21503 run config.
+external_distill:
+  enabled: true
+  mode: phis_spatial_recovery
+  weighting: inverse_variance        # = lw5 stream; 'phis' was tested on H+ and was 0.35 lower (F4880)
+  teacher_manifest: ???
+  teacher_names: [dinov3_7b, hoptimus0, genbio_pathfm]
+  teacher_weights: [1.0, 1.0, 1.0]
+  loss_weight: 5.0
+  cls_weight: 1.0
+  patch_weight: 1.0
+  patches: 64
+  ridge: 0.1
+  momentum: 0.995
+  warmup: 32
+  solve_every: 8
+joint_teacher:
+  enabled: false
+optim:
+  cooldown:
+    enabled: true
+    start_iteration: 21504           # first update after the 21503 state
+    length: 4880                     # same number of optimizer updates as the H+/L recipe (not sample-matched)
+    shape: linear
+    lr_final: 1.0e-06                # explicit: the 7B run's min_lr is 2e-6, the tested recipe ends at 1e-6
+    momentum_final: null             # -> teacher.final_momentum_teacher (1.0)
+    wd_mode: continue
+    teacher_temp_mode: freeze

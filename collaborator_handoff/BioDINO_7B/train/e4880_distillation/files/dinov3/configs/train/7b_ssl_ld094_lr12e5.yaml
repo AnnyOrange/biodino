@@ -1,0 +1,6 @@
+# SSL re-run, arm B: arm A + peak LR scaled with sqrt(batch) from the L recipe's batch-1024 setting
+# (6e-5 at batch 4096 moves the top blocks ~6x less than L by the selected point).  Watch loss / grad norm in the first
+# 1000 updates; stop on spikes.
+optim:
+  layerwise_decay: 0.94
+  lr: 1.2e-04

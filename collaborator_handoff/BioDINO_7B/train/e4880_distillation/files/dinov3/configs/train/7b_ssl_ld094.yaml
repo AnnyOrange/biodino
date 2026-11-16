@@ -1,0 +1,5 @@
+# SSL re-run, arm A: the original 7B 20TB SSL run with ONE change.
+# layerwise_decay 0.98 -> 0.94 so that the bottom/top LR ratio over 40 blocks (0.94^40 = 0.084) matches the L run
+# (0.9^24 = 0.080).  0.9 would freeze the 7B bottom blocks ~5x harder than L (0.9^40 = 0.015).
+optim:
+  layerwise_decay: 0.94
