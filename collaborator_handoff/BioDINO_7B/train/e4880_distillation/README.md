@@ -1,12 +1,12 @@
 [返回 7B 训练交付入口](../../README.md)
 
-# 7B：E4880（三教师 CLS+patch 蒸馏 + 4880 步退火）与 SSL 重训两组
+# 7B：E4880（三教师 CLS+patch 蒸馏 + 4880 步退火）与 SSL 重训
 
 2026-11-16。代码交接包。我们没有在 7B 上运行过这里的配置；只在本地做了准备器的配置合并试跑（假 DCP 目录）和补丁应用检查。不含权重、评测数据。
 
 ## 为什么做这两件事
 
-CLS 蒸馏四组（C/D 最好）把 7B 在分类、检索、聚类、分割上拉到了与我们的 H+ E、L lw5 基本持平，落后的只剩**检测代理**（C 23551 为 84.1，L lw5 85.6）和**回归**（尤其 livecell 计数：C 23551 112.9，L lw5 91.3）。这两项依赖 patch 特征，只蒸馏 CLS 管不到。
+CLS 蒸馏四组（C/D 最好）把 7B 在分类、检索、聚类、分割上拉到了与我们的 H+ E、L lw5 基本持平，落后的只剩**检测代理**（C 23551 为 84.1，L lw5 85.6）和**回归**（尤其 livecell 计数：C 23551 112.9，L lw5 91.3）。这两项依赖 patch 特征，只蒸馏 CLS 管不到。（7B 的数字来自你们的评测流程，H+ / L 来自我们的流程，属于跨流程的桥接比较。）
 
 我们的证据（六类等权，分割 E20，seed0）：
 
@@ -54,21 +54,22 @@ python scripts/prepare_7b_e4880_distillation.py \
 ```
 
 启动沿用你们现有的分布式入口，并加 `--expected-start-iteration 21504`。日志里应出现一行
-`Cooldown override: updates [21504, 26384) shape=linear | lr 4.7e-05 -> 1e-06 | momentum ... -> 1.0000000`。
+`Cooldown override: updates [21504, 26384) shape=linear | lr <21504 处的原 LR，约 4.73e-05> -> 1e-06 | momentum <当时值> -> 1.0000000`。
 
-## 实验二（并行或排在实验一之后）：SSL 重训，两组
+## 实验二（并行或排在实验一之后）：SSL 重训
 
-从官方 7B 起，和原来的 20TB SSL 完全相同，只改下面一处（A）或两处（B）：
+从官方 7B 起，和原来的 20TB SSL 完全相同。**只跑 A 组**；B 组只在 A + E4880 之后回归仍明显落后时再考虑。
 
 | 组 | 改动 | 配置覆盖 | 回答的问题 |
 |---|---|---|---|
-| A | `layerwise_decay` 0.98 → **0.94** | `dinov3/configs/train/7b_ssl_ld094.yaml` | 底层改动量对齐 L 后，局部任务（分割、检测代理）是否不再越训越差 |
-| B | A + 峰值 LR 6e-5 → **1.2e-4** | `dinov3/configs/train/7b_ssl_ld094_lr12e5.yaml` | 顶层的总改动量补上后，回归能否像 L 那样明显改善 |
+| **A（推荐，只跑这组）** | `layerwise_decay` 0.98 → **0.94**，其余不变 | `dinov3/configs/train/7b_ssl_ld094.yaml` | 底层改动量对齐 L 后，局部任务（分割、检测代理）是否不再越训越差 |
+| B（暂不跑，备选） | A + 峰值 LR 6e-5 → **1.2e-4** | `dinov3/configs/train/7b_ssl_ld094_lr12e5.yaml` | 顶层的总改动量补上后，回归能否像 L 那样明显改善 |
 
 - 0.94 的来历：底层/顶层的 LR 之比，L 是 0.9²⁴ ≈ 0.08，7B 原设置 0.98⁴⁰ ≈ 0.45；0.94⁴⁰ ≈ 0.084 与 L 对齐。**不要用 0.9**（0.9⁴⁰ ≈ 0.015，比 L 冻得还狠 5 倍）。
-- 1.2e-4 的来历：按开方规则从 L 的 batch 1024 / 1e-4 换算到 batch 4096 应约 2e-4；原 run 用 6e-5，按「LR × 更新次数」估算，到选点时顶层的总改动量约为 L 的 1/6。1.2e-4 = 6e-5 × √4 是折中。**B 组有不稳的风险**：前 1000 步就要看 loss 和梯度范数，有尖峰就停。
+- B 组 1.2e-4 的来历（备选，供以后参考）：按开方规则从 L 的 batch 1024 / 1e-4 换算到 batch 4096 应约 2e-4；原 run 用 6e-5，按「LR × 更新次数」估算，到选点时顶层的总改动量约为 L 的 1/6。1.2e-4 = 6e-5 × √4 是折中。**B 组有不稳的风险**：前 1000 步就要看 loss 和梯度范数，有尖峰就停。
 - 时长至少到 3 万步（覆盖原来 21503 的峰值和之后的下降段），每 2048 步导出；每个点先做便宜筛选（分割 cellpose / livecell / multimodal，检测代理，回归 bbbc005 / livecell 计数，几个分类），入围的点再跑完整评测。
 - 选出最好的点后，再做一次和实验一相同的 E4880。
+- 为什么只跑 A：A 只改一处，结果好坏都能说清原因；B 把 LR 翻倍，有发散风险，而且回归的短板预计主要由 E4880 补上。
 - drop_path（0.4，L 是 0.25）和每卡 batch（KoLeo 分组 64，L 是 16）也和 L 不同，这一轮**故意不改**，避免分不清是哪个起作用。
 
 ## 集成代码
@@ -77,7 +78,7 @@ python scripts/prepare_7b_e4880_distillation.py \
 
 - 新增 `dinov3/train/phis_multi_teacher_distill.py`（E 的目标；复用 `external_distill.py` 的 ridge 解码器和 `joint_teacher_models.py` 的冻结教师加载，这两个文件未改）。
 - `dinov3/train/ssl_meta_arch.py` 只增加一个分支：`external_distill.mode == "phis_spatial_recovery"`。
-- 新增配置覆盖 3 个、准备器 `scripts/prepare_7b_e4880_distillation.py`。`train.py` 已含 `optim.cooldown`，未改。
+- 新增配置覆盖 3 个（E4880、SSL A、备选 SSL B）、准备器 `scripts/prepare_7b_e4880_distillation.py`。`train.py` 已含 `optim.cooldown`，未改。
 - `e4880_update.patch`：在已应用 CLS 四组包的工作副本上使用的增量补丁（基于本分支 c83ed8a，已检查可干净应用）：
 
 ```bash
